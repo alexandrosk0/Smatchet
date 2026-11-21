@@ -178,10 +178,10 @@ TEST_CASE("FormatFriendlyDate / ParseFriendlyDate — round-trip + range gates")
     }
     SUBCASE("DR32: Parse rejects days beyond the month's real length") {
         int y = 9999, m = 9999, d = 9999;
-        CHECK_FALSE(ParseFriendlyDate("2/31/2026", y, m, d));  // Feb never has 31
-        CHECK_FALSE(ParseFriendlyDate("2/29/2026", y, m, d));  // 2026 is not a leap year
-        CHECK_FALSE(ParseFriendlyDate("4/31/2026", y, m, d));  // Apr has 30
-        CHECK_FALSE(ParseFriendlyDate("6/31/2026", y, m, d));  // Jun has 30
+        CHECK_FALSE(ParseFriendlyDate("2/31/2026", y, m, d)); // Feb never has 31
+        CHECK_FALSE(ParseFriendlyDate("2/29/2026", y, m, d)); // 2026 is not a leap year
+        CHECK_FALSE(ParseFriendlyDate("4/31/2026", y, m, d)); // Apr has 30
+        CHECK_FALSE(ParseFriendlyDate("6/31/2026", y, m, d)); // Jun has 30
         // rejection leaves outputs untouched
         CHECK(y == 9999);
         CHECK(m == 9999);
@@ -379,4 +379,124 @@ TEST_CASE("PlanDateTimeCommit — Apply/Clear gate PUTs on real change only") {
             PlanDateTimeCommit(true, false, /*isDateOnly=*/true, working, "not a date at all");
         CHECK(plan.Queue);
     }
+}
+
+// --- Calendar keyboard steps (docs/plans/input-ux-w2-gesture-keys.md) -------------------------------------
+
+TEST_CASE("AddDaysToDate — rolls across month ends, year ends and leap days") {
+    int y = 2026, m = 1, d = 31;
+    TrackerDateTimePure::AddDaysToDate(y, m, d, 1);
+    CHECK(((y == 2026) && (m == 2) && (d == 1)));
+
+    y = 2026;
+    m = 12;
+    d = 31;
+    TrackerDateTimePure::AddDaysToDate(y, m, d, 1);
+    CHECK(((y == 2027) && (m == 1) && (d == 1)));
+
+    y = 2024;
+    m = 2;
+    d = 28; // leap year
+    TrackerDateTimePure::AddDaysToDate(y, m, d, 1);
+    CHECK(((y == 2024) && (m == 2) && (d == 29)));
+    TrackerDateTimePure::AddDaysToDate(y, m, d, 1);
+    CHECK(((y == 2024) && (m == 3) && (d == 1)));
+
+    y = 2026;
+    m = 3;
+    d = 1;
+    TrackerDateTimePure::AddDaysToDate(y, m, d, -1);
+    CHECK(((y == 2026) && (m == 2) && (d == 28)));
+
+    y = 2026;
+    m = 1;
+    d = 1;
+    TrackerDateTimePure::AddDaysToDate(y, m, d, -1);
+    CHECK(((y == 2025) && (m == 12) && (d == 31)));
+
+    y = 2026;
+    m = 11;
+    d = 16; // In a week
+    TrackerDateTimePure::AddDaysToDate(y, m, d, 7);
+    CHECK(((y == 2026) && (m == 11) && (d == 23)));
+    y = 2026;
+    m = 11;
+    d = 28;
+    TrackerDateTimePure::AddDaysToDate(y, m, d, 7);
+    CHECK(((y == 2026) && (m == 12) && (d == 5)));
+
+    y = 2026;
+    m = 5;
+    d = 9;
+    TrackerDateTimePure::AddDaysToDate(y, m, d, 0);
+    CHECK(((y == 2026) && (m == 5) && (d == 9)));
+}
+
+TEST_CASE("AddDaysToDate — bad input is clamped, a huge delta is bounded") {
+    int y = 2026, m = 2, d = 40; // day past the month end
+    TrackerDateTimePure::AddDaysToDate(y, m, d, 0);
+    CHECK(((y == 2026) && (m == 2) && (d == 28)));
+
+    y = 2026;
+    m = 13;
+    d = 0; // month out of range
+    TrackerDateTimePure::AddDaysToDate(y, m, d, 0);
+    CHECK(((m >= 1) && (m <= 12) && (d >= 1)));
+
+    y = 2026;
+    m = 1;
+    d = 1;
+    TrackerDateTimePure::AddDaysToDate(y, m, d, 2000000000); // bounded to a century, not a 2-billion-step loop
+    CHECK(y <= 2126);
+    CHECK(((m >= 1) && (m <= 12) && (d >= 1) && (d <= DaysInMonth(y, m))));
+}
+
+TEST_CASE("AddMonthsClampDay — month steps clamp the day, year steps keep it") {
+    int y = 2026, m = 1, d = 31;
+    TrackerDateTimePure::AddMonthsClampDay(y, m, d, 1);
+    CHECK(((y == 2026) && (m == 2) && (d == 28)));
+
+    y = 2024;
+    m = 1;
+    d = 31;
+    TrackerDateTimePure::AddMonthsClampDay(y, m, d, 1);
+    CHECK(((y == 2024) && (m == 2) && (d == 29)));
+
+    y = 2026;
+    m = 12;
+    d = 15;
+    TrackerDateTimePure::AddMonthsClampDay(y, m, d, 1);
+    CHECK(((y == 2027) && (m == 1) && (d == 15)));
+
+    y = 2026;
+    m = 1;
+    d = 15;
+    TrackerDateTimePure::AddMonthsClampDay(y, m, d, -1);
+    CHECK(((y == 2025) && (m == 12) && (d == 15)));
+
+    y = 2026;
+    m = 3;
+    d = 31;
+    TrackerDateTimePure::AddMonthsClampDay(y, m, d, -12);
+    CHECK(((y == 2025) && (m == 3) && (d == 31)));
+
+    y = 2024;
+    m = 2;
+    d = 29; // a leap day one year on
+    TrackerDateTimePure::AddMonthsClampDay(y, m, d, 12);
+    CHECK(((y == 2025) && (m == 2) && (d == 28)));
+
+    y = 2026;
+    m = 6;
+    d = 10;
+    TrackerDateTimePure::AddMonthsClampDay(y, m, d, -30); // more than two years back
+    CHECK(((y == 2023) && (m == 12) && (d == 10)));
+}
+
+TEST_CASE("TodayLocalDate — a plausible calendar date") {
+    int y = 0, m = 0, d = 0;
+    REQUIRE(TrackerDateTimePure::TodayLocalDate(y, m, d));
+    CHECK(y >= 2024);
+    CHECK(((m >= 1) && (m <= 12)));
+    CHECK(((d >= 1) && (d <= DaysInMonth(y, m))));
 }

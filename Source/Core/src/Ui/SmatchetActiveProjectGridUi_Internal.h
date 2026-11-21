@@ -9,6 +9,7 @@
 // member type is forward-declared and the header pulls no heavy deps (notably NOT AppController.h,
 // keeping the god-header fan-in flat). Not part of the public API.
 
+#include "SmatchetGridUiSupport.h"   // GridKeyCellMenuCtx (the pane's shared right-click menu context, by value)
 #include "Sync/PendingOverlayPure.h" // PendingRowCue (the row currently drawn)
 
 #include <cstdint>
@@ -76,6 +77,10 @@ struct ActiveProjectDrawCtx {
     // Set when the header menu's Remove item is clicked. Applied after EndTable, so the rest of this
     // frame's table still sees the column list it was laid out with.
     bool removeHeaderMenuColumn = false;
+    // The right-click menu context every cell of this pane shares: built ONCE per frame before the row loop
+    // (drawActiveProjectGridRows). A data cell writes only `clickedRow` and `field` before passing it on, so the
+    // menu context costs no allocation per cell (Ui AGENTS.md: per-cell grid code allocates nothing per row).
+    GridKeyCellMenuCtx cellMenu{};
 };
 
 #endif // SMATCHET_UI_SMATCHET_ACTIVE_PROJECT_GRID_UI_INTERNAL_H

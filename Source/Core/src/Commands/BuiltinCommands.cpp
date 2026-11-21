@@ -14,6 +14,7 @@
 
 #include "Commands/AppViewCommands.h"
 #include "Commands/CommandRegistry.h"
+#include "Commands/GestureKeyCommands.h"
 #include "Commands/UiModeCommand.h"
 #include "Commands/ViewToggleCommands.h"
 
@@ -68,6 +69,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
 
     RegisterViewToggleCommands(reg, app);
     RegisterAppViewCommands(reg, app);
+    RegisterGestureKeyCommands(reg, app);
     RegisterUiModeCommand(reg, app);
 
     LOG_INFO("CommandRegistry: registered %zu built-in commands", reg.All().size());

@@ -4,6 +4,8 @@
 #include "AppController.h"
 #include "CachedTicketTypes.h"
 #include "DataFreshnessCue.h"
+#include "DictationInsertionRouter.h"
+#include "DraftStore.h"
 #include "ITrackerCollaboration.h"
 #include "Logger.h"
 #include "MarkdownPreviewRender.h"
@@ -18,6 +20,7 @@
 #include "Ui/SmatchetCommentsModalSeedPure.h"
 #include "Ui/SmatchetFieldViewerModalUi.h"
 #include "Ui/SmatchetHeightCulledList.h"
+#include "Ui/SmatchetSubmitKeys.h"
 #include "Ui/SmatchetToast.h"
 
 #include "imgui.h"
@@ -105,7 +108,22 @@ struct CommentsModalState {
     bool PostEnabled = false;
     /// Esc in a box with no text in it: the shell closes the viewer (through its discard guard).
     bool CloseRequested = false;
+    /// The draft store scope of this open: tracker site and issue. Empty = no draft is kept.
+    std::string DraftScope;
+    /// The post box was filled from a draft kept by an earlier open, and nothing was typed since.
+    bool DraftRestored = false;
+    /// The post box text as of the last draft hand-over (or as filled at open / cleared by a post).
+    /// Compared with PostBuf each frame so a dictation splice, which raises no edit event, is kept too.
+    std::string DraftSynced;
 };
+
+/// The draft store surface of the post box (DraftStore.h).
+constexpr const char* kCommentsDraftSurface = "comments";
+
+/// Tracker site and issue: two sites never share a draft for the same key.
+std::string CommentsDraftScope(const std::string& backendKey, const std::string& issueId) {
+    return backendKey + "|" + issueId;
+}
 
 CommentsModalState s_CommentsState;
 
@@ -114,7 +132,17 @@ CommentsModalState s_CommentsState;
 /// pinned Gen to 1 and made the stale-guard inert (#1713). Each dispatch takes the next value.
 int s_genCounter = 0;
 
-void CloseCommentsModal() { s_CommentsState = CommentsModalState{}; }
+/// Resets the comments state. The post box registers PostBuf with the dictation router while it has the
+/// caret, and the router keeps that pointer past blur as its sticky target, so the buffer is unregistered
+/// before the reset frees it (the long-text editor's CloseLongTextEditor does the same).
+void ResetCommentsState() {
+    if (!s_CommentsState.PostBuf.empty()) {
+        g_dictationRouter.UnregisterInputText(s_CommentsState.PostBuf.data());
+    }
+    s_CommentsState = CommentsModalState{};
+}
+
+void CloseCommentsModal() { ResetCommentsState(); }
 
 /// Where one comments load starts: the copies saved with the ticket (parsed on the worker) and
 /// whether to ask the tracker even while the last probe says it is unreachable (an explicit Retry).
@@ -480,8 +508,13 @@ void DrawCommentsThreadPane(AppController& app, smatchet::offline::DataFreshness
 /// UI-thread end of a post: toast what actually happened (posted, saved offline, or failed). A posted
 /// or queued comment clears the box — a queued one shows in the thread from the queue snapshot — and a
 /// posted one reloads the thread. Only the same open of this issue's modal is touched (OpenGen).
-void ApplyCommentPostResult(AppController& app, const std::string& issueId, int openGen,
-                            const PendingActionSubmitResult& result) {
+void ApplyCommentPostResult(AppController& app, const std::string& issueId, int openGen, const std::string& draftScope,
+                            const std::string& postedBody, const PendingActionSubmitResult& result) {
+    if (result.K != PendingActionSubmitResult::Kind::Failed && !draftScope.empty()) {
+        // Sent or saved to the queue: the draft is done, whether or not the modal is still open. Only
+        // while it still holds what was posted: text typed since stays.
+        smatchet::drafts::EraseIfText(kCommentsDraftSurface, draftScope, postedBody);
+    }
     switch (result.K) {
     case PendingActionSubmitResult::Kind::Sent:
         SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.comment_posted", "Comment Posted"),
@@ -516,6 +549,7 @@ void ApplyCommentPostResult(AppController& app, const std::string& issueId, int 
     }
     if (result.K != PendingActionSubmitResult::Kind::Failed) {
         s_CommentsState.PostBuf.assign(CommentsModalState::kPostBufferSize, '\0');
+        s_CommentsState.DraftSynced.clear(); // the draft was settled by ApplyCommentPostResult
     }
     if (result.K == PendingActionSubmitResult::Kind::Sent) {
         ReloadComments(app, /*forceNetwork=*/false);
@@ -525,15 +559,16 @@ void ApplyCommentPostResult(AppController& app, const std::string& issueId, int 
 /// Post on a worker (Pillar 2): sent now, or saved to the pending-action queue when the tracker is
 /// unreachable (Pillar 6). As with the load, PostInFlight is published only after the launch returned
 /// and the worker always posts a result, a throw included, so Post can never stay disabled.
-void KickCommentPost(AppController& app, const std::string& issueId, const std::string& body, int openGen) {
+void KickCommentPost(AppController& app, const std::string& issueId, const std::string& body, int openGen,
+                     const std::string& draftScope) {
     AppController* appPtr = &app;
     // Latched at Post: the comment goes to this pane's tracker even if focus moves before the worker runs.
     const PendingActionTarget target = app.LatchPendingActionTarget();
     try {
         smatchet::ui::SubmitPendingActionAsync(
             app, [appPtr, target, issueId, body]() { return appPtr->SubmitOrQueueComment(target, issueId, body); },
-            [appPtr, issueId, openGen](const PendingActionSubmitResult& result) {
-                ApplyCommentPostResult(*appPtr, issueId, openGen, result);
+            [appPtr, issueId, openGen, draftScope, body](const PendingActionSubmitResult& result) {
+                ApplyCommentPostResult(*appPtr, issueId, openGen, draftScope, body, result);
             });
         s_CommentsState.PostInFlight = true;
     } catch (const std::exception& ex) {
@@ -589,10 +624,28 @@ bool DrawCommentsPostInput(bool disabled, bool readOnlyMode) {
             ImGui::SetKeyboardFocusHere();
         }
     }
-    const bool ctrlEnter =
-        ImGui::InputTextMultiline("##CommentsPostBox", st.PostBuf.data(), CommentsModalState::kPostBufferSize,
-                                  ImVec2(-FLT_MIN, 80.0f), ImGuiInputTextFlags_EnterReturnsTrue);
+    // Dictation spliced into the box while it is active: ImGui edits its own copy of the text and would
+    // write that back over the splice, so ask it to re-read the buffer before the box draws. The request
+    // names the widget it is for, so draining it here is right whichever box it names.
+    const unsigned int pendingReloadId = g_dictationRouter.ConsumePendingReloadItemId();
+    if (pendingReloadId != 0u) {
+        if (ImGuiInputTextState* state = ImGui::GetInputTextState(pendingReloadId)) {
+            state->ReloadUserBufAndMoveToEnd();
+        }
+    }
+    // The placeholder sits inside the empty box; Ctrl+Enter submits (Ui/SmatchetSubmitKeys.h).
+    const bool ctrlEnter = smatchet::ui::SubmitMultilineInput(
+        "##CommentsPostBox", st.PostBuf.data(), CommentsModalState::kPostBufferSize, ImVec2(-FLT_MIN, 80.0f),
+        SmatchetLocalization::T("comments.post_placeholder", "Write a comment (Markdown supported)..."));
     st.ComposerActive = ImGui::IsItemActive();
+    if (!st.DraftScope.empty() && st.DraftSynced.compare(st.PostBuf.data()) != 0) {
+        // Kept as it changes (an empty box erases the draft), so a close, a replace by another issue or
+        // a crash does not lose it. Compared by value, not IsItemEdited: a dictation splice writes the
+        // buffer without an edit event. A map update; the file is written off the UI thread.
+        st.DraftRestored = false;
+        st.DraftSynced = st.PostBuf.data();
+        smatchet::drafts::Put(kCommentsDraftSurface, st.DraftScope, st.DraftSynced);
+    }
     ImGui::PopID();
     return ctrlEnter && !disabled;
 }
@@ -615,31 +668,30 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
                                                           "posted when the tracker is reachable."));
     }
 
+    if (s_CommentsState.DraftRestored && s_CommentsState.PostBuf.data()[0] != '\0') {
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.draft_restored",
+                                                          "Draft restored from your last session on this issue."));
+    }
     if (disabled) {
         ImGui::BeginDisabled();
     }
     const bool ctrlEnter = DrawCommentsPostInput(disabled, readOnlyMode);
     const bool hasText = PostBufHasText();
-    if (s_CommentsState.PostBuf.data()[0] == '\0') {
-        ImGui::TextDisabled(
-            "%s", SmatchetLocalization::T("comments.post_placeholder", "Write a comment (Markdown supported)..."));
-    }
     ImGui::BeginDisabled(!hasText);
-    const bool clicked = ImGui::Button(SmatchetLocalization::T("comments.post_button", "Post Comment"), ImVec2(140, 0));
+    // The button names its key; read-only mode has no key to name.
+    const bool clicked =
+        smatchet::ui::KeyHintButton(SmatchetLocalization::T("comments.post_button", "Post Comment"),
+                                    readOnlyMode ? nullptr : smatchet::ui::CtrlEnterKeyName(), ImVec2(140, 0));
     ImGui::EndDisabled();
     if (disabled) {
         ImGui::EndDisabled();
     }
     s_CommentsState.PostEnabled = !disabled && hasText;
-    if (!readOnlyMode) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.post_shortcut_hint", "Ctrl+Enter to post"));
-    }
 
     if ((clicked || ctrlEnter) && s_CommentsState.PostEnabled) {
         const bool fromKeyboard = ctrlEnter && !clicked;
         KickCommentPost(app, s_CommentsState.IssueId, std::string(s_CommentsState.PostBuf.data()),
-                        s_CommentsState.OpenGen);
+                        s_CommentsState.OpenGen, s_CommentsState.DraftScope);
         // Sent from the keyboard: the caret returns when the result arrives, or at once when the
         // post could not start.
         s_CommentsState.PostSentFromKeyboard = fromKeyboard && s_CommentsState.PostInFlight;
@@ -688,6 +740,13 @@ class CommentsViewerContent final : public IFieldViewerContent {
         s_CommentsState.CloseRequested = false;
         return requested;
     }
+    // The user chose to throw the comment away: the kept draft goes with it. A plain close, a replace by
+    // another viewer or an exit keeps it for the next open.
+    void OnDiscard() override {
+        if (!s_CommentsState.DraftScope.empty()) {
+            smatchet::drafts::Erase(kCommentsDraftSurface, s_CommentsState.DraftScope);
+        }
+    }
     // Resets s_CommentsState, so Active=false drops any late load / post post-back.
     void OnClose() override { CloseCommentsModal(); }
 };
@@ -699,7 +758,7 @@ void OpenCommentsModal(AppController& app, const std::string& issueId, const std
     // First: replacing a viewer runs its OnClose, which (for a previous Comments open) resets
     // s_CommentsState — that must happen before this open seeds the state below.
     OpenFieldViewer(std::make_unique<CommentsViewerContent>(), issueId, "comments");
-    s_CommentsState = CommentsModalState{};
+    ResetCommentsState();
     s_CommentsState.IssueId = issueId;
     s_CommentsState.Active = true;
     s_CommentsState.FocusComposerPending = focus == CommentsOpenFocus::Composer;
@@ -708,10 +767,21 @@ void OpenCommentsModal(AppController& app, const std::string& issueId, const std
     s_CommentsState.Gen = SmatchetCommentsModalGen::AllocGen(s_genCounter);
     s_CommentsState.OpenGen = s_CommentsState.Gen;
     s_CommentsState.PostBuf.assign(CommentsModalState::kPostBufferSize, '\0');
+    s_CommentsState.DraftScope = CommentsDraftScope(app.FocusedCacheBackendKey(), issueId);
     if (!prefillBody.empty()) {
+        // A template or other caller supplied the text: it is what the user asked for, so it wins over a
+        // kept draft (which stays stored until the box is edited).
         const std::size_t copyLen = (std::min)(prefillBody.size(), CommentsModalState::kPostBufferSize - 1);
         std::memcpy(s_CommentsState.PostBuf.data(), prefillBody.data(), copyLen);
+    } else {
+        smatchet::drafts::DraftEntry draft;
+        if (smatchet::drafts::Get(kCommentsDraftSurface, s_CommentsState.DraftScope, draft) && !draft.Text.empty()) {
+            const std::size_t copyLen = (std::min)(draft.Text.size(), CommentsModalState::kPostBufferSize - 1);
+            std::memcpy(s_CommentsState.PostBuf.data(), draft.Text.data(), copyLen);
+            s_CommentsState.DraftRestored = true;
+        }
     }
+    s_CommentsState.DraftSynced = s_CommentsState.PostBuf.data(); // what the open filled in is not an edit
     CommentsLoadRequest req;
     req.IssueId = issueId;
     req.Gen = s_CommentsState.Gen;
@@ -748,6 +818,7 @@ CommentsModalSnapshot GetCommentsModalSnapshotForTests() {
     snap.ComposerActive = s_CommentsState.ComposerActive;
     snap.PostEnabled = s_CommentsState.PostEnabled;
     snap.PostInFlight = s_CommentsState.PostInFlight;
+    snap.DraftRestored = s_CommentsState.DraftRestored;
     if (!s_CommentsState.PostBuf.empty()) {
         snap.PostDraft = s_CommentsState.PostBuf.data();
     }

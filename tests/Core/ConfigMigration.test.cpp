@@ -26,6 +26,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -610,6 +611,169 @@ TEST_CASE("ConfigMigration quick-create: flag set on disk skips the seed (cleare
 
     CHECK(cfg.MigratedQuickCreateHotkeyV1 == true);
     CHECK(cfg.Keybindings.FindBindingIndex("issue.quick_create.open", "{}") < 0); // not resurrected
+}
+
+// --- Primary-action keybindings — one-shot seed migration (migrated_action_keys_v1) ---
+//
+// The input UX audit (§ 4.4) gave the settings search and next/previous view default keys. A config
+// saved before those commands existed carries a keybindings block without them; from_json replaces
+// the table, so only the one-shot seed brings them in.
+
+TEST_CASE("ConfigMigration action keys: seeds the three rows into a pre-existing config") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+B","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedActionKeysV1 == true);
+    const struct {
+        const char* command;
+        const char* hotkey;
+    } expected[] = {
+        {"preferences.search.focus", "Ctrl+Shift+,"}, {"view.next", "Ctrl+PageDown"}, {"view.previous", "Ctrl+PageUp"}};
+    for (const auto& e : expected) {
+        const int idx = cfg.Keybindings.FindBindingIndex(e.command, "{}");
+        REQUIRE_MESSAGE(idx >= 0, e.command);
+        CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].PrimaryHotkey() == e.hotkey);
+        CHECK(CountCommand(cfg.Keybindings, e.command) == 1);
+    }
+    CHECK(cfg.Keybindings.FindBindingIndex("view.sidebar.primary", "{\"action\":\"toggle\"}") >= 0);
+}
+
+TEST_CASE("ConfigMigration action keys: a user's own binding for one command is kept, the others seed") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.next","hotkey":"Ctrl+Alt+Right","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(CountCommand(cfg.Keybindings, "view.next") == 1);
+    const int next = cfg.Keybindings.FindBindingIndex("view.next", "{}");
+    REQUIRE(next >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(next)].PrimaryHotkey() == "Ctrl+Alt+Right");
+    CHECK(cfg.Keybindings.FindBindingIndex("view.previous", "{}") >= 0);
+    CHECK(cfg.Keybindings.FindBindingIndex("preferences.search.focus", "{}") >= 0);
+}
+
+TEST_CASE("ConfigMigration action keys: flag set on disk skips the seed (removed stays removed)") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_action_keys_v1":true,"keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+B","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedActionKeysV1 == true);
+    CHECK(cfg.Keybindings.FindBindingIndex("view.next", "{}") < 0); // a removed binding stays removed
+    CHECK(cfg.Keybindings.FindBindingIndex("view.previous", "{}") < 0);
+    CHECK(cfg.Keybindings.FindBindingIndex("preferences.search.focus", "{}") < 0);
+}
+
+// --- Gesture-key bindings — one-shot seed migration (migrated_gesture_keys_v1) ---
+//
+// Same replace-not-merge failure class as the seeds above: a config saved before the gesture commands existed
+// carries a keybindings block without them, so the defaults would never arrive without the one-shot seed.
+
+TEST_CASE("ConfigMigration gesture keys: seeds the seven defaults into a pre-existing config") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+B","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedGestureKeysV1 == true);
+    const char* const kIds[] = {"ui.list.move_up",    "ui.list.move_down", "ui.list.remove",   "ui.splitter.grow",
+                                "ui.splitter.shrink", "view.panel.grow",   "view.panel.shrink"};
+    for (const char* id : kIds) {
+        CHECK_MESSAGE(cfg.Keybindings.FindBindingIndex(id, "{}") >= 0, id);
+    }
+    const int up = cfg.Keybindings.FindBindingIndex("ui.list.move_up", "{}");
+    REQUIRE(up >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(up)].PrimaryHotkey() == "Alt+Up");
+    // The two-combo rows arrive whole.
+    const int grow = cfg.Keybindings.FindBindingIndex("ui.splitter.grow", "{}");
+    REQUIRE(grow >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(grow)].Hotkeys.size() == 2U);
+    // Pre-existing bindings survive (append-only).
+    CHECK(cfg.Keybindings.FindBindingIndex("view.sidebar.primary", "{\"action\":\"toggle\"}") >= 0);
+}
+
+TEST_CASE("ConfigMigration gesture keys: respects a user rebind (no duplicate, key kept)") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"ui.list.move_up","hotkey":"Ctrl+Alt+K","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(CountCommand(cfg.Keybindings, "ui.list.move_up") == 1);
+    const int idx = cfg.Keybindings.FindBindingIndex("ui.list.move_up", "{}");
+    REQUIRE(idx >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].PrimaryHotkey() == "Ctrl+Alt+K");
+    CHECK(cfg.Keybindings.FindBindingIndex("ui.list.move_down", "{}") >= 0); // the rest still seeded
+}
+
+TEST_CASE("ConfigMigration gesture keys: flag set on disk skips the seed (cleared stays cleared)") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_gesture_keys_v1":true,"keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+B","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedGestureKeysV1 == true);
+    CHECK(cfg.Keybindings.FindBindingIndex("ui.list.remove", "{}") < 0); // not resurrected
+}
+
+// --- Grid search focus keybinding (migrated_grid_search_focus_hotkey_v1) ---
+//
+// grid.search.focus (input UX audit #60) arrived after configs with a saved keybindings block
+// existed; from_json replaces the table, so only the one-shot seed brings Ctrl+F and / to them.
+
+TEST_CASE("ConfigMigration grid search focus: seeds Ctrl+F and / once, keeps a user's own key") {
+    smatchet_tests::TestEnvGuard env;
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"ui.zoom.reset","hotkey":"Ctrl+0","args_json":"{}","enabled":true}
+    ]}})json");
+    const TrackerConfig seeded = ConfigManager::Load();
+    CHECK(seeded.MigratedGridSearchFocusHotkeyV1 == true);
+    const int si = seeded.Keybindings.FindBindingIndex("grid.search.focus", "{}");
+    REQUIRE(si >= 0);
+    const std::vector<std::string>& combos = seeded.Keybindings.Bindings[static_cast<std::size_t>(si)].Hotkeys;
+    REQUIRE(combos.size() == 2U);
+    CHECK(combos[0] == "Ctrl+F");
+    CHECK(combos[1] == "/");
+    CHECK(seeded.Keybindings.FindBindingIndex("ui.zoom.reset", "{}") >= 0);
+
+    // A user who bound the command to another key before the seed ran keeps that key, alone.
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"grid.search.focus","hotkey":"Alt+S","args_json":"{}","enabled":true}
+    ]}})json");
+    const TrackerConfig rebound = ConfigManager::Load();
+    CHECK(CountCommand(rebound.Keybindings, "grid.search.focus") == 1);
+    const int ri = rebound.Keybindings.FindBindingIndex("grid.search.focus", "{}");
+    REQUIRE(ri >= 0);
+    CHECK(rebound.Keybindings.Bindings[static_cast<std::size_t>(ri)].PrimaryHotkey() == "Alt+S");
+
+    // Once the flag is on disk a cleared binding stays cleared.
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","migrated_grid_search_focus_hotkey_v1":true,
+        "keybindings":{"bindings":[
+        {"command_id":"ui.zoom.reset","hotkey":"Ctrl+0","args_json":"{}","enabled":true}
+    ]}})json");
+    const TrackerConfig cleared = ConfigManager::Load();
+    CHECK(cleared.Keybindings.FindBindingIndex("grid.search.focus", "{}") < 0);
 }
 
 // --- multi-combo zoom aliases (docs/plans/keybindings-multi-combo.md) ------------

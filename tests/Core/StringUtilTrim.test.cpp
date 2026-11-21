@@ -31,3 +31,20 @@ TEST_CASE("TrimCopyIsspace differs from TrimCopyAsciiWhitespace only on \\v and 
         }
     }
 }
+
+TEST_CASE("TruncateUtf8WithEllipsis cuts on a character boundary") {
+    CHECK(TruncateUtf8WithEllipsis("short", 160) == "short");
+    CHECK(TruncateUtf8WithEllipsis("abcdef", 3) == "abc...");
+    // E-acute is two bytes (C3 A9); a cut at byte 3 would land inside the second one.
+    const std::string text = "a"
+                             "\xC3\xA9"
+                             "\xC3\xA9"
+                             "\xC3\xA9";
+    CHECK(TruncateUtf8WithEllipsis(text, 3) == "a"
+                                               "\xC3\xA9"
+                                               "...");
+    CHECK(TruncateUtf8WithEllipsis(text, 2) == "a...");
+    // A four-byte emoji (F0 9F 98 80) is dropped whole, never left as a stub.
+    CHECK(TruncateUtf8WithEllipsis(std::string("ab") + "\xF0\x9F\x98\x80", 4) == "ab...");
+    CHECK(TruncateUtf8WithEllipsis("abc", 0) == "...");
+}

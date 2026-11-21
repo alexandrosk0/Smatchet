@@ -5,6 +5,7 @@
 #include "Ui/SmatchetAudit_detail.h"
 
 #include "StringUtil.h"
+#include "TextMatchPure.h"
 
 #include <cstddef>
 #include <string>
@@ -37,7 +38,7 @@ bool ContainsNoCasePreLower(const std::string& haystackLower, const std::string&
     if (needleLower.empty()) {
         return true;
     }
-    return haystackLower.find(needleLower) != std::string::npos;
+    return smatchet::textmatch::ContainsAllWordsFolded(haystackLower, smatchet::textmatch::MakeQuery(needleLower));
 }
 
 bool ActionMatchesFilter(const std::string& action, int filter) {
@@ -80,6 +81,7 @@ std::vector<std::size_t> CollectFilteredAuditIndices(const std::vector<nlohmann:
                                                      bool newestFirst) {
     std::vector<std::size_t> out;
     out.reserve(events.size());
+    const smatchet::textmatch::Query query = smatchet::textmatch::MakeQuery(queryLower);
     const auto keep = [&](std::size_t i) {
         const nlohmann::json& e = events[i];
         const std::string action = JsonStringValue(e, "action");
@@ -87,7 +89,7 @@ std::vector<std::size_t> CollectFilteredAuditIndices(const std::vector<nlohmann:
         if (!ActionMatchesFilter(action, actionFilter) || !ResultMatchesFilter(success, resultFilter)) {
             return;
         }
-        if (i >= searchLower.size() || !ContainsNoCasePreLower(searchLower[i], queryLower)) {
+        if (i >= searchLower.size() || !smatchet::textmatch::ContainsAllWordsFolded(searchLower[i], query)) {
             return;
         }
         out.push_back(i);

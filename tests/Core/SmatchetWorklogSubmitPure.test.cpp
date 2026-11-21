@@ -6,13 +6,20 @@
 // TicketFieldEditor.cpp's HandleWorklogSave calls.
 //
 // The key decisions the worklog dialog shares with the other dialogs that hold typed text
-// (Ui/DialogKeysPure.h: Esc, the caret request, a dismissed popup coming back) are covered here too.
+// (Ui/DialogKeysPure.h: Esc, the caret request, a dismissed popup coming back) are covered here too,
+// and so are the shared text field's rules (Ui/SmatchetInputPure.h: growth, trim, focus on appear,
+// how an edit ends, the multiline keys, the near-full counter). They live in this TU because a new
+// test file needs a tests/CMakeLists.txt edit, and that file is plan-locked by other branches; the
+// move to tests/Core/SmatchetInputPure.test.cpp is owed (debt 2026-11-16-text-field-migration-blocked-surfaces).
 
+#include "StringUtil.h" // TrimCopyAsciiWhitespace: the trim the text field must agree with
 #include "Ui/DialogKeysPure.h"
+#include "Ui/SmatchetInputPure.h"
 #include "Ui/SmatchetWorklogSubmitPure.h"
 
 #include <doctest/doctest.h>
 
+#include <cstring>
 #include <set>
 #include <string>
 
@@ -41,12 +48,26 @@ TEST_CASE("ValidateWorklogSubmission accepts a well-formed time-spent + date pai
     CHECK(ValidateWorklogSubmission("1w 2d 3h 4m", kGoodDate).empty());
 }
 
-TEST_CASE("ValidateWorklogSubmission rejects an empty / unparseable / zero time spent") {
-    // Empty, junk, and an explicit zero all parse to <= 0 seconds and must not dispatch a POST.
-    CHECK(ValidateWorklogSubmission("", kGoodDate) == "Invalid Time spent format. Please use e.g. 2h 30m.");
+TEST_CASE("ValidateWorklogSubmission accepts the natural spellings of a duration (#38)") {
+    // Each of these used to be refused with "Invalid Time spent format" or, worse, mean something else.
+    for (const char* typed : {"1.5h", "90 m", "90", "1h30", "1:30", "2h, 30m", "1 hour 15 mins", ".5d"}) {
+        INFO("typed: " << std::string(typed));
+        CHECK(ValidateWorklogSubmission(typed, kGoodDate).empty());
+    }
+}
+
+TEST_CASE("ValidateWorklogSubmission rejects an empty / unparseable / zero time spent, and says what to fix") {
+    // Nothing logged: ask for a time above zero.
+    const char* kAboveZero = "Enter a time above zero, like 30m or 1h 30m.";
+    CHECK(ValidateWorklogSubmission("", kGoodDate) == kAboveZero);
+    CHECK(ValidateWorklogSubmission("   ", kGoodDate) == kAboveZero);
+    CHECK(ValidateWorklogSubmission("0m", kGoodDate) == kAboveZero);
+    CHECK(ValidateWorklogSubmission("0", kGoodDate) == kAboveZero);
+    // Unreadable: the parser names the part that is wrong.
     CHECK(ValidateWorklogSubmission("not-a-duration", kGoodDate) ==
-          "Invalid Time spent format. Please use e.g. 2h 30m.");
-    CHECK(ValidateWorklogSubmission("0m", kGoodDate) == "Invalid Time spent format. Please use e.g. 2h 30m.");
+          "\"not-a-duration\" is not part of a duration. Use numbers with w, d, h or m, like 2d 4h.");
+    CHECK(ValidateWorklogSubmission("3x", kGoodDate) == "\"x\" is not a time unit. Use w, d, h or m, like 1h 30m.");
+    CHECK(ValidateWorklogSubmission("-1h", kGoodDate) == "A duration cannot be negative. Remove the minus sign.");
 }
 
 TEST_CASE("ValidateWorklogSubmission rejects an unparseable date started") {
@@ -57,7 +78,8 @@ TEST_CASE("ValidateWorklogSubmission rejects an unparseable date started") {
 TEST_CASE("ValidateWorklogSubmission reports the time-spent failure first") {
     // Both inputs bad: the dialog shows one message, and it is the duration one (unchanged from
     // the pre-async ordering, so the user-visible wording does not shift with this fix).
-    CHECK(ValidateWorklogSubmission("junk", "junk") == "Invalid Time spent format. Please use e.g. 2h 30m.");
+    CHECK(ValidateWorklogSubmission("junk", "junk") ==
+          "\"junk\" is not part of a duration. Use numbers with w, d, h or m, like 2d 4h.");
 }
 
 TEST_CASE("CanSubmitWorklog gates a second Save while the POST is in flight") {
@@ -210,12 +232,194 @@ TEST_CASE("ShouldRefocusTimeSpentAfterSaveKey puts the caret back only on a turn
     CHECK(ShouldRefocusTimeSpentAfterSaveKey(true, false, ""));
     CHECK(ShouldRefocusTimeSpentAfterSaveKey(true, false, "junk"));
     CHECK(ShouldRefocusTimeSpentAfterSaveKey(true, false, "0m"));
+    // A natural spelling is a good value, not a turned-down one.
+    CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(true, false, "1.5h"));
+    CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(true, false, "90 m"));
     // The save went out: the dialog is about to close, leave the caret alone.
     CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(true, true, "2h"));
     // A good value turned down for another reason (the date): the error is not in this field.
     CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(true, false, "2h"));
     // Save by the button or Ctrl+Enter: the caret stays where the user had it.
     CHECK_FALSE(ShouldRefocusTimeSpentAfterSaveKey(false, false, "junk"));
+}
+
+TEST_CASE("TimeRemainingProblem: blank and zero are fine, an unreadable value is not") {
+    using smatchet::worklog::TimeRemainingProblem;
+    CHECK_FALSE(TimeRemainingProblem("").IsError());
+    CHECK_FALSE(TimeRemainingProblem("   ").IsError());
+    CHECK_FALSE(TimeRemainingProblem("0m").IsError());
+    CHECK_FALSE(TimeRemainingProblem("1.5h").IsError());
+    CHECK_FALSE(TimeRemainingProblem("90").IsError());
+    CHECK(TimeRemainingProblem("soon").IsError());
+    CHECK(TimeRemainingProblem("5y").Id == TrackerParseExplain::ParseMessageId::DurationUnknownUnit);
+}
+
+TEST_CASE("CanonicalDurationText sends the canonical spelling and leaves unreadable text alone") {
+    using smatchet::worklog::CanonicalDurationText;
+    CHECK(CanonicalDurationText("1.5h") == "1h 30m");
+    CHECK(CanonicalDurationText("90 m") == "1h 30m");
+    CHECK(CanonicalDurationText("90") == "1h 30m");
+    CHECK(CanonicalDurationText("2h 30m") == "2h 30m");
+    CHECK(CanonicalDurationText("45m") == "45m");
+    CHECK(CanonicalDurationText("") == "");
+    CHECK(CanonicalDurationText("soon") == "soon");
+}
+
+TEST_CASE("TypedDurationSeconds is 0 for anything that does not read, so the progress bar stays quiet") {
+    using smatchet::worklog::TypedDurationSeconds;
+    CHECK(TypedDurationSeconds("1.5h") == 5400);
+    CHECK(TypedDurationSeconds("90") == 5400);
+    CHECK(TypedDurationSeconds("") == 0);
+    CHECK(TypedDurationSeconds("soon") == 0);
+    CHECK(TypedDurationSeconds("-1h") == 0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The shared text field (Ui/SmatchetInputPure.h).
+// ---------------------------------------------------------------------------------------------
+
+namespace ti = smatchet::textinput;
+
+TEST_CASE("GrowStringForEdit sizes the string to the new length and hands back its storage") {
+    std::string s = "abc";
+    char* buf = ti::GrowStringForEdit(s, 600);
+    CHECK(s.size() == 600u);
+    CHECK(buf == s.c_str()); // ImGui writes into this exact storage
+    CHECK(s.capacity() >= 600u);
+
+    buf = ti::GrowStringForEdit(s, 2);
+    CHECK(s.size() == 2u);
+    CHECK(buf == s.c_str());
+    CHECK(std::string(buf, 2) == "ab"); // shrinking keeps the head
+
+    ti::GrowStringForEdit(s, -5); // never sent by ImGui; read as empty, never as a huge size
+    CHECK(s.empty());
+}
+
+TEST_CASE("TrimEdgeWhitespace strips space, tab, CR and LF from both ends of a string") {
+    std::string s = " \t host.example.com\r\n";
+    CHECK(ti::TrimEdgeWhitespace(s));
+    CHECK(s == "host.example.com");
+    CHECK_FALSE(ti::TrimEdgeWhitespace(s)); // already clean: reports no change
+    CHECK(s == "host.example.com");
+
+    std::string inner = "a b";
+    CHECK_FALSE(ti::TrimEdgeWhitespace(inner)); // inner spaces stay
+    CHECK(inner == "a b");
+
+    std::string blank = " \t ";
+    CHECK(ti::TrimEdgeWhitespace(blank));
+    CHECK(blank.empty());
+
+    std::string empty;
+    CHECK_FALSE(ti::TrimEdgeWhitespace(empty));
+}
+
+TEST_CASE("TrimEdgeWhitespace strips exactly what TrimCopyAsciiWhitespace strips") {
+    // The Templates add handlers use TrimCopyAsciiWhitespace and the widget uses TrimEdgeWhitespace; a
+    // value must come out the same either way, or a template added with Enter would differ from one
+    // added with the button.
+    const char* const samples[] = {"",     " ",       "a",    " a",       "a ",   "\t a b \r\n",
+                                   "a\vb", "\v a \v", "\f x", "  \n\n  ", "a  b", "\xC2\xA0nbsp"};
+    for (const char* sample : samples) {
+        std::string viaWidget = sample;
+        ti::TrimEdgeWhitespace(viaWidget);
+        CHECK(viaWidget == TrimCopyAsciiWhitespace(sample));
+    }
+}
+
+TEST_CASE("TrimEdgeWhitespace over a fixed buffer is bounded and always NUL-terminates") {
+    char buf[16] = "  key  ";
+    CHECK(ti::TrimEdgeWhitespace(buf, sizeof(buf)));
+    CHECK(std::strcmp(buf, "key") == 0);
+
+    char lead[8] = " abc";
+    CHECK(ti::TrimEdgeWhitespace(lead, sizeof(lead)));
+    CHECK(std::strcmp(lead, "abc") == 0);
+
+    char clean[8] = "abc";
+    CHECK_FALSE(ti::TrimEdgeWhitespace(clean, sizeof(clean)));
+    CHECK(std::strcmp(clean, "abc") == 0);
+
+    char spaces[8] = "   ";
+    CHECK(ti::TrimEdgeWhitespace(spaces, sizeof(spaces)));
+    CHECK(spaces[0] == '\0');
+
+    // No NUL inside the buffer: cut at the last byte rather than read past the end.
+    char full[4] = {'a', 'b', 'c', 'd'};
+    CHECK(ti::TrimEdgeWhitespace(full, sizeof(full)));
+    CHECK(std::strcmp(full, "abc") == 0);
+
+    CHECK_FALSE(ti::TrimEdgeWhitespace(static_cast<char*>(nullptr), 8u));
+    char one[1] = {'x'};
+    CHECK(ti::TrimEdgeWhitespace(one, 0u) == false); // zero size: untouched
+    CHECK(one[0] == 'x');
+}
+
+TEST_CASE("FieldAppearedThisFrame is true only on the first frame of a run of frames") {
+    CHECK(ti::FieldAppearedThisFrame(-1, 0));        // never drawn
+    CHECK(ti::FieldAppearedThisFrame(-1, 500));      // never drawn, late in the session
+    CHECK_FALSE(ti::FieldAppearedThisFrame(41, 42)); // drawn last frame: still showing
+    CHECK(ti::FieldAppearedThisFrame(40, 42));       // skipped a frame: swapped back in
+    CHECK(ti::FieldAppearedThisFrame(10, 300));      // popup reopened much later
+    CHECK(ti::FieldAppearedThisFrame(42, 42));       // drawn twice in one frame is not "still showing"
+}
+
+TEST_CASE("ResolveSingleLineEnd: Esc reverts, anything else that ends the edit commits") {
+    const ti::SingleLineEnd going = ti::ResolveSingleLineEnd(false, true, true);
+    CHECK_FALSE(going.committed); // the edit has not ended: nothing to report, whatever the keys
+    CHECK_FALSE(going.enterCommitted);
+    CHECK_FALSE(going.reverted);
+
+    const ti::SingleLineEnd enter = ti::ResolveSingleLineEnd(true, false, true);
+    CHECK(enter.committed);
+    CHECK(enter.enterCommitted);
+    CHECK_FALSE(enter.reverted);
+
+    // Tab, a click elsewhere, or Ctrl+Enter: committed, but not the field's Enter action.
+    const ti::SingleLineEnd away = ti::ResolveSingleLineEnd(true, false, false);
+    CHECK(away.committed);
+    CHECK_FALSE(away.enterCommitted);
+    CHECK_FALSE(away.reverted);
+
+    const ti::SingleLineEnd esc = ti::ResolveSingleLineEnd(true, true, false);
+    CHECK_FALSE(esc.committed); // a reverted value is never saved or trimmed
+    CHECK_FALSE(esc.enterCommitted);
+    CHECK(esc.reverted);
+}
+
+TEST_CASE("MultilineEscLeavesField only while the composer has the keyboard") {
+    CHECK(ti::MultilineEscLeavesField(true, true));
+    CHECK_FALSE(ti::MultilineEscLeavesField(false, true)); // the second Esc is the dialog's
+    CHECK_FALSE(ti::MultilineEscLeavesField(true, false));
+}
+
+TEST_CASE("MultilineSubmitted: Ctrl+Enter alone submits; Enter and Shift+Enter type a newline") {
+    CHECK(ti::MultilineSubmitted(true, true, true, false, false, false, true));
+    CHECK_FALSE(ti::MultilineSubmitted(false, true, true, false, false, false, true)); // edit still going
+    CHECK_FALSE(ti::MultilineSubmitted(true, true, false, false, false, false, true)); // bare Enter
+    CHECK_FALSE(ti::MultilineSubmitted(true, true, true, true, false, false, true));   // Ctrl+Shift+Enter
+    CHECK_FALSE(ti::MultilineSubmitted(true, true, true, false, true, false, true));   // Ctrl+Alt+Enter
+    CHECK_FALSE(ti::MultilineSubmitted(true, true, true, false, false, true, true));   // Ctrl+Super+Enter
+    CHECK_FALSE(ti::MultilineSubmitted(true, false, true, false, false, false, true)); // ended by a click
+    CHECK_FALSE(ti::MultilineSubmitted(true, true, true, false, false, false, false)); // caller opted out
+}
+
+TEST_CASE("ShowCapacityCounter appears within a tenth of a fixed buffer's end") {
+    // 128-byte buffer: 127 usable bytes; the count shows from 115 (127 - 12).
+    CHECK_FALSE(ti::ShowCapacityCounter(0u, 128u));
+    CHECK_FALSE(ti::ShowCapacityCounter(114u, 128u));
+    CHECK(ti::ShowCapacityCounter(115u, 128u));
+    CHECK(ti::ShowCapacityCounter(127u, 128u)); // full: the next keystroke is dropped
+    // Tiny buffers: a 2-byte buffer is full at 1; a 1-byte buffer holds nothing and is always full.
+    CHECK_FALSE(ti::ShowCapacityCounter(0u, 2u));
+    CHECK(ti::ShowCapacityCounter(1u, 2u));
+    CHECK(ti::ShowCapacityCounter(0u, 1u));
+    CHECK_FALSE(ti::ShowCapacityCounter(0u, 0u));
+    // No overflow on absurd sizes.
+    const std::size_t huge = static_cast<std::size_t>(-1);
+    CHECK_FALSE(ti::ShowCapacityCounter(0u, huge));
+    CHECK(ti::ShowCapacityCounter(huge - 1u, huge));
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -272,6 +476,15 @@ TEST_CASE("GlobalShortcutAllowedUnderModal: zoom and fullscreen still run under 
     CHECK(GlobalShortcutAllowedUnderModal("ui.zoom.out"));
     CHECK(GlobalShortcutAllowedUnderModal("ui.zoom.reset"));
     CHECK(GlobalShortcutAllowedUnderModal("app.fullscreen.toggle"));
+}
+
+TEST_CASE("GlobalShortcutAllowedUnderModal: the focus-scoped gesture commands still run under a modal") {
+    CHECK(GlobalShortcutAllowedUnderModal("ui.list.move_up"));
+    CHECK(GlobalShortcutAllowedUnderModal("ui.list.remove"));
+    CHECK(GlobalShortcutAllowedUnderModal("ui.splitter.grow"));
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal("view.panel.grow")); // names a panel: not what a dialog serves
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.listing.other"));
+    CHECK_FALSE(GlobalShortcutAllowedUnderModal(nullptr));
 }
 
 TEST_CASE("GlobalShortcutAllowedUnderModal: everything that changes state is muted, the palette too") {

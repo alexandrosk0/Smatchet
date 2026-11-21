@@ -4,7 +4,6 @@
 #include "Ui/SmatchetToolbarUi.h"
 
 #include <algorithm>
-#include <cstdio>
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,8 +22,10 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetToolbarUi_detail.h"
 #include "Ui/SmatchetImGuiFonts.h"
+#include "Ui/SmatchetInput.h"
 #include "Ui/SmatchetTheme.h"
 #include "Ui/SmatchetToast.h"
+#include "Ui/GestureKeys.h"
 #include "Ui/SmatchetUiSession.h"
 #include "Ui/TouchInputRouter.h"
 #include "imgui.h"
@@ -32,33 +33,11 @@
 
 namespace {
 
-// DR23 — std::string-backed InputText so an editor field (LuaCode / ArgsJson / CommandId / Tooltip)
-// is never rounded through a fixed char buffer that silently truncates on the first keystroke.
-// Mirrors misc/cpp/imgui_stdlib.h: the buffer IS the std::string's storage and CallbackResize grows
-// it as the user types past capacity. The mutable pointer is taken via a c_str cast, matching
-// imgui_stdlib, so it stays valid under the project's C++14 build where the non-const data overload
-// is unavailable.
-int InputTextStdStringResize(ImGuiInputTextCallbackData* data) {
-    if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
-        auto* str = static_cast<std::string*>(data->UserData);
-        str->resize(static_cast<size_t>(data->BufTextLen));
-        data->Buf = const_cast<char*>(str->c_str());
-    }
-    return 0;
-}
-
-bool InputTextStdString(const char* label, std::string& str, ImGuiInputTextFlags flags = 0) {
-    flags |= ImGuiInputTextFlags_CallbackResize;
-    return ImGui::InputText(label, const_cast<char*>(str.c_str()), str.capacity() + 1, flags, InputTextStdStringResize,
-                            &str);
-}
-
-bool InputTextMultilineStdString(const char* label, std::string& str, const ImVec2& size,
-                                 ImGuiInputTextFlags flags = 0) {
-    flags |= ImGuiInputTextFlags_CallbackResize;
-    return ImGui::InputTextMultiline(label, const_cast<char*>(str.c_str()), str.capacity() + 1, size, flags,
-                                     InputTextStdStringResize, &str);
-}
+// DR23 — every editor field (LuaCode / ArgsJson / CommandId / Tooltip / icon name) is a
+// std::string-backed InputText (SmatchetInput::InputTextStdString), never a fixed char buffer that
+// silently truncates. The resize helper this TU used to own now lives in Ui/SmatchetInput.
+using SmatchetInput::InputTextMultilineStdString;
+using SmatchetInput::InputTextStdString;
 
 const int kArgsOk = static_cast<int>(smatchet::toolbar_editor::ArgsJsonStatus::Ok);
 
@@ -496,6 +475,7 @@ void SmatchetToolbarUi::SyncEditorOpenRequest(AppController& app, TrackerConfig&
         selected_ = editBuf_.Buttons.empty() ? -1 : 0;
     }
     requestEditSelect_ = -1;
+    pendingListFocus_ = -1; // a cursor move left over from the last editing session must not land in this one
     cmdNames_.clear();
     cmdHaystacks_.clear();
     const std::vector<smatchet::cmd::Command> all = app.Commands().All();
@@ -561,6 +541,32 @@ SmatchetToolbarUi::EditorCtx SmatchetToolbarUi::DrawEditorScopeSelector() {
     return EditorCtx{buttons, trackerScope, fa};
 }
 
+bool SmatchetToolbarUi::MoveSelectedButton(std::vector<ToolbarButton>& buttons, int delta) {
+    const int count = static_cast<int>(buttons.size());
+    if (selected_ < 0 || selected_ >= count || (delta != -1 && delta != 1)) {
+        return false;
+    }
+    const int dst = selected_ + delta;
+    if (dst < 0 || dst >= count) {
+        return false;
+    }
+    std::swap(buttons[static_cast<std::size_t>(selected_)], buttons[static_cast<std::size_t>(dst)]);
+    selected_ = dst;
+    pendingListFocus_ = dst;
+    return true;
+}
+
+bool SmatchetToolbarUi::RemoveSelectedButton(std::vector<ToolbarButton>& buttons) {
+    const int count = static_cast<int>(buttons.size());
+    if (selected_ < 0 || selected_ >= count) {
+        return false;
+    }
+    buttons.erase(buttons.begin() + selected_);
+    selected_ = buttons.empty() ? -1 : (std::min)(selected_, static_cast<int>(buttons.size()) - 1);
+    pendingListFocus_ = selected_;
+    return true;
+}
+
 void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
     std::vector<ToolbarButton>& buttons = ctx.buttons;
 
@@ -588,8 +594,7 @@ void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
         selected_ = static_cast<int>(buttons.size()) - 1;
     }
 
-    const int count = static_cast<int>(buttons.size());
-    const bool hasSel = selected_ >= 0 && selected_ < count;
+    const bool hasSel = selected_ >= 0 && selected_ < static_cast<int>(buttons.size());
 
     ImGui::SameLine();
     if (!hasSel) {
@@ -600,20 +605,29 @@ void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
         ++selected_;
     }
     ImGui::SameLine();
-    if (ImGui::Button(SmatchetLocalization::T("common.delete", "Delete")) && hasSel) {
-        buttons.erase(buttons.begin() + selected_);
-        selected_ = buttons.empty() ? -1 : (std::min)(selected_, static_cast<int>(buttons.size()) - 1);
+    if (ImGui::Button(SmatchetLocalization::T("common.delete", "Delete"))) {
+        RemoveSelectedButton(buttons);
     }
+    ImGui::SetItemTooltip(
+        "%s",
+        SmatchetLocalization::T("toolbar.editor.delete_key_hint",
+                                "Also on the keyboard with the list focused: ui.list.remove (rebind it in Shortcuts)"));
     ImGui::SameLine();
-    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.up", "Up")) && hasSel && selected_ > 0) {
-        std::swap(buttons[selected_], buttons[selected_ - 1]);
-        --selected_;
+    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.up", "Up"))) {
+        MoveSelectedButton(buttons, -1);
     }
+    ImGui::SetItemTooltip("%s",
+                          SmatchetLocalization::T(
+                              "toolbar.editor.up_key_hint",
+                              "Also on the keyboard with the list focused: ui.list.move_up (rebind it in Shortcuts)"));
     ImGui::SameLine();
-    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.down", "Down")) && hasSel && selected_ < count - 1) {
-        std::swap(buttons[selected_], buttons[selected_ + 1]);
-        ++selected_;
+    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.down", "Down"))) {
+        MoveSelectedButton(buttons, 1);
     }
+    ImGui::SetItemTooltip(
+        "%s", SmatchetLocalization::T(
+                  "toolbar.editor.down_key_hint",
+                  "Also on the keyboard with the list focused: ui.list.move_down (rebind it in Shortcuts)"));
     if (!hasSel) {
         ImGui::EndDisabled();
     }
@@ -626,6 +640,23 @@ void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
 
     // Left: button list (drag-drop reorder, confined to the active scope).
     ImGui::BeginChild("##tblist", ImVec2(240.0f, -ImGui::GetFrameHeightWithSpacing()), true);
+    // The keyboard equivalents of the drag reorder below and of the Delete button: they act while this list
+    // has the keyboard, on the selected row (Space or Enter selects the row under the keyboard cursor). ImGui's
+    // own arrow navigation also fires on Alt+Up / Alt+Down and moves the cursor one row; the moved row takes
+    // the cursor back below, so the two never leave it on a different row than the one that moved.
+    // This frame's focus only: a mutation never rests on a flag from an earlier frame. Pressing Alt and Down in
+    // the same frame can lose to ImGui's Alt-release menu-layer toggle (NavUpdateWindowing), which moves focus
+    // off the list on the next frame; a person holds Alt before the arrow, which cancels the toggle.
+    const bool listFocused = ImGui::IsWindowFocused();
+    if (smatchet::ui::TakeGestureKey(smatchet::ui::GestureKey::ListMoveUp, listFocused)) {
+        MoveSelectedButton(buttons, -1);
+    }
+    if (smatchet::ui::TakeGestureKey(smatchet::ui::GestureKey::ListMoveDown, listFocused)) {
+        MoveSelectedButton(buttons, 1);
+    }
+    if (smatchet::ui::TakeGestureKey(smatchet::ui::GestureKey::ListRemove, listFocused)) {
+        RemoveSelectedButton(buttons);
+    }
     for (int i = 0; i < static_cast<int>(buttons.size()); ++i) {
         const std::string rowLabel = smatchet::toolbar_editor::EditorRowLabel(buttons[i], ctx.faLoaded);
         ImGui::PushID(i);
@@ -641,6 +672,10 @@ void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
         }
         // The id is the row's place in the list (PushID above), not its label: the label changes as the
         // args go bad and good, and the row must stay the same item while it does.
+        if (pendingListFocus_ == i) {
+            ImGui::SetKeyboardFocusHere(); // the keyboard cursor follows the row it just moved or kept
+            pendingListFocus_ = -1;
+        }
         if (ImGui::Selectable((shownLabel + "###row").c_str(), selected_ == i)) {
             selected_ = i;
         }
@@ -648,6 +683,7 @@ void SmatchetToolbarUi::DrawEditorButtonList(EditorCtx& ctx) {
             ImGui::PopStyleColor();
         }
         smatchet::ui::touch::MarkLastItemAsTouchDragSurface(); // finger drag reorders the button
+        // keyboard-equivalent: ui.list.move_up, ui.list.move_down
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
             ImGui::SetDragDropPayload("SMATCHET_TB_BTN", &i, sizeof(int));
             ImGui::TextUnformatted(rowLabel.c_str());
@@ -766,11 +802,7 @@ void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
         }
 
         if (b.Kind != ToolbarButtonKind::Separator) {
-            char nameBuf[64];
-            std::snprintf(nameBuf, sizeof(nameBuf), "%s", b.IconName.c_str());
-            if (ImGui::InputText(SmatchetLocalization::T("toolbar.editor.icon_name", "Icon name"), nameBuf,
-                                 sizeof(nameBuf))) {
-                b.IconName = nameBuf;
+            if (InputTextStdString(SmatchetLocalization::T("toolbar.editor.icon_name", "Icon name"), b.IconName)) {
                 b.IconGlyph = SmatchetToolbarIconGlyph(b.IconName);
             }
             ImGui::SameLine();

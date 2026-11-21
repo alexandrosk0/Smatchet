@@ -52,6 +52,9 @@ extern "C" void SmatchetRegisterDockSlotLivenessTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterWindowExpandTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDockedTabFocusTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDurationInlineEditCommitTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterTolerantParseInlineErrorTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterFilterDropdownTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterBulkFieldEditTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileViewsConfirmModalTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileViewQuickSwitcherTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileDesktopLayoutRoundtripTests(ImGuiTestEngine* engine);
@@ -65,6 +68,7 @@ extern "C" void SmatchetRegisterCommandPaletteInlineTypingTests(ImGuiTestEngine*
 extern "C" void SmatchetRegisterCommandPaletteDeferredDispatchTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteInputRecoveryTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteCancelTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterGestureKeysTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterGridSearchApplyTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine);
@@ -131,6 +135,9 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterWindowExpandTests(engine);
     SmatchetRegisterDockedTabFocusTests(engine);
     SmatchetRegisterDurationInlineEditCommitTests(engine);
+    SmatchetRegisterTolerantParseInlineErrorTests(engine);
+    SmatchetRegisterFilterDropdownTests(engine);
+    SmatchetRegisterBulkFieldEditTests(engine);
     SmatchetRegisterMobileViewsConfirmModalTests(engine);
     SmatchetRegisterMobileViewQuickSwitcherTests(engine);
     SmatchetRegisterMobileDesktopLayoutRoundtripTests(engine);
@@ -148,6 +155,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterOfflineConflictModalPanesTests(engine);
     SmatchetRegisterOfflineFirstTests(engine);
     SmatchetRegisterFieldViewerModalTests(engine);
+    SmatchetRegisterGestureKeysTests(engine);
 #if defined(SMATCHET_WITH_AI)
     SmatchetRegisterAiAssistantPanelDockSwapTests(engine);
     SmatchetRegisterAiChatPanelTests(engine);

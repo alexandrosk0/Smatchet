@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CompactDateFormat.h"
+#include "TrackerFieldValueParseExplain.h"
 #include "TrackerFieldValueParser.h"
 
 #include <set>
@@ -17,12 +18,53 @@
 namespace smatchet {
 namespace worklog {
 
-/// Validate the two required worklog inputs. Returns an empty string when the submit may
-/// proceed, otherwise the user-facing error to show in the dialog. Wording is the dialog's
-/// historical text, preserved verbatim through the async flip.
+/// A duration the user typed into the dialog, read the tolerant way (INPUT_UX_AUDIT.md #38): "1.5h", "90 m",
+/// "1h30", "1:30". A number with no unit is minutes, Jira's default.
+inline TrackerParseExplain::DurationParse ParseTypedDuration(const std::string& text) {
+    return TrackerParseExplain::ParseDurationInput(text, TrackerParseExplain::BareNumberUnit::Minutes);
+}
+
+/// Seconds in a typed duration; 0 when it is empty or does not parse (the progress bar shows nothing for it).
+inline long long TypedDurationSeconds(const std::string& text) {
+    const TrackerParseExplain::DurationParse parsed = ParseTypedDuration(text);
+    return parsed.Ok ? parsed.Seconds : 0;
+}
+
+/// Why `timeSpent` cannot be logged, or a message with no error when it can. Time spent must be above zero:
+/// a blank or "0m" gets "enter a time above zero", anything unreadable gets the parser's own message.
+inline TrackerParseExplain::ParseMessage TimeSpentProblem(const std::string& timeSpent) {
+    const TrackerParseExplain::DurationParse parsed = ParseTypedDuration(timeSpent);
+    if (parsed.Ok && parsed.Seconds > 0) {
+        return TrackerParseExplain::ParseMessage();
+    }
+    if (parsed.Ok || parsed.Empty) {
+        TrackerParseExplain::ParseMessage m;
+        m.Id = TrackerParseExplain::ParseMessageId::DurationRequiredPositive;
+        return m;
+    }
+    return parsed.Message;
+}
+
+/// Why `timeRemaining` cannot be sent, or no error. Blank is fine (the tracker keeps its own figure) and so is
+/// zero: "nothing left".
+inline TrackerParseExplain::ParseMessage TimeRemainingProblem(const std::string& timeRemaining) {
+    const TrackerParseExplain::DurationParse parsed = ParseTypedDuration(timeRemaining);
+    return (parsed.Ok || parsed.Empty) ? TrackerParseExplain::ParseMessage() : parsed.Message;
+}
+
+/// The text to send for a typed duration: its canonical form ("1h 30m") when it reads, the text untouched
+/// otherwise (the validation above has already refused what must not go out).
+inline std::string CanonicalDurationText(const std::string& typed) {
+    const TrackerParseExplain::DurationParse parsed = ParseTypedDuration(typed);
+    return parsed.Ok ? parsed.Canonical : typed;
+}
+
+/// Validate the worklog inputs. Returns an empty string when the submit may proceed, otherwise the
+/// user-facing error to show in the dialog: the same text the field shows under itself while typing.
 inline std::string ValidateWorklogSubmission(const std::string& timeSpent, const std::string& dateStarted) {
-    if (ParseWorkDurationToSeconds(timeSpent) <= 0) {
-        return "Invalid Time spent format. Please use e.g. 2h 30m.";
+    const TrackerParseExplain::ParseMessage problem = TimeSpentProblem(timeSpent);
+    if (problem.IsError()) {
+        return TrackerParseExplain::DescribeParseMessage(problem);
     }
     ParsedJiraDateTime parsed;
     if (!TryParseJiraDateTime(dateStarted, parsed)) {
@@ -35,7 +77,7 @@ inline std::string ValidateWorklogSubmission(const std::string& timeSpent, const
 /// Time spent was turned down (nothing went out and it does not parse), so the caret goes into that
 /// field to fix it instead of leaving the user to click.
 inline bool ShouldRefocusTimeSpentAfterSaveKey(bool saveKeyPressed, bool submitInFlight, const std::string& timeSpent) {
-    return saveKeyPressed && !submitInFlight && ParseWorkDurationToSeconds(timeSpent) <= 0;
+    return saveKeyPressed && !submitInFlight && TimeSpentProblem(timeSpent).IsError();
 }
 
 /// Whether the dialog's Save button may fire. False while a submit is already in flight, so a

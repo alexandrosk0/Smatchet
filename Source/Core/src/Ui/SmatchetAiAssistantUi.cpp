@@ -1,4 +1,5 @@
 #include "SmatchetAiAssistantUi.h"
+#include "DraftStore.h"
 
 #if defined(SMATCHET_WITH_AI)
 
@@ -923,7 +924,109 @@ std::vector<AiContextBlock> BuildSendContext(AppController& app, const UiDrawSes
 // Direction-aware seed of the process-static char buffer from the model-side
 // `assistantInputBuf`, running before InputTextMultiline draws. Extracted from
 // DrawInputAndButtons; behaviour byte-identical. See AiAssistantInputSeedDecision.h.
+// ---- Clear conversation, with Undo (docs/plans/input-ux-w2-drafts-undo.md; INPUT_UX_AUDIT.md #90).
+// The clear is immediate and local: the in-memory history moves into the toast's undo. The persisted
+// rows are deleted only when the undo window ends (the commit), so Undo only has to put the vectors back.
+// A message sent while the clear is still undoable settles it first (SettleChatClearUndo), so the delete
+// can never reach rows stored after it.
+std::uint64_t s_chatClearUndoId = 0;
+
+void SettleChatClearUndo() {
+    if (s_chatClearUndoId == 0) {
+        return;
+    }
+    const std::uint64_t id = s_chatClearUndoId;
+    s_chatClearUndoId = 0;
+    SmatchetToastManager::Instance().CommitUndo(id);
+}
+
+// Deletes every stored row. The worker no-ops if chat_persist isn't running.
+void EnqueueClearStoredChat() {
+    smatchet::ai::chat_persist::Op clearOp;
+    clearOp.kind = smatchet::ai::chat_persist::OpKind::ClearAll;
+    smatchet::ai::chat_persist::Enqueue(std::move(clearOp));
+}
+
+// What a clear shows besides the turns: the partial reply, the last error and the render caches.
+void ResetChatPanelState(UiDrawSession& d) {
+    d.assistantScrollToMessageIndex = -1;
+    d.assistantStreamBuf.clear();
+    d.assistantLastError.clear();
+    // Drop the per-conversation render caches (plan / height / hover) so their now-orphaned entries
+    // don't linger for the rest of the session (Phase 4).
+    ClearAiRenderCaches();
+}
+
+// Only called while no reply is coming in (the Clear button is disabled then): a reply that lands inside
+// the undo window would be stored after the turns held here, and the delayed delete would take it too.
+// Every other writer of the history is a send, and DispatchAiSend settles the clear first.
+void ClearConversationWithUndo(UiDrawSession& d) {
+    SettleChatClearUndo(); // an earlier clear is final before this one starts
+    if (d.assistantHistory.empty()) {
+        // Nothing in memory to hold (and so nothing to undo): clear the panel and what is stored, now.
+        ResetChatPanelState(d);
+        EnqueueClearStoredChat();
+        return;
+    }
+    struct HeldChat {
+        std::vector<AiMessage> History;
+        std::vector<std::int64_t> RowIds;
+    };
+    const std::shared_ptr<HeldChat> held = std::make_shared<HeldChat>();
+    held->History = std::move(d.assistantHistory);
+    held->RowIds = std::move(d.assistantHistoryRowIds);
+    d.assistantHistory.clear();
+    d.assistantHistoryRowIds.clear();
+    ResetChatPanelState(d);
+    UiDrawSession* const dp = &d;
+    s_chatClearUndoId = SmatchetToastManager::Instance().PushUndoable(
+        SmatchetLocalization::T("assistant.chat_cleared", "Conversation cleared"),
+        SmatchetLocalization::T("assistant.chat_cleared_body", "Undo brings it back."), 8000,
+        [dp, held]() {
+            s_chatClearUndoId = 0;
+            if (!dp->assistantHistory.empty()) {
+                // Not reachable while the invariant above holds. If it ever is, the stored turns are
+                // still on disk: say so rather than leave a silent half-restore.
+                LOG_WARN("AiAssistantUi: the cleared conversation was not restored, new turns were added meanwhile");
+                SmatchetToastManager::Instance().Push(
+                    SmatchetLocalization::T("assistant.chat_restore_refused", "Conversation not restored"),
+                    SmatchetLocalization::T("assistant.chat_restore_refused_body",
+                                            "New messages were added after it was cleared."),
+                    ToastType::Warning);
+                return;
+            }
+            dp->assistantHistory = std::move(held->History);
+            dp->assistantHistoryRowIds = std::move(held->RowIds);
+            dp->assistantScrollToMessageIndex = static_cast<int>(dp->assistantHistory.size()) - 1;
+        },
+        []() {
+            s_chatClearUndoId = 0;
+            EnqueueClearStoredChat();
+        });
+}
+
+/// The draft store surface of the message box (DraftStore.h): one draft, no scope.
+constexpr const char* kAssistantDraftSurface = "assistant";
+
+/// Once per run, when the draft store has finished reading its file: an unsent prompt kept by an earlier
+/// run goes into the (still empty) model-side buffer, from where the seed below copies it into the box.
+void RestoreAssistantDraftOnce(UiDrawSession& d) {
+    static bool s_restoreDone = false;
+    if (s_restoreDone || !smatchet::drafts::IsLoaded()) {
+        return;
+    }
+    s_restoreDone = true;
+    if (!d.assistantInputBuf.empty() || s_inputCharBuf[0] != '\0') {
+        return; // text arrived another way (Lua, dictation) before the draft: that is newer
+    }
+    smatchet::drafts::DraftEntry draft;
+    if (smatchet::drafts::Get(kAssistantDraftSurface, std::string(), draft) && !draft.Text.empty()) {
+        d.assistantInputBuf = draft.Text.substr(0, static_cast<std::size_t>(kInputBufCap) - 1);
+    }
+}
+
 void SeedInputBufferFromModel(UiDrawSession& d) {
+    RestoreAssistantDraftOnce(d);
     // Char buffer for InputTextMultiline lives at namespace scope so the
     // panel-open / panel-close path can drive dictation register / unregister
     // without exposing a getter. Mirroring through a std::string per-frame
@@ -1088,6 +1191,7 @@ void DispatchAiSend(AppController& app, UiDrawSession& d, const ViewDefinition* 
     // independently of the UI state. Grow `assistantHistoryRowIds` in lock-step
     // with `assistantHistory`; the worker's on-append callback backfills the
     // sentinel `-1` slot with the SQLite row id when the INSERT completes.
+    SettleChatClearUndo(); // a conversation cleared a moment ago is final before this message is stored
     AiMessage persistCopy = userMsg;
     const std::size_t newIdx = d.assistantHistory.size();
     d.assistantHistory.push_back(std::move(userMsg));
@@ -1099,6 +1203,7 @@ void DispatchAiSend(AppController& app, UiDrawSession& d, const ViewDefinition* 
     }
     d.assistantInputBuf.clear();
     std::memset(s_inputCharBuf.data(), 0, s_inputCharBuf.size());
+    smatchet::drafts::Erase(kAssistantDraftSurface, std::string()); // sent: no unsent prompt to keep
     // NOTE — the `ctrl->Submit(...)` call was hoisted to the top of
     // `DispatchAiSend` (above) so the success/failure ack gates the
     // `assistantInFlight = true` flip + the history Append. Reaching this
@@ -1284,6 +1389,8 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // state.
     if (d.assistantInputBuf != s_inputCharBuf.data()) {
         d.assistantInputBuf.assign(s_inputCharBuf.data());
+        // Kept as it is typed (an empty box erases it): a restart or a crash does not lose a long prompt.
+        smatchet::drafts::Put(kAssistantDraftSurface, std::string(), d.assistantInputBuf);
     }
 
     // Surface any paste/splice truncation the resize callback flagged this frame.
@@ -1438,41 +1545,35 @@ void DrawAssistantHeaderRow(AppController& app, UiDrawSession& d) {
     }
     ImGui::SameLine();
     {
-        // Phase 7 of ai-chat-claude-desktop-parity. Clear-chat header button —
-        // FA trash glyph when the icon font is loaded, short text fallback
-        // otherwise. Opens a confirm popup (2-button) so a stray click can't
-        // wipe the conversation. Confirm wipes both the in-memory vectors AND
-        // the persisted SQLite rows via chat_persist::Op{ClearAll}; cancel is
-        // a no-op. The confirm popup is OpenPopup-modal, so it can't race a
-        // concurrent Send (the input row is behind it).
+        // Phase 7 of ai-chat-claude-desktop-parity. Clear-chat header button — FA trash glyph when the icon
+        // font is loaded, short text fallback otherwise. It asks first; the confirmed clear can then be
+        // undone from its toast for a few seconds (ClearConversationWithUndo).
         const bool faLoaded = SmatchetAreFaIconsLoaded();
         const char* clearLabel = faLoaded ? ICON_FA_TRASH : "Clear";
+        // Not while a reply is coming in: it would be stored after the cleared turns (see
+        // ClearConversationWithUndo). Stop the reply first (Esc), or wait for it.
+        ImGui::BeginDisabled(d.assistantInFlight);
         if (ImGui::SmallButton(clearLabel)) {
             ImGui::OpenPopup("##ConfirmClearChat");
         }
-        ImGui::SetItemTooltip("Clear conversation history (asks for confirmation).");
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", d.assistantInFlight
+                                        ? "A reply is coming in. Stop it (Esc) or wait for it before clearing."
+                                        : "Clear conversation history (asks for confirmation).");
+        }
         // Keys: smatchet::ui::ConfirmFooter. Destructive, so Cancel takes the keyboard on open and Enter cancels.
         static smatchet::ui::DialogScopeState s_clearChatDialog;
         if (smatchet::ui::BeginDialog(s_clearChatDialog, "##ConfirmClearChat", nullptr,
                                       ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
             ImGui::TextUnformatted("Clear the entire conversation?");
-            ImGui::TextDisabled("In-memory history + persisted SQLite rows are deleted. This cannot be undone.");
+            ImGui::TextDisabled("Undo (or Ctrl+Z) brings it back for a few seconds; after that the stored history is "
+                                "deleted.");
             ImGui::Spacing();
             smatchet::ui::ConfirmFooterSpec spec = smatchet::ui::DestructiveFooter("Clear");
             spec.ButtonSize = ImVec2(120, 0);
             if (smatchet::ui::ConfirmFooter(s_clearChatDialog, spec) == smatchet::dialogkeys::ConfirmPick::Primary) {
-                d.assistantHistory.clear();
-                d.assistantHistoryRowIds.clear();
-                d.assistantScrollToMessageIndex = -1;
-                d.assistantStreamBuf.clear();
-                d.assistantLastError.clear();
-                // Drop the per-conversation render caches (plan / height / hover) so their
-                // now-orphaned entries don't linger for the rest of the session (Phase 4).
-                ClearAiRenderCaches();
-                // Worker no-ops if chat_persist isn't running; safe to call.
-                smatchet::ai::chat_persist::Op clearOp;
-                clearOp.kind = smatchet::ai::chat_persist::OpKind::ClearAll;
-                smatchet::ai::chat_persist::Enqueue(std::move(clearOp));
+                ClearConversationWithUndo(d);
                 ImGui::CloseCurrentPopup();
             }
             smatchet::ui::EndDialog(s_clearChatDialog);

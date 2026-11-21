@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <initializer_list>
 #include <iterator>
 #include <mutex>
 #include <string>
@@ -390,6 +391,59 @@ void MigrateQuickCreateKeybindingV1(const nlohmann::json& j, TrackerConfig& cfg)
     cfg.MigratedQuickCreateHotkeyV1 = true;
 }
 
+// One-shot migration: seed the gesture-key bindings (docs/plans/input-ux-w2-gesture-keys.md) into a config
+// saved before they existed. Same replace-not-merge rationale and the same guard as
+// MigrateMenuShortcutKeybindingsV1: a (command id, args) identity the config already binds is left as the
+// user set it, and the flag keeps a binding the user clears after the seed from coming back.
+void MigrateGestureKeybindingsV1(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedGestureKeysV1 = j.value("migrated_gesture_keys_v1", false);
+    if (cfg.MigratedGestureKeysV1) {
+        return;
+    }
+    static const char* const kGestureCommandIds[] = {"ui.list.move_up",  "ui.list.move_down",  "ui.list.remove",
+                                                     "ui.splitter.grow", "ui.splitter.shrink", "view.panel.grow",
+                                                     "view.panel.shrink"};
+    const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
+    int seeded = 0;
+    for (const Keybinding& def : defaults.Bindings) {
+        bool isGesture = false;
+        for (const char* id : kGestureCommandIds) {
+            if (def.CommandId == id) {
+                isGesture = true;
+                break;
+            }
+        }
+        if (isGesture && cfg.Keybindings.FindBindingIndex(def.CommandId, def.ArgsJson) < 0) {
+            cfg.Keybindings.Bindings.push_back(def);
+            ++seeded;
+        }
+    }
+    if (seeded > 0) {
+        LOG_INFO("ConfigManager: seeded %d gesture-key binding(s) into an existing config (migrated_gesture_keys_v1)",
+                 seeded);
+    }
+    cfg.MigratedGestureKeysV1 = true;
+}
+
+// One-shot migration: seed the grid search focus binding ("grid.search.focus", Ctrl+F and /)
+// into a config saved before the command existed, for the same replace-not-merge reason as the
+// menu shortcut migration. The row is copied from the defaults table, so it arrives with both
+// combos, and a binding the user already gave the command is kept as it is.
+void MigrateGridSearchFocusKeybindingV1(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedGridSearchFocusHotkeyV1 = j.value("migrated_grid_search_focus_hotkey_v1", false);
+    if (cfg.MigratedGridSearchFocusHotkeyV1) {
+        return;
+    }
+    const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
+    const int di = defaults.FindBindingIndex("grid.search.focus", "{}");
+    if (di >= 0 && cfg.Keybindings.FindBindingIndex("grid.search.focus", "{}") < 0) {
+        cfg.Keybindings.Bindings.push_back(defaults.Bindings[static_cast<std::size_t>(di)]);
+        LOG_INFO("ConfigManager: seeded the grid search focus keybinding into an existing config "
+                 "(migrated_grid_search_focus_hotkey_v1)");
+    }
+    cfg.MigratedGridSearchFocusHotkeyV1 = true;
+}
+
 // One-shot migration: widen the zoom bindings from their single legacy combo to the
 // full alias set (Ctrl+= / Ctrl+Shift+= / Ctrl+NumAdd, etc). Needed for the same
 // replace-not-merge reason as the migrations above — from_json REPLACES the binding
@@ -549,6 +603,32 @@ void MigrateZoomHotkeyAliasesV3(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMultiHotkeyZoomV3 = true;
 }
 
+// One-shot migration: seed the primary-action bindings the input UX audit added (§ 4.4:
+// preferences.search.focus, view.next, view.previous) into a config saved before those commands
+// existed. Same replace-not-merge rationale as MigrateMenuShortcutKeybindingsV1. Each row is copied
+// from Defaults(), and a command the user already bound keeps the user's binding.
+void MigrateActionKeysV1(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedActionKeysV1 = j.value("migrated_action_keys_v1", false);
+    if (cfg.MigratedActionKeysV1) {
+        return;
+    }
+    const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
+    int seeded = 0;
+    for (const char* commandId : {"preferences.search.focus", "view.next", "view.previous"}) {
+        const int di = defaults.FindBindingIndex(commandId, "{}");
+        if (di >= 0 && cfg.Keybindings.FindBindingIndex(commandId, "{}") < 0) {
+            cfg.Keybindings.Bindings.push_back(defaults.Bindings[static_cast<std::size_t>(di)]);
+            ++seeded;
+        }
+    }
+    if (seeded > 0) {
+        LOG_INFO("ConfigManager: seeded %d primary-action keybinding(s) into an existing config "
+                 "(migrated_action_keys_v1)",
+                 seeded);
+    }
+    cfg.MigratedActionKeysV1 = true;
+}
+
 // First-run Lua script consent gate. Hand-parsed (path + sha-256 objects) so the pure
 // LuaScriptConsent.h stays nlohmann-free. Malformed entries are skipped, not fatal.
 void LoadLuaConsentFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -677,6 +757,8 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
     MigrateMenuShortcutKeybindingsV1(j, cfg);
     MigrateMenuShortcutKeybindingsV2(j, cfg);
     MigrateQuickCreateKeybindingV1(j, cfg);
+    MigrateGestureKeybindingsV1(j, cfg);
+    MigrateGridSearchFocusKeybindingV1(j, cfg);
     // Last: the seeding migrations above pull straight from Defaults(), which already
     // carries the alias sets, so a freshly-seeded row arrives complete and V1/V2's
     // exact-legacy-match guards correctly skip it. V3 then appends any missing
@@ -684,6 +766,8 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
     MigrateZoomHotkeyAliasesV1(j, cfg);
     MigrateZoomHotkeyAliasesV2(j, cfg);
     MigrateZoomHotkeyAliasesV3(j, cfg);
+    // After the zoom passes, which only touch zoom rows; seeds whole rows copied from Defaults().
+    MigrateActionKeysV1(j, cfg);
 }
 
 // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's

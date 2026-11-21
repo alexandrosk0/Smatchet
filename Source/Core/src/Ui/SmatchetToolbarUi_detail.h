@@ -17,6 +17,7 @@
 #include "Config/KeybindingsConfig.h" // BoundHotkeyDisplayAll — tooltip shortcut resolution
 #include "Config/ToolbarConfig.h"
 #include "Json/BoundedJsonParse.h"
+#include "TextMatchPure.h"
 #include "Ui/SmatchetIconPickerUi.h" // SmatchetToolbarIconGlyph
 
 namespace smatchet {
@@ -126,8 +127,9 @@ inline bool ArgsTextRuns(const std::string& text) {
 
 // Indices into `names`, filtered and ranked for the editor's command list. `haystacks[i]` is the text
 // entry i is matched against (its name plus its title); a missing entry falls back to the name. The query
-// is trimmed. An empty query keeps every entry in its given order. Otherwise the match is the command
-// palette's: case-insensitive, the query's characters in order, best score first, ties by name.
+// is trimmed. An empty query keeps every entry in its given order. Otherwise the match is the shared
+// matcher's (TextMatchPure.h): case-folded words in any order, letters in order only when no entry holds
+// every word as written, best score first, ties by name.
 inline std::vector<int> RankCommandMatches(const std::vector<std::string>& names,
                                            const std::vector<std::string>& haystacks, const std::string& rawQuery) {
     const std::string query = TrimAscii(rawQuery);
@@ -143,6 +145,12 @@ inline std::vector<int> RankCommandMatches(const std::vector<std::string>& names
         }
     }
     if (!query.empty()) {
+        // The shared exact-first rule: when an entry holds every word as written (FuzzyScore puts those above
+        // kMaxScore), entries that only hold the letters in order are left out.
+        const auto exact = [&scores](int i) { return scores[static_cast<std::size_t>(i)] > textmatch::kMaxScore; };
+        if (std::any_of(out.begin(), out.end(), exact)) {
+            out.erase(std::remove_if(out.begin(), out.end(), [&exact](int i) { return !exact(i); }), out.end());
+        }
         std::stable_sort(out.begin(), out.end(), [&](int a, int b) {
             const std::size_t ia = static_cast<std::size_t>(a);
             const std::size_t ib = static_cast<std::size_t>(b);

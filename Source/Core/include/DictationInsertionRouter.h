@@ -65,6 +65,19 @@ class DictationInsertionRouter : public IDictationHost {
     /// is always the UI thread.
     void SetRecording(bool active);
 
+    /// Cancel the clip being recorded (Esc or Cancel on the recording overlay): the recording indicator
+    /// goes off now, and the release that ends the press drops the audio instead of transcribing and
+    /// inserting it. UI thread; lock-free.
+    void RequestDiscard();
+
+    /// True once per requested discard, then false (test-and-clear). Read by the release worker after it
+    /// stops the capture. Any thread; lock-free.
+    bool TakeDiscardRequest();
+
+    /// Forget a discard nobody took. The press that starts a new clip calls it, so a cancel that landed
+    /// after the previous release cannot drop the next clip. Any thread; lock-free.
+    void ClearDiscardRequest();
+
     /// Worker -> UI hand-off for the per-frame amplitude meter. The capture
     /// thread writes the peak |sample| / 32768.0 seen in the last drained
     /// chunk; the overlay reads on every frame. `std::atomic<float>` is
@@ -185,6 +198,7 @@ class DictationInsertionRouter : public IDictationHost {
     // Set/read across threads — no mutex round-trip on the UI poll path.
     std::atomic<bool> recording_{false};
     std::atomic<bool> transcribing_{false};
+    std::atomic<bool> discardRequested_{false};
     std::atomic<float> lastPeakAmplitude_{0.0f};
 
     // Set by `InsertIntoFocusedInputText` when a splice lands into a buf whose

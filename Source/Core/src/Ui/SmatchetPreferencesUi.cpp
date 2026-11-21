@@ -41,13 +41,15 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetTheme.h"
+#include "Ui/SmatchetInput.h"
 #include "Ui/SmatchetSecretInput.h"
 #include "Ui/SmatchetHotkeyCapture.h"
+#include "Ui/SmatchetInlineError.h"
 #include "Ui/SmatchetIconButtons.h"
 
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
-#include "imgui_internal.h" // ClearActiveID
+#include "imgui_internal.h" // ClearActiveID, GImGui->LastItemData
 #include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -168,11 +170,48 @@ struct PrefsOpenFocus {
 };
 PrefsOpenFocus s_prefsOpenFocus;
 
+// The `preferences.search.focus` request (Ui/SmatchetPrefsSearchFocus.h): the ImGui frame it was made on,
+// or -1 for none. It waits while a popup holds the keyboard and expires after kPrefsSearchFocusFrames, so a
+// window that never came up does not take the caret later.
+int s_prefsSearchFocusRequestFrame = -1;
+constexpr int kPrefsSearchFocusFrames = 30;
+
+// The search box's id as of its last draw. Lets the next frame tell, before the box draws, whether an Esc
+// was aimed at it: ImGui's nav cancel has usually taken the caret out by then.
+ImGuiID s_prefsSearchInputId = 0;
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+int s_prefsFirstMatchFocusCount = 0;
+#endif
+
+// PreferencesFilter::RequestFocusOnFirstMatch hook: the keyboard goes to the next item, the matched
+// setting's widget. Called from inside ShowSetting, in the window that draws that setting. ImGui's own
+// tabbing request only activates an item that takes text; a checkbox, button or combo is focused, not
+// pressed, so Enter in the search never changes a setting.
+void FocusNextPrefsItem() {
+#if defined(SMATCHET_BUILD_UI_TESTS)
+    ++s_prefsFirstMatchFocusCount;
+#endif
+    ::ImGui::SetKeyboardFocusHere();
+}
+
 } // namespace
+
+namespace smatchet {
+namespace ui {
+void RequestPrefsSearchFocus() { s_prefsSearchFocusRequestFrame = ::ImGui::GetFrameCount(); }
+#if defined(SMATCHET_BUILD_UI_TESTS)
+int PrefsSearchFirstMatchFocusCountForTest() { return s_prefsFirstMatchFocusCount; }
+#endif
+} // namespace ui
+} // namespace smatchet
 
 void SmatchetUI::resetPreferencesWindowState(UiDrawSession& d) {
     d.preferencesBuffersLoaded = false;
     s_prefsOpenFocus = PrefsOpenFocus{};
+    // A query is about one visit: the next open starts on the full settings, not a stale filtered pane.
+    d.prefsSearchBuf[0] = '\0';
+    s_prefsSearchFocusRequestFrame = -1;
     d.mcpPrefsSavedHintUntil = {};
     // Tracker "Test connection" verdict is close-scoped: reopening must not show a stale
     // "Connected" for credentials edited since. The generation bump makes any still-running
@@ -407,12 +446,69 @@ void FocusNextItemIfOpenTarget(const char* buf) {
     }
 }
 
-// One credential text row. Takes the keyboard when it is this open's focus target, and returns
-// true on the frame it was committed with a bare Enter (the Tracker page runs Test connection).
-bool CredentialInputText(const char* label, char* buf, std::size_t bufSize, ImGuiInputTextFlags flags = 0) {
+// One credential text row (the shared text field, Ui/SmatchetInput.h). Takes the keyboard when it is
+// this open's focus target, and returns true on the frame it was committed with a bare Enter (the
+// Tracker page runs Test connection). A click selects the value, so a pasted domain or URL replaces
+// it, and edge whitespace is dropped as the edit ends, before Test connection reads the buffer.
+// `hint` is an example value shown in the empty field: data, so it is not translated.
+bool CredentialInputText(const char* label, char* buf, std::size_t bufSize, ImGuiInputTextFlags flags = 0,
+                         const char* hint = nullptr) {
     FocusNextItemIfOpenTarget(buf);
-    ImGui::InputText(label, buf, bufSize, flags);
-    return SmatchetTextInputCommittedWithEnter();
+    SmatchetInput::TextOptions opts;
+    opts.hint = hint;
+    opts.selectAllOnFocus = true;
+    opts.trimOnCommit = true;
+    opts.flags = flags;
+    return SmatchetInput::TextBuf(label, buf, bufSize, opts).enterCommitted;
+}
+
+// What the last pasted site URL was turned into, for the dim "Using ..." line under that field.
+struct SiteRewriteNote {
+    const char* Buf = nullptr;
+    std::string Text;
+};
+SiteRewriteNote g_siteRewriteNote;
+
+// Copies `value` into `buf` when `buf` is empty and the value fits: a URL that carries an owner, a repo or a
+// workspace fills the field for it, never overwrites one the user has already set.
+void FillIfEmpty(char* buf, std::size_t bufSize, const std::string& value) {
+    if (buf[0] == '\0' && !value.empty() && value.size() < bufSize) {
+        std::memcpy(buf, value.c_str(), value.size() + 1);
+    }
+}
+
+// A tracker site field (#80): takes a pasted browser URL and rewrites it to the plain form once the caret leaves,
+// saying what it is now using; text that cannot be a site gets the reason under it. `outRewrite` reports what a
+// rewrite found (owner, repo, workspace) so the caller can fill its neighbours. `hint` is the example value shown
+// in the empty field.
+bool SiteInputText(const char* label, char* buf, std::size_t bufSize, TrackerInputNormalise::SiteField kind,
+                   const char* hint, TrackerInputNormalise::SiteUrlParse* outRewrite = nullptr) {
+    const bool enterPressed = CredentialInputText(label, buf, bufSize, ImGuiInputTextFlags_CharsNoBlank, hint);
+    // The error or "Using ..." line drawn below must not become the last item: the caller's SetItemTooltip
+    // right after this call means the field.
+    const ImGuiLastItemData field = GImGui->LastItemData;
+    const bool leftAfterEdit = ImGui::IsItemDeactivatedAfterEdit();
+    const bool active = ImGui::IsItemActive();
+    const TrackerInputNormalise::SiteUrlParse parse = TrackerInputNormalise::NormaliseSiteField(buf, kind);
+    if (leftAfterEdit && parse.Ok && parse.Rewritten && parse.Value.size() < bufSize) {
+        std::memcpy(buf, parse.Value.c_str(), parse.Value.size() + 1);
+        g_siteRewriteNote.Buf = buf;
+        g_siteRewriteNote.Text = parse.Value;
+        if (outRewrite != nullptr) {
+            *outRewrite = parse;
+        }
+    }
+    if (active && g_siteRewriteNote.Buf == buf) {
+        g_siteRewriteNote = SiteRewriteNote();
+    }
+    if (!parse.Ok && buf[0] != '\0') {
+        smatchet::ui::DrawInlineParseError(parse.Message);
+    } else if (g_siteRewriteNote.Buf == buf && !g_siteRewriteNote.Text.empty()) {
+        ImGui::TextDisabled(
+            "%s", SmatchetLocalization::Format("prefs.site.using", "Using %s", g_siteRewriteNote.Text.c_str()));
+    }
+    GImGui->LastItemData = field;
+    return enterPressed;
 }
 
 // The masked variant of CredentialInputText.
@@ -509,10 +605,18 @@ void DrawTrackerJiraExtraBackends(UiDrawSession& d) {
         }
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_add_domain")) {
-        ImGui::InputTextWithHint("##JiraAddDomain", "other.atlassian.net", d.extraJiraAddDomainBuf,
-                                 sizeof(d.extraJiraAddDomainBuf), ImGuiInputTextFlags_CharsNoBlank);
+        // Enter adds the site like the button does, and the caret stays for the next one.
+        SmatchetInput::TextOptions addOpts;
+        addOpts.hint = "other.atlassian.net";
+        addOpts.selectAllOnFocus = true;
+        addOpts.trimOnCommit = true;
+        addOpts.refocusAfterEnter = true;
+        addOpts.flags = ImGuiInputTextFlags_CharsNoBlank;
+        const bool enterAdds =
+            SmatchetInput::TextBuf("##JiraAddDomain", d.extraJiraAddDomainBuf, sizeof(d.extraJiraAddDomainBuf), addOpts)
+                .enterCommitted;
         ImGui::SameLine();
-        if (ImGui::Button(SmatchetLocalization::T("prefs.tracker.jira_extras.add", "Add Jira site"))) {
+        if (ImGui::Button(SmatchetLocalization::T("prefs.tracker.jira_extras.add", "Add Jira site")) || enterAdds) {
             const std::string host = smatchet::jira_backends::NormalizeJiraHost(d.extraJiraAddDomainBuf);
             bool dup = host.empty() || smatchet::jira_backends::HostsMatch(d.extraJiraAddDomainBuf, d.domainBuf);
             for (std::size_t i = 0; !dup && i < d.extraJiraRows.size(); ++i) {
@@ -541,13 +645,13 @@ bool DrawTrackerJiraConfig(UiDrawSession& d, bool chrome) {
         ImGui::TextUnformatted("Jira Configuration (Atlassian Cloud)");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_domain")) {
-        enterPressed =
-            CredentialInputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank) ||
-            enterPressed;
-        ImGui::SetItemTooltip("e.g. companyname.atlassian.net");
+        enterPressed = SiteInputText("Domain", d.domainBuf, sizeof(d.domainBuf),
+                                     TrackerInputNormalise::SiteField::JiraDomain, "companyname.atlassian.net") ||
+                       enterPressed;
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_email")) {
-        enterPressed = CredentialInputText("Email", d.emailBuf, sizeof(d.emailBuf)) || enterPressed;
+        enterPressed =
+            CredentialInputText("Email", d.emailBuf, sizeof(d.emailBuf), 0, "name@company.com") || enterPressed;
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_api_token")) {
         enterPressed = CredentialSecretInput("API Token", d.tokenBuf, sizeof(d.tokenBuf)) || enterPressed;
@@ -577,10 +681,11 @@ bool DrawTrackerPlaneConfig(UiDrawSession& d, bool chrome) {
         ImGui::TextUnformatted("Plane Configuration (plane.so)");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.plane_url")) {
-        enterPressed =
-            CredentialInputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf), ImGuiInputTextFlags_CharsNoBlank) ||
-            enterPressed;
-        ImGui::SetItemTooltip("e.g. https://api.plane.so");
+        TrackerInputNormalise::SiteUrlParse found;
+        enterPressed = SiteInputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf),
+                                     TrackerInputNormalise::SiteField::PlaneUrl, "https://api.plane.so", &found) ||
+                       enterPressed;
+        FillIfEmpty(d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf), found.WorkspaceSlug);
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.plane_workspace")) {
         enterPressed = CredentialInputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf),
@@ -611,9 +716,13 @@ bool DrawTrackerGitHubConfig(UiDrawSession& d, bool chrome) {
         ImGui::TextUnformatted("GitHub Configuration (github.com or Enterprise)");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_base_url")) {
-        enterPressed = CredentialInputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf),
-                                           ImGuiInputTextFlags_CharsNoBlank) ||
-                       enterPressed;
+        TrackerInputNormalise::SiteUrlParse found;
+        enterPressed =
+            SiteInputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf),
+                          TrackerInputNormalise::SiteField::GitHubBaseUrl, "https://api.github.com", &found) ||
+            enterPressed;
+        FillIfEmpty(d.githubOwnerBuf, sizeof(d.githubOwnerBuf), found.Owner);
+        FillIfEmpty(d.githubRepoBuf, sizeof(d.githubRepoBuf), found.Repo);
         ImGui::SetItemTooltip("e.g. https://api.github.com or https://github.your-corp.com/api/v3");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_pat")) {
@@ -622,9 +731,11 @@ bool DrawTrackerGitHubConfig(UiDrawSession& d, bool chrome) {
         ImGui::SetItemTooltip("Fine-grained PAT with repo + issues + projects (read/write) scope.");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_owner")) {
-        enterPressed = CredentialInputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf),
-                                           ImGuiInputTextFlags_CharsNoBlank) ||
+        TrackerInputNormalise::SiteUrlParse found;
+        enterPressed = SiteInputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf),
+                                     TrackerInputNormalise::SiteField::GitHubOwner, nullptr, &found) ||
                        enterPressed;
+        FillIfEmpty(d.githubRepoBuf, sizeof(d.githubRepoBuf), found.Repo);
         ImGui::SetItemTooltip("GitHub user or organization, e.g. \"alexandrosk0\".");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.gh_repo")) {
@@ -690,9 +801,8 @@ bool DrawTrackerLinearConfig(UiDrawSession& d, bool chrome) {
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.linear_base_url")) {
         enterPressed = CredentialInputText("Base URL", d.linearBaseUrlBuf, sizeof(d.linearBaseUrlBuf),
-                                           ImGuiInputTextFlags_CharsNoBlank) ||
+                                           ImGuiInputTextFlags_CharsNoBlank, "https://api.linear.app/graphql") ||
                        enterPressed;
-        ImGui::SetItemTooltip("e.g. https://api.linear.app/graphql");
     }
     if (d.prefsFilter.ShowSetting("tracker.backend.linear_workspace_url")) {
         ImGui::InputText("Workspace URL", d.linearWorkspaceUrlBuf, sizeof(d.linearWorkspaceUrlBuf),
@@ -909,6 +1019,7 @@ void CopyTrackerBuffersToConfig(const UiDrawSession& d, TrackerConfig& cfg) {
     cfg.LinearTeamId = d.linearTeamIdBuf;
     cfg.LinearWorkspaceUrl = d.linearWorkspaceUrlBuf;
     SmatchetPreferencesUiDetail::TrimTrackerCredentialFields(cfg);
+    SmatchetPreferencesUiDetail::NormaliseTrackerSiteFields(cfg);
     smatchet::jira_backends::EnsureHydrated(cfg);
     cfg.JiraBackends[0].Domain = cfg.Domain;
     cfg.JiraBackends[0].Email = cfg.Email;
@@ -1456,15 +1567,42 @@ namespace {
 // only edits the buffer, the readout half reports the resulting MatchCount().
 // Nothing between them emits ImGui, so the readout's SameLine still attaches to
 // the clear button.
-void DrawPrefsSearchBoxInput(UiDrawSession& d) {
+// Returns true on the frame Enter was pressed in the box (the caller then sends the caret to the first
+// matching setting). Keys:
+// - `preferences.search.focus` (Ctrl+Shift+, by default) puts the caret here, ahead of the open-edge pick.
+// - Esc clears the query and leaves the box. ImGui's nav cancel runs in NewFrame and has usually taken the
+//   caret out already on the Esc frame, so the box counts as the Esc target when it held the caret this
+//   frame or the last one. A box that lost the caret that way writes its edited text back when it next
+//   draws, from ImGui's saved copy of the deactivated field; dropping that copy keeps the clear.
+bool DrawPrefsSearchBoxInput(UiDrawSession& d) {
+    if (s_prefsSearchFocusRequestFrame >= 0) {
+        if (ImGui::GetFrameCount() - s_prefsSearchFocusRequestFrame > kPrefsSearchFocusFrames) {
+            s_prefsSearchFocusRequestFrame = -1; // the window never came up for it
+        } else if (!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup)) {
+            s_prefsSearchFocusRequestFrame = -1;
+            s_prefsOpenFocus.searchBox = true;
+            // The search box wins over this open's credential-field pick, which would draw later this frame.
+            s_prefsOpenFocus.credentialBuf = nullptr;
+            s_prefsOpenFocus.awaitingTarget = false;
+        }
+    }
     if (s_prefsOpenFocus.searchBox) {
-        // The window just opened and there is no blank credential to fill: start in the search
-        // box, so typing narrows the settings straight away.
+        // The window just opened and there is no blank credential to fill, or the search was asked for:
+        // start in the search box, so typing narrows the settings straight away.
         ImGui::SetKeyboardFocusHere();
         s_prefsOpenFocus.searchBox = false;
     }
+    SmatchetInput::ClearSearchOnEscape(s_prefsSearchInputId, d.prefsSearchBuf);
+    // The placeholder names the bound key, read live so a rebind shows on the next frame.
+    std::string hint = SmatchetLocalization::TranslateSource("Search settings...");
+    const std::string boundKey = BoundHotkeyDisplay(d.cfg.Keybindings.Bindings, "preferences.search.focus");
+    if (!boundKey.empty()) {
+        hint += " (" + boundKey + ")";
+    }
     ImGui::SetNextItemWidth(280.0f);
-    ImGui::InputTextWithHint("##PrefsSearch", "Search settings...", d.prefsSearchBuf, sizeof(d.prefsSearchBuf));
+    const bool enter = ImGui::InputTextWithHint("##PrefsSearch", hint.c_str(), d.prefsSearchBuf,
+                                                sizeof(d.prefsSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+    s_prefsSearchInputId = ImGui::GetItemID();
     const bool hasQuery = d.prefsSearchBuf[0] != '\0';
     if (hasQuery) {
         // Clear button, drawn before the caller's Update() so the cleared buffer
@@ -1478,6 +1616,7 @@ void DrawPrefsSearchBoxInput(UiDrawSession& d) {
             ImGui::SetTooltip("%s", SmatchetLocalization::T("prefs.search.clear", "Clear search"));
         }
     }
+    return enter && hasQuery;
 }
 
 // The "showing N / M" readout. Drawn after the caller folded in the dynamic
@@ -1608,8 +1747,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     loadPreferencesBuffers(d);
     UpdatePrefsOpenFocus(d, openEdge);
 
-    DrawPrefsSearchBoxInput(d);
+    const bool searchEnter = DrawPrefsSearchBoxInput(d);
     d.prefsFilter.Update(d.prefsSearchBuf, d.cfg.UiLanguage);
+    if (searchEnter) {
+        // Enter in the search box: the caret goes to the first setting the query matches, drawn below.
+        d.prefsFilter.RequestFocusOnFirstMatch(&FocusNextPrefsItem);
+    }
 
     // The keybindings rows are dynamic and carry no descriptors, so the schema-driven
     // filter cannot see a command-name query. Fold the answer back in here — after

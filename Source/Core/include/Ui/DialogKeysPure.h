@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Ui/GestureKeysPure.h"
+
 #include <cstring>
 
 /// Pure decisions shared by the dialogs that hold typed text: the worklog dialog, the offline conflict
@@ -99,10 +101,15 @@ inline ConfirmPick ResolveConfirmEnter(bool enterPressed, bool dialogOwnsKeyboar
 
 /// App-wide shortcuts stay off while a modal dialog is up: a command run behind a confirm can change or
 /// remove the very thing the confirm is about. Only commands that change how the app looks, never what it
-/// holds, still run (zoom, fullscreen). The command palette is muted too.
+/// holds, still run (zoom, fullscreen). The command palette is muted too. The focus-scoped gesture commands
+/// (ui.list.*, ui.splitter.*) also run: they reach only the list or divider that has the keyboard, and those
+/// sit inside dialogs (the Customize Toolbar button list, the long-text editor's divider).
 inline bool GlobalShortcutAllowedUnderModal(const char* commandId) {
     if (commandId == nullptr) {
         return false;
+    }
+    if (smatchet::ui::IsFocusScopedGestureCommand(commandId)) {
+        return true;
     }
     static const char kZoomPrefix[] = "ui.zoom.";
     if (std::strncmp(commandId, kZoomPrefix, sizeof(kZoomPrefix) - 1) == 0) {

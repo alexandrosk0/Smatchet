@@ -1342,7 +1342,7 @@ jobs:
     needs: windows-msvc
     runs-on: windows-2022
     # 30 -> 45: build (~9.6m) + the retry-on-collapse test step (attempts=3, each
-    # up to ~250 s under `timeout 300`: the 160 s --timeout deadline plus the spawn's
+    # up to ~235 s typical, <= ~325 s worst case, capped by `timeout 360`: the 230 s --timeout deadline plus the spawn's
     # ready/dispatch/quit bounds) can exceed 30m on a slow runner — on develop run
     # 28289436753 the ui_test.run step ran 20.1m on top of the ~9.6m build and hit
     # the 30-min cap (cancelled). 45m lets all 3 retry attempts complete on the
@@ -1478,13 +1478,21 @@ jobs:
             # this lane needs more wall-clock without inflating the suite's
             # frame allowance. The suite then grew to ~119 s under llvmpipe and
             # tripped that 120 s deadline (develop run 41318850756), so the
-            # wall-clock is now set directly: --timeout=160000 keeps ~33%
-            # headroom over the measured run.
+            # wall-clock is now set directly: --timeout=160000 kept ~33%
+            # headroom over the measured run. Develop then used 157.9 s of it for
+            # 243 tests (4,768 frames, ~33 ms per frame, run 43919421571), leaving
+            # ~2 s; adding 14 UI tests (~350 frames, ~12 s) tripped the deadline on
+            # the attempts of PR #2438 whose logs were read, each ending in {"code":"timeout"}.
+            # --timeout=230000 keeps ~33% headroom over the ~170 s that suite needs.
+            # --frames stays 5400: it is inert for ui_test.run once --timeout is set (it only
+            # feeds the "[spawn] scenario running" log line); --timeout alone bounds the suite.
+            # The outer `timeout` is 360, not 300: worst case for one attempt is the deadline plus
+            # the spawn's ready wait (30 s), dispatch (32 s) and quit POST (32 s), ~325 s.
             # The outer `timeout` stays above that deadline so the harness, not
             # coreutils, reports the failure.
-            echo "bucket-E: attempt ${attempt}/${attempts} — ui_test.run --all --frames=5400 --timeout=160000 --spawn --yes"
+            echo "bucket-E: attempt ${attempt}/${attempts} — ui_test.run --all --frames=5400 --timeout=230000 --spawn --yes"
             set +e
-            out="$(timeout 300 ./Smatchet.exe cmd ui_test.run --all --frames=5400 --timeout=160000 --spawn --yes 2>&1)"
+            out="$(timeout 360 ./Smatchet.exe cmd ui_test.run --all --frames=5400 --timeout=230000 --spawn --yes 2>&1)"
             rc=$?
             set -e
             # The parent has returned, so any surviving Smatchet.exe is this attempt's
@@ -1773,7 +1781,8 @@ jobs:
           fi
 
       # GridSearch (grid header search box Enter-apply) + GridPanes (dockable grid panes) +
-      # LeftViewHistory (issues that left a view, with their reason). All three need the fixture's
+      # LeftViewHistory (issues that left a view, with their reason); test-ui-bulk-field-edit (the grid's bulk
+      # "Set <Field> for N rows" edit) generates its own fixture and rides this loop. The first three need the fixture's
       # loaded tickets, and none ran anywhere before: the bucket-e-ui-tests `--all` lane has no
       # fixture, so they SKIP there, and the JiraDeterministic filter above excludes them. Each
       # driver sets its own filter and seeded profile; the zero-run floor in the driver fails a
@@ -1790,7 +1799,7 @@ jobs:
         run: |
           set -uo pipefail
           failed=0
-          for driver in test-ui-grid-search-apply test-ui-grid-pane-windows test-ui-left-view-history; do
+          for driver in test-ui-grid-search-apply test-ui-grid-pane-windows test-ui-left-view-history test-ui-bulk-field-edit; do
             attempts=2
             rc=1
             for attempt in $(seq 1 "$attempts"); do
@@ -2517,7 +2526,11 @@ jobs:
     name: Mobile — POSIX core compile gate (Linux clang)
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-24.04, NOT ubuntu-latest: ubuntu-latest flipped to ubuntu-26.04 on
+    # 2026-11-18 (clang 21, newer libstdc++), where bundled cpr 1.9.2 `callback.h` fails with
+    # `unknown type name 'intptr_t'` (no <cstdint>). Stopgap until the 26.04 port lands
+    # (backlog: infra/2026-11-19-mobile-lanes-ubuntu-26-04-port).
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -2597,7 +2610,11 @@ jobs:
     name: Mobile — Android NDK arm64-v8a (.so configure+link)
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-24.04, NOT ubuntu-latest: ubuntu-latest flipped to ubuntu-26.04 on
+    # 2026-11-18 (CMake 4.4): the NDK link line picks up host `-lzstd -l:libjitterentropy.a`
+    # (suspected CMake 4 FindOpenSSL / pkg-config). Stopgap until the 26.04 port
+    # lands (backlog: infra/2026-11-19-mobile-lanes-ubuntu-26-04-port).
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -2724,7 +2741,8 @@ jobs:
     # mobile-android-ndk; restored OpenSSL cache wins.
     needs: [changes, mobile-android-ndk]
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-24.04 with mobile-android-ndk (same 26.04 NDK link break; see there).
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read

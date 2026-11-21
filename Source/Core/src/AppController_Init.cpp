@@ -47,6 +47,7 @@
 #include "Commands/Scenarios/SmatchetScenarioRegistry.h"
 
 #include "FieldCatalogCache.h"
+#include "RecentSelections.h"
 #include "Sync/LookupFreshnessPure.h"
 #include "TimeNowPure.h"
 #include "JqlProjectScope.h"
@@ -684,6 +685,14 @@ void AppController::InitCommands() {
     } catch (...) {
         LOG_ERROR("AppController::Initialize: CommandRegistry init failed: unknown exception");
         commandRegistry_.reset();
+    }
+
+    // Recent dropdown picks (RecentSelections.h): read once here; from now on a pick is saved through
+    // the config-save worker, never on the frame thread. A failure leaves the list empty.
+    try {
+        smatchet::recents::LoadSharedFromConfigJson(ConfigManager::LoadMergedConfigJson());
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController::Initialize: recent dropdown picks not loaded: %s", ex.what());
     }
 
     // One-time audit per design doc §2.8: list saved views whose JQL has no

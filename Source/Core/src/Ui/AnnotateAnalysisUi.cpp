@@ -51,11 +51,11 @@ void AnnotateAnalysisUi::ensureSettingsBuffersLoaded() {
     HydrateAnnotateCfgDiskOnce();
     State().maxFramesVal = State().annotateCfg.DefaultMaxFrames;
     State().clCacheVal = State().annotateCfg.ChangelistCacheMaxEntries;
-    CopyToBuffer(State().p4Exe, State().annotateCfg.P4Executable);
-    CopyToBuffer(State().p4vcExe, State().annotateCfg.P4VcExecutable);
-    CopyToBuffer(State().timeTpl, State().annotateCfg.TimelapseCommandTemplate);
-    CopyToBuffer(State().changeTpl, State().annotateCfg.ChangeCommandTemplate);
-    CopyToBuffer(State().aiUrl, State().annotateCfg.AiChatUrl);
+    State().p4Exe = State().annotateCfg.P4Executable;
+    State().p4vcExe = State().annotateCfg.P4VcExecutable;
+    State().timeTpl = State().annotateCfg.TimelapseCommandTemplate;
+    State().changeTpl = State().annotateCfg.ChangeCommandTemplate;
+    State().aiUrl = State().annotateCfg.AiChatUrl;
     size_t off = 0;
     for (const auto& kw : State().annotateCfg.DefaultIgnoreKeywords) {
         if (off + kw.size() + 2 >= State().ignoreBuf.size()) {

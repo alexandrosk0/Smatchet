@@ -5,6 +5,8 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "FilterDropdown.h"
+#include "RecentSelections.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetTheme.h"
 #include "SmatchetViewsDashboardUi_detail.h"
@@ -14,12 +16,15 @@
 #include "IssueDraft.h"
 #include "ProjectResolver.h"
 #include "SmatchetLocalization.h"
-#include "Ui/SmatchetBackendDisplay.h"
+#include "Ui/PaneBackendTargetsPure.h"
 #include "Ui/SmatchetIconButtons.h"
+#include "Ui/SmatchetInput.h"
+#include "Ui/SmatchetViewSwitchTooltip.h"
 #include "SmatchetImGuiFonts.h"
 
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -185,8 +190,9 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
 
 // Header "+" / "▾" split-button (pane-backend-picker Slice 2; moved from the pane
 // strip to the left of the view selector). Bare "+" always duplicates this pane (no
-// backend arg = same-backend path). "▾" caret renders only when ≥2 backends have
-// minimum credentials present; it opens a popup that lists each credentialed backend.
+// backend arg = same-backend path). "▾" caret renders only when the picker has ≥2 rows
+// (PaneBackendTargetsPure: one per credentialed backend, one per Jira site when there are
+// 2+ sites); a Jira site row switches the global active site before the pane opens.
 // Selecting a backend (with no specific view) opens its default/active view; an
 // optional view submenu lists saved views. The host applies requests after the pane
 // loop (never mutates gridPanes mid-iteration).
@@ -201,14 +207,10 @@ void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
                                                         "drag its tab to an edge for a side-by-side split)"));
     }
 
-    const std::vector<std::string>& knownKeys = ConfigManager::KnownBackendKeys();
-    int credCount = 0;
-    for (const auto& key : knownKeys) {
-        if (ConfigManager::BackendCredentialsPresent(d.cfg, key)) {
-            ++credCount;
-        }
-    }
-    if (credCount < 2) {
+    // One row per credentialed tracker kind, one per site for Jira with 2+ sites (#2444).
+    const std::vector<smatchet::pane_targets::NewPaneTarget> targets =
+        smatchet::pane_targets::BuildNewPaneTargets(d.cfg);
+    if (!smatchet::pane_targets::ShowNewPaneCaret(targets)) {
         return;
     }
 
@@ -222,29 +224,27 @@ void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
     }
 
     if (ImGui::BeginPopup("##PaneNewOnBackend")) {
-        for (const auto& key : knownKeys) {
-            if (!ConfigManager::BackendCredentialsPresent(d.cfg, key)) {
-                continue;
-            }
-            const auto it = diskBackends.find(key);
+        for (const smatchet::pane_targets::NewPaneTarget& target : targets) {
+            const auto it = diskBackends.find(target.BackendKey);
             const bool hasViews = (it != diskBackends.end() && !it->second.Views.empty());
-            const std::string label = "New " + BackendDisplayName(key) + " pane"; // P2-M18
-
-            if (hasViews && ImGui::BeginMenu(label.c_str())) {
+            // The label is also the ImGui id; Jira site rows differ by host, so ids stay unique.
+            if (hasViews && ImGui::BeginMenu(target.Label.c_str())) {
                 const ViewWorkspaceState& ws = it->second;
                 for (const auto& v : ws.Views) {
                     const bool isActive = (v.Id == ws.ActiveViewId);
                     if (ImGui::MenuItem(v.Name.c_str(), nullptr, isActive)) {
                         d.paneAddRequest.sourceId = pane.id;
-                        d.paneAddRequest.targetBackendKey = key;
+                        d.paneAddRequest.targetBackendKey = target.BackendKey;
                         d.paneAddRequest.targetViewId = v.Id;
+                        d.paneAddRequest.targetJiraDomain = target.SwitchToJiraDomain;
                     }
                 }
                 ImGui::EndMenu();
             } else if (!hasViews) {
-                if (ImGui::MenuItem(label.c_str())) {
+                if (ImGui::MenuItem(target.Label.c_str())) {
                     d.paneAddRequest.sourceId = pane.id;
-                    d.paneAddRequest.targetBackendKey = key;
+                    d.paneAddRequest.targetBackendKey = target.BackendKey;
+                    d.paneAddRequest.targetJiraDomain = target.SwitchToJiraDomain;
                 }
             }
         }
@@ -295,17 +295,28 @@ void DrawGridSearchBox(UiDrawSession& d, GridPane& pane) {
         ImGui::SetTooltip("%s", GridSearchModeTooltip(kind));
     }
     ImGui::SameLine();
+    // grid.search.focus (Ctrl+F or /) asked for the caret here: bring this pane forward and focus
+    // the box this frame.
+    if (pane.gridSearchFocusFramesLeft > 0) {
+        pane.gridSearchFocusFramesLeft = 0;
+        ImGui::SetWindowFocus();
+        ImGui::SetKeyboardFocusHere();
+    }
+    // Esc in the box clears the search and leaves the box: the shared helper the settings search uses.
+    SmatchetInput::ClearSearchOnEscape(pane.gridSearchInputId, pane.gridSearchBuf);
     ImGui::SetNextItemWidth(260.0f);
     // The placeholder distinguishes this ISSUE-search box from the command-search entry points
-    // (menu-bar box / Ctrl+Shift+P palette). The ##GridFilter id is unchanged: it is the
-    // grid-rendered probe several UI tests key on.
+    // (menu-bar box / Ctrl+Shift+P palette) and names the key that jumps here. The ##GridFilter
+    // id is unchanged: it is the grid-rendered probe several UI tests key on.
     if (ImGui::InputTextWithHint(
-            "##GridFilter", SmatchetLocalization::T("gridsearch.hint", "Search issues: key, query, or title text"),
+            "##GridFilter",
+            SmatchetLocalization::T("gridsearch.hint_keys", "Search issues: key, query, or title text (Ctrl+F)"),
             pane.gridSearchBuf, sizeof(pane.gridSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
         d.paneDeferredActionPaneId = pane.id;
         d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::GridSearchCommit;
         d.paneDeferredSearchText.assign(pane.gridSearchBuf);
     }
+    pane.gridSearchInputId = ImGui::GetItemID();
     if (pane.gridSearchBuf[0] != '\0') {
         ImGui::SameLine();
         if (ImGui::Button("Clear")) {
@@ -346,27 +357,36 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
                                       : (!pane.title.empty() ? pane.title.c_str() : "(no active view)");
     // View Dropdown Selector (replaces old plain text label)
     ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::BeginCombo("##ViewSelectorCombo", headerViewLabel)) {
+    if (ImGui::BeginCombo("##ViewSelectorCombo", headerViewLabel, ImGuiComboFlags_HeightLargest)) {
+        // The shared dropdown body: filter, the last views switched to, then every view.
+        std::vector<smatchet::dropdown::Item> items;
+        items.reserve(viewState.GetStore().Views.size());
         for (const auto& view : viewState.GetStore().Views) {
-            const bool isSelected = headerViewIsPanesOwn && (activeViewForGrid->Id == view.Id);
-            if (ImGui::Selectable(view.Name.c_str(), isSelected)) {
-                if (viewState.Activate(view.Id)) {
-                    activeViewForGrid = viewState.GetActiveViewMutable();
-                    if (activeViewForGrid) {
-                        d.cfg.JqlQuery = activeViewForGrid->Jql;
-                        d.cfg.SelectedFields = activeViewForGrid->Fields;
-                        SyncWithCurrentView(app, d, viewState.GetStore(), true);
-                    }
-                }
-            }
-            if (isSelected) {
-                ImGui::SetItemDefaultFocus();
+            smatchet::dropdown::Item item;
+            item.Id = view.Id.c_str();
+            item.Label = view.Name.c_str();
+            item.Checked = headerViewIsPanesOwn && (activeViewForGrid->Id == view.Id);
+            items.push_back(item);
+        }
+        const std::string recentsScope = smatchet::recents::MakeScopeKey(app.PaneCacheBackendKey(pane.id), "view");
+        const smatchet::dropdown::Event ev =
+            smatchet::dropdown::DrawBody(items, smatchet::dropdown::SingleSelect(recentsScope));
+        // `items` points into the store Activate may change: nothing reads it past this line.
+        if (ev.Kind == smatchet::dropdown::EventKind::Picked && viewState.Activate(ev.Id)) {
+            activeViewForGrid = viewState.GetActiveViewMutable();
+            if (activeViewForGrid) {
+                d.cfg.JqlQuery = activeViewForGrid->Jql;
+                d.cfg.SelectedFields = activeViewForGrid->Fields;
+                SyncWithCurrentView(app, d, viewState.GetStore(), true);
             }
         }
         ImGui::EndCombo();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Switch active grid view");
+        // Names the view-switch keys, read live so a rebind shows at once.
+        SmatchetViewSwitchTooltip::Show(
+            SmatchetLocalization::T("grid.view_selector.tooltip", "Switch active grid view"),
+            d.cfg.Keybindings.Bindings);
     }
 
     // Refresh View — re-runs the active view's query and refreshes the grid.

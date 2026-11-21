@@ -63,6 +63,14 @@ Today the same key means different things depending on the window. Esc alone has
 
 Global shortcuts stay off while any dialog is open. Every dialog button that has a key shows it.
 
+**Pointer gestures.** Every drag gesture has a command with a rebindable default key, and every popup list is navigable with the arrows and Enter.
+
+- A drag gesture is any of `BeginDragDropSource`, `IsMouseDragging`, `GetMouseDragDelta` or a reorderable table. Reorder, resize, splitter and list-action gestures all count.
+- The command is registered once and reachable from every front-end (palette, CLI, MCP, Lua), and bound in `KeybindingsConfig::Defaults()`.
+- A gesture that acts on one widget (a list row, a splitter) uses a focus-scoped command (`ui.list.*`, `ui.splitter.*`): the widget with the keyboard takes the request, and with none focused the key does nothing. A gesture on a named thing (a panel) names it in the command's args.
+- The drag source carries a `keyboard-equivalent: <command.id>` comment naming that command, or `keyboard-equivalent: native(<why>)` when ImGui's own navigation already covers it, or a `SMATCHET_DEVIATION(rule=drag-without-command; ...)` marker. `scripts/dev/test-drag-keyboard-equivalent.sh` fails any drag source without one of the three.
+- A popup list with a filter box moves a highlight with Up / Down, picks it with Enter, and closes on Esc, all with the caret still in the filter (the "Picker or filter popup" row above). The shared helper for this is `FilterDropdown`.
+
 ---
 
 ## 4. Seven shared fixes
@@ -110,6 +118,7 @@ Each item is one helper or convention. Building it once closes the findings list
 - **Build:** A rule in the keyboard contract: every drag gesture has a command with a rebindable key, and every popup list is navigable with arrows and Enter. A check that lists drag sources without a matching command.
 - **Model in the tree:** Side bars and the bottom panel have rebindable toggles. The toolbar context menu offers Move Left and Move Right.
 - **Closes:** #12, #18, #29, #30, #44, #71, **#108**, #119, #122, #130, #138
+- **Status:** the rule is in § 3 and `scripts/dev/test-drag-keyboard-equivalent.sh` enforces it. Shipped in `docs/plans/input-ux-w2-gesture-keys.md`: the `ui.list.*`, `ui.splitter.*` and `view.panel.grow` / `shrink` commands, the toolbar list keys (#122), the calendar keys and quick picks (#44), the path-remap flow (#130), read-only text select-all from the keyboard (#12), and panel resize (#138, panels). #108 and half of #18 shipped in Wave 1. Waiting on the open plans that hold the files: grid column move / resize (#138, columns), the sort-rule list (#71), the filter + list popups (#119) and the palette outside click (#18). #29 and #30 stay with Wave 3.
 
 ### 4.7 One matcher (closes 7, 2 high)
 

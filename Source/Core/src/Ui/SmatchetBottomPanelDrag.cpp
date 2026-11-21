@@ -271,6 +271,10 @@ void DrawReleaseToHideHint(const EdgePanelSpec& spec, const ImGuiDockNode* node)
     dl->AddText(ImVec2(textX, textY), ::ImGui::GetColorU32(ImGuiCol_Text), hint);
 }
 
+// The splitter whose current drag Esc cancelled (0 = none). One mouse, one drag at a time, so one slot
+// serves the bottom panel and both side columns.
+ImGuiID s_escCancelledSplitterDrag = 0;
+
 void TickHideGesture(UiDrawSession& d, const EdgePanelSpec& spec, ImGuiDockNode* node) {
     ImGuiContext& g = *::ImGui::GetCurrentContext();
     EdgePanelDragState& st = d.*(spec.state);
@@ -283,8 +287,12 @@ void TickHideGesture(UiDrawSession& d, const EdgePanelSpec& spec, ImGuiDockNode*
             st.restoreExtent = node->Size[spec.axis];
         }
         st.splitterDragId = splitterId;
+        if (::ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            s_escCancelledSplitterDrag = splitterId; // Esc cancels the hide for the rest of this drag
+        }
         const float nodeFar = node->Pos[spec.axis] + node->Size[spec.axis];
-        st.hideArmed = pure::ShouldArmHide(g.IO.MousePos[spec.axis], nodeFar,
+        st.hideArmed = s_escCancelledSplitterDrag != splitterId &&
+                       pure::ShouldArmHide(g.IO.MousePos[spec.axis], nodeFar,
                                            pure::HideArmBandPx(g.Style.WindowMinSize[spec.axis]));
         if (st.hideArmed) {
             DrawReleaseToHideHint(spec, node);
@@ -297,7 +305,9 @@ void TickHideGesture(UiDrawSession& d, const EdgePanelSpec& spec, ImGuiDockNode*
     // The splitter drag ended this frame. Hide only when it ended in a left-button
     // release while armed (last frame's in-band verdict — the mouse barely moves in one
     // frame); a cancelled drag or one that wandered back out is a plain resize.
-    const bool hide = st.hideArmed && ::ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    const bool hide = pure::ShouldHideOnDragEnd(st.hideArmed, ::ImGui::IsMouseReleased(ImGuiMouseButton_Left),
+                                                s_escCancelledSplitterDrag == st.splitterDragId);
+    s_escCancelledSplitterDrag = 0;
     st.splitterDragId = 0;
     st.hideArmed = false;
     if (hide) {
@@ -781,6 +791,91 @@ bool ExpandSideBar(UiDrawSession& d, SideBar bar) {
         }
     }
     return true;
+}
+
+namespace {
+
+const char* PanelName(const EdgePanelSpec& spec) {
+    if (&spec == &kBottomSpec) {
+        return "bottom";
+    }
+    return &spec == &kSecondarySideSpec ? "secondary" : "primary";
+}
+
+// The first visible spec of a target; Focused walks every panel for the one holding the focused window.
+const EdgePanelSpec* ResolveNudgeSpec(PanelTarget target) {
+    if (target == PanelTarget::Bottom) {
+        return &kBottomSpec;
+    }
+    if (target == PanelTarget::Secondary) {
+        return &kSecondarySideSpec;
+    }
+    if (target == PanelTarget::Primary) {
+        for (const EdgePanelSpec* spec : kPrimaryBarSpecs) {
+            const ImGuiDockNode* node = EdgePanelNode(*spec);
+            if (node != nullptr && NodeShowsContent(node)) {
+                return spec;
+            }
+        }
+        return kPrimaryBarSpecs[0];
+    }
+    const ImGuiWindow* focused = GImGui->NavWindow != nullptr ? GImGui->NavWindow->RootWindow : nullptr;
+    if (focused == nullptr) {
+        return nullptr;
+    }
+    if (WindowInsideNode(focused, kBottomSpec.nodeId)) {
+        return &kBottomSpec;
+    }
+    for (const EdgePanelSpec* side : kSideSpecs) {
+        if (WindowInsideNode(focused, side->nodeId)) {
+            return side;
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+float KeyboardNudgeStepPx() {
+    const float font = ::ImGui::GetCurrentContext() != nullptr ? ::ImGui::GetFontSize() : 16.0f;
+    return font * 2.0f;
+}
+
+PanelNudgeResult NudgePanelExtent(UiDrawSession& d, PanelTarget target, float deltaPx) {
+    PanelNudgeResult r;
+    if (::ImGui::GetCurrentContext() == nullptr) {
+        r.Error = "No UI context.";
+        return r;
+    }
+    const EdgePanelSpec* spec = ResolveNudgeSpec(target);
+    if (spec == nullptr) {
+        r.Error = "The focused window is not in the bottom panel or a side bar.";
+        r.NoFocusedPanel = target == PanelTarget::Focused;
+        return r;
+    }
+    r.Panel = PanelName(*spec);
+    const ImGuiDockNode* node = EdgePanelNode(*spec);
+    if (node == nullptr || !NodeShowsContent(node)) {
+        r.Error = "That panel is hidden.";
+        return r;
+    }
+    if (!IsFarChildOnAxis(node, spec->axis) || node->ParentNode->ChildNodes[0] == nullptr) {
+        r.Error = "That panel has no splitter to move in this layout.";
+        return r;
+    }
+    EdgePanelDragState& st = d.*(spec->state);
+    // A press while the previous one is still being applied builds on the extent asked for, not on the
+    // node's size, which only catches up once the dock tree has re-laid out.
+    const float base = st.applyFrames > 0 ? st.pendingExtent : node->Size[spec->axis];
+    const float minPx = ::ImGui::GetStyle().WindowMinSize[spec->axis];
+    const float parentPx = node->ParentNode->Size[spec->axis];
+    st.pendingExtent = pure::NudgeTargetExtent(base, deltaPx, minPx, parentPx);
+    if (st.applyFrames < 2) {
+        st.applyFrames = 2;
+    }
+    r.Ok = true;
+    r.ExtentPx = st.pendingExtent;
+    return r;
 }
 
 void Tick(UiDrawSession& d) {

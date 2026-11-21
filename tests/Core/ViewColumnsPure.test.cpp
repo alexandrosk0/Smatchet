@@ -482,3 +482,141 @@ TEST_CASE("RemoveViewColumn against the Views editor draft") {
         CHECK(keys == std::vector<std::string>{"id", "field:status", "field:assignee", "field:priority"});
     }
 }
+
+// A switch from outside the Views dashboard (view.next / view.previous, bound to Ctrl+PageDown / Ctrl+PageUp)
+// asks only when the editor holds an edit of the user's. It cannot rebase the live draft, so it judges a copy.
+TEST_CASE("ViewDraftWouldLoseEditsOnSwitch") {
+    const ViewDefinition saved = MakeView({{"id", 90.0f}, {"field:summary", 0.0f}, {"field:status", 0.0f}});
+    SUBCASE("an untouched draft loses nothing") {
+        CHECK_FALSE(ViewDraftWouldLoseEditsOnSwitch(saved, saved, saved, false, ""));
+    }
+    SUBCASE("an edit the user made in the editor would be lost") {
+        ViewDefinition draft = saved;
+        draft.Name = "Renamed";
+        CHECK(ViewDraftWouldLoseEditsOnSwitch(draft, saved, saved, false, ""));
+        draft = saved;
+        draft.Jql = "status = Open";
+        CHECK(ViewDraftWouldLoseEditsOnSwitch(draft, saved, saved, false, ""));
+        draft = saved;
+        std::swap(draft.Columns[1], draft.Columns[2]);
+        CHECK(ViewDraftWouldLoseEditsOnSwitch(draft, saved, saved, false, ""));
+    }
+    SUBCASE("a change made elsewhere since the draft was synced is not an edit of the user's") {
+        // The grid autosaved a column drag and a rename came in through view.update: the draft is a stale
+        // snapshot (draft == base), not an unsaved edit, so no question is asked.
+        ViewDefinition changed = saved;
+        std::swap(changed.Columns[1], changed.Columns[2]);
+        changed.Name = "Renamed by a command";
+        CHECK(ViewDraftHasUnsavedEdits(saved, changed)); // the raw compare would have read it as "unsaved"
+        CHECK_FALSE(ViewDraftWouldLoseEditsOnSwitch(saved, saved, changed, false, ""));
+    }
+    SUBCASE("an edit by the user survives a change made elsewhere") {
+        ViewDefinition draft = saved;
+        draft.Jql = "assignee = me";
+        ViewDefinition changed = saved;
+        changed.Name = "Renamed by a command";
+        CHECK(ViewDraftWouldLoseEditsOnSwitch(draft, saved, changed, false, ""));
+    }
+    SUBCASE("a rename still being typed counts: it has not reached the draft yet") {
+        CHECK(ViewDraftWouldLoseEditsOnSwitch(saved, saved, saved, true, "New name"));
+        // The title box opened and nothing was typed: the buffer holds the saved name.
+        CHECK_FALSE(ViewDraftWouldLoseEditsOnSwitch(saved, saved, saved, true, saved.Name));
+        // A closed title box's buffer is a display mirror and never counts.
+        CHECK_FALSE(ViewDraftWouldLoseEditsOnSwitch(saved, saved, saved, false, "stale text"));
+    }
+    SUBCASE("the caller's draft and base are not touched") {
+        ViewDefinition draft = saved;
+        draft.Name = "Renamed";
+        ViewDefinition base = saved;
+        ViewDefinition changed = saved;
+        changed.Jql = "x = 1";
+        ViewDraftWouldLoseEditsOnSwitch(draft, base, changed, false, "");
+        CHECK(draft.Name == "Renamed");
+        CHECK(draft.Jql == saved.Jql);
+        CHECK(base.Jql == saved.Jql);
+    }
+}
+
+// ---- ViewPickerPure.h: the views sidebar search and the view-switch key hint -----------------------------
+// (Lives here, not in its own TU, while tests/CMakeLists.txt is edited by open PRs: debt
+// 2026-11-16-text-field-migration-blocked-surfaces.)
+
+#include "ViewPickerPure.h"
+
+namespace {
+
+std::vector<std::size_t> ListedIndices(const std::vector<std::string>& names, const char* query) {
+    smatchet::textmatch::Scratch scratch;
+    const std::vector<smatchet::views::ListedView> rows = smatchet::views::ListViewsForSearch(
+        names.size(), [&names](std::size_t i) -> const std::string& { return names[i]; }, query, scratch);
+    std::vector<std::size_t> out;
+    for (const smatchet::views::ListedView& r : rows) {
+        out.push_back(r.Index);
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("ListViewsForSearch: nothing typed lists every view in store order, unmarked") {
+    const std::vector<std::string> names = {"Sprint", "Backlog", "Bugs"};
+    CHECK(ListedIndices(names, "") == std::vector<std::size_t>({0, 1, 2}));
+    CHECK(ListedIndices(names, "   ") == std::vector<std::size_t>({0, 1, 2})); // whitespace makes no word
+    CHECK(ListedIndices(names, nullptr) == std::vector<std::size_t>({0, 1, 2}));
+    smatchet::textmatch::Scratch scratch;
+    const auto rows = smatchet::views::ListViewsForSearch(
+        names.size(), [&names](std::size_t i) -> const std::string& { return names[i]; }, "", scratch);
+    for (const auto& r : rows) {
+        CHECK(r.NameRanges.empty());
+    }
+    CHECK(ListedIndices({}, "bug").empty());
+}
+
+TEST_CASE("ListViewsForSearch: words in any order, case-folded; exact rows only when there is one") {
+    const std::vector<std::string> names = {"Team bugs open", "Open bugs", "Release notes", "Bugfix sprint, open"};
+    // "open bugs" occurs as written (in any word order) in rows 0 and 1, so row 3, where "bugs" only matches
+    // letter by letter (b-u-g ... s), is left out.
+    const auto exact = ListedIndices(names, "BUGS open");
+    CHECK(exact.size() == 2);
+    CHECK(std::find(exact.begin(), exact.end(), std::size_t{3}) == exact.end());
+    CHECK(std::find(exact.begin(), exact.end(), std::size_t{2}) == exact.end());
+    // No row holds "rls" as written: names holding its letters in order are listed.
+    CHECK(ListedIndices(names, "rls") == std::vector<std::size_t>({2}));
+    CHECK(ListedIndices(names, "zzz").empty());
+    // With no exact row, the letters-in-order row is listed.
+    CHECK(ListedIndices(names, "bugs sprint") == std::vector<std::size_t>({3}));
+}
+
+TEST_CASE("ListViewsForSearch: best match first, ties keep store order, ranges mark the name") {
+    const std::vector<std::string> names = {"My open sprint", "Sprint", "Old sprint board"};
+    const auto order = ListedIndices(names, "sprint");
+    REQUIRE(order.size() == 3);
+    CHECK(order.front() == 1); // the whole name typed ranks first: Enter opens it
+    const std::vector<std::string> same = {"alpha one", "alpha two"};
+    CHECK(ListedIndices(same, "alpha") == std::vector<std::size_t>({0, 1}));
+
+    smatchet::textmatch::Scratch scratch;
+    const auto rows = smatchet::views::ListViewsForSearch(
+        names.size(), [&names](std::size_t i) -> const std::string& { return names[i]; }, "sprint", scratch);
+    REQUIRE(!rows.empty());
+    REQUIRE(rows.front().NameRanges.size() == 1);
+    CHECK(rows.front().NameRanges[0].Begin == 0);
+    CHECK(rows.front().NameRanges[0].End == 6);
+}
+
+TEST_CASE("ViewSwitchKeysTooltip names the bound view keys, read live") {
+    KeybindingsConfig cfg = KeybindingsConfig::Defaults();
+    const std::string tip =
+        smatchet::views::ViewSwitchKeysTooltip("Lead.", cfg.Bindings, "Next view:", "Previous view:");
+    CHECK(tip == "Lead.\nNext view: Ctrl+PageDown\nPrevious view: Ctrl+PageUp");
+
+    // A rebind shows at once; an unbound or disabled command adds no line.
+    const int next = cfg.FindBindingIndex("view.next", "{}");
+    const int prev = cfg.FindBindingIndex("view.previous", "{}");
+    REQUIRE(next >= 0);
+    REQUIRE(prev >= 0);
+    cfg.Bindings[static_cast<std::size_t>(next)].Hotkeys = {"Alt+Right"};
+    cfg.Bindings[static_cast<std::size_t>(prev)].Enabled = false;
+    CHECK(smatchet::views::ViewSwitchKeysTooltip("Lead.", cfg.Bindings, "N:", "P:") == "Lead.\nN: Alt+Right");
+    CHECK(smatchet::views::ViewSwitchKeysTooltip("Lead.", {}, "N:", "P:") == "Lead.");
+}
