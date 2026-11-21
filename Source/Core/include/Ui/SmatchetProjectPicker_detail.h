@@ -7,29 +7,40 @@
 #include "FieldCatalogCache.h"
 #include "TrackerFieldSchema.h"
 
+#include <cstddef>
 #include <string>
+#include <vector>
 
 namespace SmatchetProjectPicker {
 namespace detail {
 
-/** Case-insensitive substring test. Empty needle always matches. */
+/** Substring test through the shared matcher's UTF-8 case fold (TextMatchPure.h). Empty needle always matches. */
 bool ContainsCi(const std::string& haystack, const std::string& needle);
 
 /** Display label for an "All projects" row. Jira / Linear (Team): "KEY — DisplayName"; Plane (or
  *  empty key): display name (or id fallback). */
 std::string MakeRowLabel(const RemoteProject& p, const std::string& backendKind);
 
-/** True iff a recently-used cache entry survives the backend/endpoint/search filter and should
- *  render in the "Recently used" section. Empty backendKind/endpoint disable that filter; an entry
- *  with an empty backend/endpoint is treated as a wildcard match. */
+/** True iff a cached-catalog project entry survives the backend/endpoint/search filter and should
+ *  be listed. Empty backendKind/endpoint disable that filter; an entry with an empty
+ *  backend/endpoint is treated as a wildcard match. The search filter needs every one of its words, in
+ *  any order, through the shared case fold. */
 bool RecentEntryPasses(const FieldCatalogCache::CachedProjectEntry& e, const std::string& backendKind,
                        const std::string& endpoint, const std::string& filter);
+
+/** What the Recent section starts from before any pick has been recorded: the keys of the saved-catalog
+ *  projects that pass RecentEntryPasses for this tracker and are in `listedKeys` (the keys of the
+ *  tracker's own project list), most recently used first, each once, at most `maxKeys`. */
+std::vector<std::string> RecentSeedKeys(std::vector<FieldCatalogCache::CachedProjectEntry> entries,
+                                        const std::string& backendKind, const std::string& endpoint,
+                                        const std::vector<std::string>& listedKeys, std::size_t maxKeys);
 
 /** The selection key for an "All projects" row: Plane uses the id, everything else uses the key. */
 std::string AllProjectKey(const RemoteProject& p, const std::string& backendKind);
 
 /** True iff an "All projects" row (with its computed key) survives the search filter and should
- *  render. A row with an empty key is always rejected. */
+ *  render: every word of the filter occurs in the key or the display name, in any order. A row with an
+ *  empty key is always rejected. */
 bool AllProjectPasses(const std::string& key, const RemoteProject& p, const std::string& filter);
 
 } // namespace detail

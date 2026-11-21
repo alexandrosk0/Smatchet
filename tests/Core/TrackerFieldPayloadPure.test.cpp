@@ -610,6 +610,22 @@ TEST_CASE("ExtractIssueKey: shape detection") {
     CHECK(ExtractIssueKey("PROJ-1a") == ""); // suffix must be all digits
 }
 
+TEST_CASE("ExtractIssueKey: a pasted issue link names its key (pasted URLs)") {
+    CHECK(ExtractIssueKey("https://acme.atlassian.net/browse/PROJ-12") == "PROJ-12");
+    CHECK(ExtractIssueKey("  https://acme.atlassian.net/browse/proj-12?focusedCommentId=1  ") == "PROJ-12");
+    CHECK(ExtractIssueKey("acme.atlassian.net/browse/PROJ-12") == "PROJ-12");
+    CHECK(ExtractIssueKey("https://acme.atlassian.net/jira/software/projects/PROJ/boards/1?selectedIssue=PROJ-7") ==
+          "PROJ-7");
+    CHECK(ExtractIssueKey("https://linear.app/acme/issue/ENG-123/some-slug") == "ENG-123");
+    // A link with no key in it is not a parent: the caller keeps its own error for an empty key.
+    CHECK(ExtractIssueKey("https://example.com/") == "");
+    CHECK(ExtractIssueKey("https://acme.atlassian.net/jira/your-work") == "");
+    // A GitHub link yields a GitHub key, which is no Jira-style parent.
+    CHECK(ExtractIssueKey("https://github.com/octo/repo/issues/12") == "");
+    // The "KEY - Summary" form is untouched, even when the summary has a slash in it.
+    CHECK(ExtractIssueKey("ABC-42 - fix a/b handling") == "ABC-42");
+}
+
 TEST_CASE("SplitCommaSeparatedValues: tokeniser") {
     SUBCASE("basic split") {
         const auto r = SplitCommaSeparatedValues("a,b,c");

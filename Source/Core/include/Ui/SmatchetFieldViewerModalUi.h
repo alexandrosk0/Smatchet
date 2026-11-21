@@ -29,6 +29,10 @@ class IFieldViewerContent {
     /// Polled by the shell once per frame after `DrawBody`. Returning true asks to close the viewer
     /// exactly as the Close button does, so unsaved input still gets the discard confirm.
     virtual bool ConsumeCloseRequest() { return false; }
+    /// Called by the shell when the user picks the discard button of the confirm, just before OnClose().
+    /// A close the user did not choose to discard (the Close row with nothing typed, a replace by another
+    /// viewer, shutdown) never reaches it, so a draft kept for the next open is erased only here.
+    virtual void OnDiscard() {}
     /// Called by the shell when the viewer closes AND when another viewer replaces this one. Cleanup
     /// belongs here, never in a destructor: the shell's file-static owner is destroyed at static
     /// destruction time, possibly after the state a destructor would touch (another TU).

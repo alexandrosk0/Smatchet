@@ -449,6 +449,19 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     d.trackerGridAsync.watchSelfInProgress = false;
 
     d.hasInFlightEdit = false;
+    {
+        // The one-at-a-time pump holds the rest of a bulk job in memory until each row is sent; they reach the
+        // offline queue only through a send, so say how many a quit leaves behind rather than lose them silently.
+        int unsentBulkRows = 0;
+        for (const PendingFieldEdit& edit : d.queuedFieldEdits) {
+            if (edit.BulkJobId != 0) {
+                ++unsentBulkRows;
+            }
+        }
+        if (unsentBulkRows > 0) {
+            LOG_WARN("Shutdown: %d bulk-edit rows were still waiting to be sent and were dropped", unsentBulkRows);
+        }
+    }
 
     DrainFutureJoinQuiet(d.newIssueCreateFuture);
     d.newIssueCreateInFlight = false;

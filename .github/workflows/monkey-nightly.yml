@@ -37,7 +37,10 @@ concurrency:
 jobs:
   monkey-nightly:
     name: Monkey nightly (Linux Clang ASan+UBSan)
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-24.04: same posix-core-check build as mobile-posix-core-check, which
+    # breaks on ubuntu-26.04 (cpr `callback.h` intptr_t). Drop with the 26.04 port
+    # (backlog: infra/2026-11-19-mobile-lanes-ubuntu-26-04-port).
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout develop

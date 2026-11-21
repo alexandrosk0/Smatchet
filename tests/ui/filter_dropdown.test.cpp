@@ -1,0 +1,1116 @@
+// filter_dropdown.test.cpp — bucket-E (ImGui Test Engine) coverage for the shared dropdown body
+// (smatchet::dropdown::DrawBody, FilterDropdown.cpp) that every tracker value picker draws.
+//
+// WHAT THIS LOCKS IN — the behaviour a row-model unit test cannot see, because it only exists once the
+// real ImGui focus / input-queue / popup machinery runs:
+//   1. Typed characters ALWAYS reach the filter: after the popup opens, after a row click, after
+//      wheel-scrolling the list, and while the scrollbar is being dragged.
+//   2. Up / Down move the highlight and Enter acts on it; a single-select pick closes the popup.
+//   3. A tick-box (multi-select) pick keeps the popup open.
+//   4. A pick shows up in the pinned Recent section on the next open, and that section is hidden
+//      while a filter is typed.
+//   5. Escape closes the popup without a pick.
+//   6. Unticking a value records nothing; the 'Add "<text>"' row creates, records and clears the filter.
+//   7. Enter acts on the option that matches the filter, never on a ticked option the filter only keeps
+//      listed, and never on the clear row of a picker with no options (which shows its empty-state text).
+//   8. A recent pick outside the option list can be picked; PageDown moves a page.
+//   9. Options that arrive while the popup is open: a list that was empty gets its default highlight
+//      (also after an arrow key found nothing to move to), and a highlight the user moved stays on its
+//      option when rows are inserted above it.
+//  10. The Enter press that opens a keyboard-focused combo only opens it; the next Enter picks.
+//  11. Options replaced under an open popup with the row count unchanged: a highlight the user has not
+//      moved goes to the best match of the new list.
+//  12. The project picker (SmatchetProjectPicker::Draw) reads and records its recent picks under the
+//      focused tracker: the one its project list and the create it feeds belong to.
+//  13. Tick-box lists: Space toggles the highlighted row (empty filter, or after an arrow key moved the
+//      highlight since the filter last changed; otherwise Space is typed); Enter finishes, first acting on
+//      the highlighted row when a filter is typed and nothing was toggled for it (pick or create), and
+//      only closing with an empty filter.
+//  14. The shared matcher (TextMatchPure.h, docs/plans/input-ux-w2-one-matcher.md): letters typed in
+//      order find an option no label holds as written, the rows are ranked, exact matches hide
+//      letters-in-order ones, a Greek capital finds its lower-case option, and the matched letters are
+//      marked in the drawn row (the theme's selected-text colour, counted in the rows' draw list).
+//
+// COMPLEMENTS tests/Core/FilterDropdownPure.test.cpp (row model, highlight moves, scroll maths) and
+// tests/Core/RecentSelections.test.cpp (the store). THIS suite drives the production DrawBody inside a
+// real BeginCombo popup, so the focus hand-off, the character splice and the popup close are the real
+// code. The fixture owns only the option list and the event log. Case R draws the production project
+// picker instead; its project-list load runs against the test profile's unconfigured tracker.
+//
+// OBSERVATION SURFACE — the Event DrawBody returns each frame (logged by the GuiFunc) plus whether the
+// combo popup is still open. Deterministic, in-process, no network, no golden image.
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+
+#include "AppController.h"
+#include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
+#include "FilterDropdown.h"
+#include "RecentSelections.h"
+#include "SmatchetProjectPicker.h"
+
+#include "imgui.h"
+#include "imgui_internal.h"
+#include "imgui_te_context.h"
+#include "imgui_te_engine.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace {
+
+const char* kWindowRef = "SmatchetTest::FilterDropdown";
+const char* kComboRef = "##picker";
+const char* kRecentsScope = "uitest|filter_dropdown";
+
+// Twelve options: one more than the ten the Recent section needs. Filter strings used below match
+// exactly one label ("io", "kap") except "a", whose first match in list order is "alpha"; a lone "o"
+// (what "io" degrades to when a key is lost) first matches "epsilon", a lone "i" first matches "epsilon" too.
+const char* const kLabels[] = {"alpha", "beta",  "gamma", "delta", "epsilon", "zeta",
+                               "eta",   "theta", "iota",  "kappa", "lambda",  "omicron"};
+const int kLabelCount = static_cast<int>(sizeof(kLabels) / sizeof(kLabels[0]));
+
+// Per-test fixture, reached through ImGuiTest::UserData. GuiFunc and TestFunc run on the same thread in
+// alternating frames, so no synchronisation is needed.
+struct DropdownFixture {
+    bool multiSelect = false;
+    bool allowCreate = false;
+    bool keepCheckedVisible = false;
+    bool showClear = false;
+    bool showUnknownRecents = false;
+    bool emptyTextBlank = false; // "" instead of the default "No options"
+    int recentsMinOptions = 10;
+    int skipFirst = 0; // the picker lists kLabels[skipFirst .. itemCount)
+    int itemCount = kLabelCount;
+    bool checked[kLabelCount] = {};
+    bool comboOpen = false;
+    float popupContentHeight = 0.0f;   // the popup's content height, while it is open
+    ImGuiWindow* rowsWindow = nullptr; // the scrolling list inside the popup, while it is open
+    std::vector<smatchet::dropdown::Event> events;
+    const char* const* labels = kLabels; // the option labels (and ids), kLabelCount of them
+    int markVertices = 0;                // vertices in the match-mark colour in the rows' draw list, last frame
+    float markMaxX = 0.0f;               // the rightmost of them (screen x)
+};
+
+DropdownFixture g_fixture;
+
+// Fresh fixture and an empty, non-persisting recents store (nothing here may reach a config file; the
+// store a live session had is put back by the test's TeardownFunc). A test sets the fixture's other
+// switches after this call, before it opens the combo.
+void ResetFixture(bool multiSelect) {
+    g_fixture = DropdownFixture();
+    g_fixture.multiSelect = multiSelect;
+    smatchet::recents::BeginSharedTestScope();
+}
+
+// GuiFunc — a combo whose popup body is THE PRODUCTION CALL, the way every picker hosts it.
+void DrawDropdownHarness(ImGuiTestContext* ctx) {
+    auto* s = static_cast<DropdownFixture*>(ctx->Test->UserData);
+    s->comboOpen = false;
+    s->rowsWindow = nullptr;
+    ImGui::SetNextWindowSize(ImVec2(460, 120), ImGuiCond_Appearing);
+    if (ImGui::Begin(kWindowRef, nullptr, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::SetNextItemWidth(320.0f);
+        if (ImGui::BeginCombo(kComboRef, "(choose)", ImGuiComboFlags_HeightLargest)) {
+            s->comboOpen = true;
+            // A test may change skipFirst / itemCount while the popup is open: options arriving late.
+            smatchet::dropdown::Item items[kLabelCount];
+            const int listed = s->itemCount > s->skipFirst ? s->itemCount - s->skipFirst : 0;
+            for (int i = 0; i < listed; ++i) {
+                items[i].Id = s->labels[s->skipFirst + i];
+                items[i].Label = s->labels[s->skipFirst + i];
+                items[i].Checked = s->checked[s->skipFirst + i];
+            }
+            smatchet::dropdown::Options options;
+            options.MultiSelect = s->multiSelect;
+            options.KeepCheckedVisible = s->keepCheckedVisible;
+            options.AllowCreate = s->allowCreate;
+            options.ClearLabel = s->showClear ? "<clear>" : nullptr;
+            options.RecentsScope = kRecentsScope;
+            options.RecentsMinOptions = s->recentsMinOptions;
+            options.RecentsShowUnknown = s->showUnknownRecents;
+            options.EmptyText = s->emptyTextBlank ? "" : nullptr;
+            const smatchet::dropdown::Event ev = smatchet::dropdown::DrawBody(items, listed, options);
+            if (ev.Kind != smatchet::dropdown::EventKind::None) {
+                s->events.push_back(ev);
+                const bool toggles = s->multiSelect && ev.Kind == smatchet::dropdown::EventKind::Picked;
+                if (toggles && ev.ItemIndex >= 0 && ev.ItemIndex < listed) {
+                    s->checked[s->skipFirst + ev.ItemIndex] = !s->checked[s->skipFirst + ev.ItemIndex];
+                }
+            }
+            const ImGuiWindow* popup = ImGui::GetCurrentWindow();
+            s->popupContentHeight = popup->ContentSize.y;
+            for (ImGuiWindow* child : popup->DC.ChildWindows) {
+                if (std::strstr(child->Name, "##dropdown_rows") != nullptr) {
+                    s->rowsWindow = child;
+                }
+            }
+            // The rows child has ended for this frame, so its draw list holds every row's marks.
+            s->markVertices = 0;
+            s->markMaxX = 0.0f;
+            if (s->rowsWindow != nullptr && s->rowsWindow->DrawList != nullptr) {
+                const ImU32 mark = ImGui::GetColorU32(ImGuiCol_TextSelectedBg);
+                for (const ImDrawVert& v : s->rowsWindow->DrawList->VtxBuffer) {
+                    if (v.col == mark) {
+                        ++s->markVertices;
+                        s->markMaxX = (std::max)(s->markMaxX, v.pos.x);
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+    ImGui::End();
+}
+
+void OpenCombo(ImGuiTestContext* ctx) {
+    ctx->SetRef(kWindowRef);
+    ctx->ItemClick(kComboRef);
+    ctx->Yield(2);
+}
+
+int EventCount() { return static_cast<int>(g_fixture.events.size()); }
+
+// The id of the n-th logged event, or "" when there is none.
+const char* EventId(int n) {
+    return (n >= 0 && n < EventCount()) ? g_fixture.events[static_cast<size_t>(n)].Id.c_str() : "";
+}
+
+bool EventIsPick(int n) {
+    return n >= 0 && n < EventCount() &&
+           g_fixture.events[static_cast<size_t>(n)].Kind == smatchet::dropdown::EventKind::Picked;
+}
+
+ImGuiTest* RegisterDropdownTest(ImGuiTestEngine* engine, const char* name) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "FilterDropdown", name);
+    t->UserData = &g_fixture;
+    t->GuiFunc = [](ImGuiTestContext* ctx) { DrawDropdownHarness(ctx); };
+    // Runs after TestFunc whether it passed or not: the session's own recent picks come back.
+    t->TeardownFunc = [](ImGuiTestContext*) { smatchet::recents::EndSharedTestScope(); };
+    return t;
+}
+
+// ============================================================================
+// A. Type straight after opening → the filter takes it → Enter picks the match and closes.
+// ============================================================================
+void RegisterTypeThenEnterPicks(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "TypeOnOpen_FiltersAndEnterPicks");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+        IM_CHECK(g_fixture.comboOpen);
+
+        // No click on the filter field: the body takes the keys by itself.
+        ctx->KeyChars("io"); // losing either key leaves a filter whose first match is not "iota"
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK(EventIsPick(0));
+        IM_CHECK_STR_EQ(EventId(0), "iota");
+        IM_CHECK(!g_fixture.comboOpen); // a single-select pick closes the popup
+    };
+}
+
+// ============================================================================
+// B. Arrow keys move the highlight; Enter acts on the highlighted row.
+// ============================================================================
+void RegisterArrowsThenEnterPicks(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "ArrowKeys_MoveHighlight_EnterPicks");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+
+        // Highlight starts on the first row ("alpha"); two steps down is "gamma", one back up "beta".
+        ctx->KeyPress(ImGuiKey_DownArrow);
+        ctx->KeyPress(ImGuiKey_DownArrow);
+        ctx->KeyPress(ImGuiKey_UpArrow);
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "beta");
+        IM_CHECK(!g_fixture.comboOpen);
+    };
+}
+
+// ============================================================================
+// C. Tick-box mode: a row click toggles and keeps the popup open; keys typed after the click still
+//    reach the filter.
+// ============================================================================
+void RegisterTypeAfterRowClick(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "MultiSelect_TypeAfterRowClick_ReachesFilter");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/true);
+        OpenCombo(ctx);
+        IM_CHECK(g_fixture.rowsWindow != nullptr);
+        if (g_fixture.rowsWindow == nullptr) {
+            return;
+        }
+
+        // Row 1 is "beta" (no clear row, no Recent section yet).
+        ctx->SetRef(g_fixture.rowsWindow);
+        ctx->ItemClick("$$1/##row");
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "beta");
+        IM_CHECK(g_fixture.checked[1]);
+        IM_CHECK(g_fixture.comboOpen); // a tick-box pick keeps the popup open
+
+        // The click took keyboard focus off the filter field; typing must land in it anyway.
+        // "io": losing the first key, or the second key replacing the first, would leave "o", whose
+        // first match is "epsilon".
+        ctx->KeyChars("io");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_DownArrow); // one match: the highlight stays, but an arrow key vouches for Space
+        ctx->KeyPress(ImGuiKey_Space);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK_STR_EQ(EventId(1), "iota");
+        IM_CHECK(g_fixture.checked[8]);
+        IM_CHECK(g_fixture.comboOpen);
+
+        ctx->KeyPress(ImGuiKey_Enter); // finishes: the popup closes, nothing more is toggled
+        ctx->Yield(2);
+        IM_CHECK(!g_fixture.comboOpen);
+        IM_CHECK_EQ(EventCount(), 2);
+    };
+}
+
+// ============================================================================
+// D. Wheel-scroll the list, then type → the filter takes it.
+// ============================================================================
+void RegisterTypeWhileScrolling(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "TypeAfterWheelScroll_ReachesFilter");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+        IM_CHECK(g_fixture.rowsWindow != nullptr);
+        if (g_fixture.rowsWindow == nullptr) {
+            return;
+        }
+
+        const ImRect list = g_fixture.rowsWindow->Rect();
+        ctx->MouseMoveToPos(list.GetCenter());
+        ctx->MouseWheelY(-2.0f);
+        ctx->Yield(2);
+        IM_CHECK(g_fixture.rowsWindow != nullptr && g_fixture.rowsWindow->Scroll.y > 0.0f); // it did scroll
+
+        ctx->KeyChars("io"); // see C for why "io"
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "iota");
+        IM_CHECK(!g_fixture.comboOpen);
+    };
+}
+
+// ============================================================================
+// G. Keys typed WHILE the scrollbar is held down reach the filter.
+// ============================================================================
+// The one case only the character splice can serve: with a mouse button down the filter field cannot
+// take focus back, so without the splice these keys are dropped. (Cases A / C / D pass through the
+// refocus alone.)
+void RegisterTypeWhileScrollbarHeld(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "TypeWhileScrollbarHeld_ReachesFilter");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+        IM_CHECK(g_fixture.rowsWindow != nullptr);
+        if (g_fixture.rowsWindow == nullptr) {
+            return;
+        }
+        IM_CHECK(g_fixture.rowsWindow->ScrollbarY); // twelve rows, ten visible
+        const ImRect bar = ImGui::GetWindowScrollbarRect(g_fixture.rowsWindow, ImGuiAxis_Y);
+        ctx->MouseMoveToPos(bar.GetCenter());
+        ctx->MouseDown(0);
+        ctx->Yield(2);
+        IM_CHECK(ctx->UiContext->ActiveId != 0); // the scrollbar holds the mouse, not the filter field
+
+        ctx->KeyChars("io");
+        ctx->Yield(2);
+        ctx->MouseUp(0);
+        ctx->Yield(3);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "iota");
+        IM_CHECK(!g_fixture.comboOpen);
+    };
+}
+
+// ============================================================================
+// E. A pick is pinned in the Recent section on the next open; typing a filter hides that section.
+// ============================================================================
+void RegisterRecentSection(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "RecentSection_PinnedAfterPick_HiddenWhileFiltering");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+
+        // First open: no recents yet. Pick "kappa" through the filter.
+        OpenCombo(ctx);
+        ctx->KeyChars("kap");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "kappa");
+        const std::vector<std::string> recents = smatchet::recents::SharedGet(kRecentsScope);
+        IM_CHECK_EQ(static_cast<int>(recents.size()), 1);
+
+        // Second open: the first selectable row is now the pinned recent, not "alpha".
+        OpenCombo(ctx);
+        IM_CHECK(g_fixture.comboOpen);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK_STR_EQ(EventId(1), "kappa");
+
+        // Third open: "a" matches "kappa" too, but with the Recent section hidden the first match in
+        // list order is "alpha".
+        OpenCombo(ctx);
+        ctx->KeyChars("a");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 3);
+        IM_CHECK_STR_EQ(EventId(2), "alpha");
+
+        // Newest first, no duplicate for the repeated "kappa" pick.
+        const std::vector<std::string> after = smatchet::recents::SharedGet(kRecentsScope);
+        IM_CHECK_EQ(static_cast<int>(after.size()), 2);
+        if (after.size() == 2) {
+            IM_CHECK_STR_EQ(after[0].c_str(), "alpha");
+            IM_CHECK_STR_EQ(after[1].c_str(), "kappa");
+        }
+        smatchet::recents::BeginSharedTestScope();
+    };
+}
+
+// ============================================================================
+// F. Escape closes the popup with no pick and records nothing.
+// ============================================================================
+void RegisterEscapeCloses(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "Escape_ClosesWithoutPick");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+        IM_CHECK(g_fixture.comboOpen);
+
+        ctx->KeyChars("zzz"); // a filter with no match must not get in Escape's way
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+
+        IM_CHECK(!g_fixture.comboOpen);
+        IM_CHECK_EQ(EventCount(), 0);
+        IM_CHECK(smatchet::recents::SharedGet(kRecentsScope).empty());
+    };
+}
+
+// ============================================================================
+// H. Tick-box mode records a value when it is ticked ON; unticking records nothing.
+// ============================================================================
+void RegisterUntickRecordsNothing(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "MultiSelect_UntickRecordsNothing");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/true);
+        OpenCombo(ctx);
+        IM_CHECK(g_fixture.rowsWindow != nullptr);
+        if (g_fixture.rowsWindow == nullptr) {
+            return;
+        }
+        ctx->SetRef(g_fixture.rowsWindow);
+        ctx->ItemClick("$$1/##row"); // tick "beta"
+        ctx->Yield(2);
+        ctx->ItemClick("$$8/##row"); // tick "iota"
+        ctx->Yield(2);
+        ctx->ItemClick("$$1/##row"); // untick "beta"
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 3);
+        IM_CHECK(!g_fixture.checked[1]);
+        IM_CHECK(g_fixture.checked[8]);
+
+        // Had the untick been recorded, "beta" would be the newest entry.
+        const std::vector<std::string> recents = smatchet::recents::SharedGet(kRecentsScope);
+        IM_CHECK_EQ(static_cast<int>(recents.size()), 2);
+        if (recents.size() == 2) {
+            IM_CHECK_STR_EQ(recents[0].c_str(), "iota");
+            IM_CHECK_STR_EQ(recents[1].c_str(), "beta");
+        }
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        smatchet::recents::BeginSharedTestScope();
+    };
+}
+
+// ============================================================================
+// I. The 'Add "<text>"' row: Enter creates the trimmed text, records it, and clears the filter.
+// ============================================================================
+void RegisterCreateRow(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "Create_TrimsRecordsAndClearsFilter");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/true);
+        g_fixture.allowCreate = true;
+        OpenCombo(ctx);
+
+        ctx->KeyChars(" New "); // matches no option: the only row is the create row
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        if (EventCount() == 1) {
+            IM_CHECK(g_fixture.events[0].Kind == smatchet::dropdown::EventKind::Created);
+            IM_CHECK_EQ(g_fixture.events[0].ItemIndex, -1);
+        }
+        IM_CHECK_STR_EQ(EventId(0), "New");
+        IM_CHECK(g_fixture.comboOpen);
+        const std::vector<std::string> recents = smatchet::recents::SharedGet(kRecentsScope);
+        IM_CHECK_EQ(static_cast<int>(recents.size()), 1);
+        if (recents.size() == 1) {
+            IM_CHECK_STR_EQ(recents[0].c_str(), "New");
+        }
+
+        // The filter was cleared: "io" now finds "iota". Left in place it would read "Newio" and create again.
+        ctx->KeyChars("io");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_DownArrow); // onto the Add "io" row, then back: an arrow key makes Space toggle
+        ctx->KeyPress(ImGuiKey_UpArrow);
+        ctx->KeyPress(ImGuiKey_Space);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK(EventIsPick(1));
+        IM_CHECK_STR_EQ(EventId(1), "iota");
+
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK(!g_fixture.comboOpen);
+        smatchet::recents::BeginSharedTestScope();
+    };
+}
+
+// ============================================================================
+// J. A ticked option that a filter keeps listed never takes Enter from the option that matches.
+// ============================================================================
+void RegisterKeptTickedDoesNotTakeEnter(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "KeepCheckedVisible_EnterActsOnTheMatch");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/true);
+        g_fixture.keepCheckedVisible = true;
+        g_fixture.checked[0] = true; // "alpha" is ticked and sorts above every match
+        OpenCombo(ctx);
+
+        ctx->KeyChars("io"); // rows: iota (the match, ranked first), alpha (kept)
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "iota");
+        IM_CHECK(g_fixture.checked[0]); // "alpha" was not unticked
+        IM_CHECK(g_fixture.checked[8]);
+
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        smatchet::recents::BeginSharedTestScope();
+    };
+}
+
+// ============================================================================
+// K. A recent pick that is not among the options (the list has not loaded) can still be picked.
+// ============================================================================
+void RegisterUnknownRecentPick(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "UnknownRecent_PickedWithNoOptions");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        g_fixture.itemCount = 0;
+        g_fixture.recentsMinOptions = -1;
+        g_fixture.showUnknownRecents = true;
+        smatchet::recents::RecordAndPersist(kRecentsScope, "PROJ"); // persistence is off after the reset
+        OpenCombo(ctx);
+        IM_CHECK(g_fixture.rowsWindow != nullptr); // the Recent section is listed with no options
+
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK(EventIsPick(0));
+        IM_CHECK_STR_EQ(EventId(0), "PROJ");
+        if (EventCount() == 1) {
+            IM_CHECK_EQ(g_fixture.events[0].ItemIndex, -1);
+        }
+        IM_CHECK(!g_fixture.comboOpen);
+        smatchet::recents::BeginSharedTestScope();
+    };
+}
+
+// ============================================================================
+// L. PageDown moves the highlight a page (ten rows).
+// ============================================================================
+void RegisterPageDown(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "PageDown_MovesAPage");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+
+        ctx->KeyPress(ImGuiKey_PageDown); // "alpha" (row 0) + ten rows
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "lambda");
+    };
+}
+
+// ============================================================================
+// L2. Ctrl+PageDown is the global next-view shortcut, not a page move: the highlight stays put.
+// ============================================================================
+void RegisterCtrlPageDownDoesNotPage(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "CtrlPageDown_DoesNotMoveAPage");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_PageDown); // "alpha" (row 0) stays highlighted
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "alpha");
+    };
+}
+
+// ============================================================================
+// M. A picker with a clear row and no options: the empty-state text is shown under the clear row,
+//    Enter does not clear the field, and the clear row is still one arrow key away.
+// ============================================================================
+void RegisterLoneClearRow(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "LoneClearRow_ShowsEmptyState_EnterDoesNotClear");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        g_fixture.itemCount = 0;
+        g_fixture.showClear = true;
+
+        // Without the empty-state text first, for the height to compare against.
+        g_fixture.emptyTextBlank = true;
+        OpenCombo(ctx);
+        ctx->Yield(3);
+        const float heightWithoutText = g_fixture.popupContentHeight;
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK(!g_fixture.comboOpen);
+
+        g_fixture.emptyTextBlank = false;
+        OpenCombo(ctx);
+        ctx->Yield(3);
+        IM_CHECK(g_fixture.rowsWindow != nullptr); // the clear row is listed
+        IM_CHECK_GT(heightWithoutText, 0.0f);
+        IM_CHECK_GT(g_fixture.popupContentHeight, heightWithoutText + 4.0f); // "No options" takes a line
+
+        ctx->KeyPress(ImGuiKey_Enter); // nothing is highlighted: the clear row is never the default
+        ctx->Yield(3);
+        IM_CHECK_EQ(EventCount(), 0);
+        IM_CHECK(g_fixture.comboOpen);
+
+        ctx->KeyPress(ImGuiKey_DownArrow);
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        if (EventCount() == 1) {
+            IM_CHECK(g_fixture.events[0].Kind == smatchet::dropdown::EventKind::Cleared);
+        }
+        IM_CHECK(!g_fixture.comboOpen);
+    };
+}
+
+// ============================================================================
+// N. The option list arrives while the popup is open: the first option becomes the highlight, even
+//    though an arrow key was pressed while there was nothing to move to.
+// ============================================================================
+void RegisterOptionsArriveLate(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OptionsArriveLate_DefaultHighlightApplies");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        g_fixture.itemCount = 0;
+        OpenCombo(ctx);
+        IM_CHECK(g_fixture.comboOpen);
+        ctx->KeyPress(ImGuiKey_DownArrow); // no rows yet
+        ctx->Yield(2);
+
+        g_fixture.itemCount = kLabelCount; // the fetch lands
+        ctx->Yield(3);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "alpha");
+        IM_CHECK(!g_fixture.comboOpen);
+    };
+}
+
+// ============================================================================
+// O. Rows inserted above a highlight the user moved: the highlight stays on its option.
+// ============================================================================
+void RegisterHighlightFollowsItsOption(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "RowsInsertedAbove_HighlightStaysOnItsOption");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        g_fixture.skipFirst = 2; // gamma, delta, ...
+        OpenCombo(ctx);
+        ctx->KeyPress(ImGuiKey_DownArrow); // gamma → delta (row 1)
+        ctx->Yield(2);
+
+        g_fixture.skipFirst = 0; // "alpha" and "beta" arrive above: row 1 is now "beta"
+        ctx->Yield(3);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "delta");
+    };
+}
+
+// ============================================================================
+// P. Enter on the keyboard-focused combo opens the popup. That same key press must not also act on
+//    the highlighted row (it would pick it and close the popup at once); the next Enter does.
+// ============================================================================
+void RegisterEnterThatOpensDoesNotPick(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "EnterThatOpens_DoesNotPick");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        ctx->SetRef(kWindowRef);
+        ctx->NavMoveTo(kComboRef);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK(g_fixture.comboOpen);
+        IM_CHECK_EQ(EventCount(), 0);
+
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "alpha");
+        IM_CHECK(!g_fixture.comboOpen);
+    };
+}
+
+// ============================================================================
+// Q. The options are replaced while the popup is open and the row count stays the same: a highlight
+//    the user has not moved goes to the best match of the list as it is now.
+// ============================================================================
+void RegisterReplacedOptionsRefreshDefault(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OptionsReplacedSameCount_DefaultHighlightFollowsTheList");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        g_fixture.skipFirst = 5; // zeta, eta, theta
+        g_fixture.itemCount = 8;
+        OpenCombo(ctx);
+        IM_CHECK(g_fixture.comboOpen);
+        ctx->KeyChars("e"); // all three match; "eta" is the one that starts with it
+        ctx->Yield(2);
+
+        g_fixture.skipFirst = 4; // epsilon, zeta, eta: three rows again, and "epsilon" starts with it first
+        g_fixture.itemCount = 7;
+        ctx->Yield(3);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "epsilon");
+    };
+}
+
+// ============================================================================
+// R. The project picker keeps its recent picks under the focused tracker, the one its project list and
+//    the create it feeds belong to: a recent key is offered as a pick without a list to check it
+//    against, so a key of another tracker must not show up.
+// ============================================================================
+const char* kPickerWindowRef = "SmatchetTest::ProjectPickerRecents";
+
+struct PickerFixture {
+    std::string selected;
+    bool changed = false;
+};
+
+PickerFixture g_picker;
+// Static: the picker's background loads keep a pointer to the state until they finish.
+SmatchetProjectPicker::State g_pickerState;
+
+void DrawPickerHarness() {
+    ImGui::SetNextWindowSize(ImVec2(460, 120), ImGuiCond_Appearing);
+    if (ImGui::Begin(kPickerWindowRef, nullptr, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings)) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app != nullptr) {
+            ImGui::SetNextItemWidth(320.0f);
+            if (SmatchetProjectPicker::Draw("uitest_project", g_pickerState, *app, "Plane",
+                                            "https://plane.uitest.invalid|other", g_picker.selected)) {
+                g_picker.changed = true;
+            }
+        }
+    }
+    ImGui::End();
+}
+
+void RegisterProjectPickerRecentsFollowTheFocusedTracker(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "ProjectPicker_RecentsFollowTheFocusedTracker");
+    t->GuiFunc = [](ImGuiTestContext*) { DrawPickerHarness(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        g_picker = PickerFixture();
+        AppController* app = SmatchetActiveUiTestAppController();
+        IM_CHECK(app != nullptr);
+        // Recent picks of the focused tracker and of another one; only the focused tracker's are offered.
+        const std::string focusedKey = app->FocusedCacheBackendKey();
+        const std::string otherScope = smatchet::recents::MakeScopeKey(focusedKey + "|other-tracker", "project");
+        const std::string focusedScope = smatchet::recents::MakeScopeKey(focusedKey, "project");
+        smatchet::recents::RecordAndPersist(otherScope, "OTHERONE");
+        smatchet::recents::RecordAndPersist(focusedScope, "FOCUSED");
+
+        ctx->SetRef(kPickerWindowRef);
+        ctx->ItemClick("uitest_project/##projectpicker");
+        ctx->Yield(3);
+        ctx->KeyPress(ImGuiKey_Enter); // the first Recent row
+        ctx->Yield(2);
+
+        IM_CHECK(g_picker.changed);
+        IM_CHECK_STR_EQ(g_picker.selected.c_str(), "FOCUSED");
+        const std::vector<std::string> otherRecents = smatchet::recents::SharedGet(otherScope);
+        IM_CHECK_EQ(static_cast<int>(otherRecents.size()), 1); // the pick was not written to the other tracker
+        IM_CHECK_STR_EQ(otherRecents.empty() ? "" : otherRecents[0].c_str(), "OTHERONE");
+    };
+}
+
+// ============================================================================
+// S. Tick-box lists: Space toggles the highlighted row (while the filter is empty or after an arrow
+//    key), is filter text otherwise, and Enter finishes: it closes the popup, and ticks the highlighted
+//    row first only when nothing was toggled yet.
+// ============================================================================
+void RegisterMultiSelectSpaceToggleEnterFinishes(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "MultiSelect_SpaceToggles_EnterFinishes");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/true);
+        OpenCombo(ctx);
+
+        // Empty filter: arrows then Space tick row after row; the popup stays open.
+        ctx->KeyPress(ImGuiKey_DownArrow); // alpha is the default row; this lands on "beta"
+        ctx->KeyPress(ImGuiKey_Space);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "beta");
+        IM_CHECK(g_fixture.checked[1]);
+        ctx->KeyPress(ImGuiKey_Space); // the same row again: unticked
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK(!g_fixture.checked[1]);
+        ctx->KeyPress(ImGuiKey_DownArrow);
+        ctx->KeyPress(ImGuiKey_Space);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 3);
+        IM_CHECK_STR_EQ(EventId(2), "gamma");
+        IM_CHECK(g_fixture.comboOpen);
+
+        // Enter finishes; something was toggled already, so it ticks nothing more.
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK(!g_fixture.comboOpen);
+        IM_CHECK_EQ(EventCount(), 3);
+        IM_CHECK(g_fixture.checked[2]);
+
+        // A fresh open, nothing toggled: Enter ticks the highlighted match and finishes.
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        OpenCombo(ctx);
+        ctx->KeyChars("io");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "iota");
+        IM_CHECK(!g_fixture.comboOpen);
+
+        // Typed text and no arrow key: a Space typed with the text is filter text, not a toggle, and the
+        // Space key alone toggles nothing ("e" matches several rows).
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        OpenCombo(ctx);
+        // Words match in any order, so "i o" finds "iota" just as "io" would: the Space is told apart by the
+        // events. Typed text, the Space toggled "iota" and Enter (filter changed since) would tick it again.
+        ctx->KeyChars("i o");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1); // only Enter acted: the Space was filter text
+        IM_CHECK_STR_EQ(EventId(0), "iota");
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        OpenCombo(ctx);
+        ctx->KeyChars("e");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Space);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 0);
+        IM_CHECK(g_fixture.comboOpen);
+
+        // After an arrow key the same Space toggles the highlighted row.
+        ctx->KeyPress(ImGuiKey_DownArrow);
+        ctx->KeyPress(ImGuiKey_Space);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK(EventIsPick(0));
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+
+        // A toggle earlier does not take Enter away from text typed afterwards: it ticks the match, then closes.
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        OpenCombo(ctx);
+        ctx->KeyPress(ImGuiKey_DownArrow);
+        ctx->KeyPress(ImGuiKey_Space); // beta
+        ctx->KeyChars("io");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK_STR_EQ(EventId(1), "iota");
+        IM_CHECK(!g_fixture.comboOpen);
+
+        // The same for a created value: Enter after a toggle still creates what was typed, and stays open.
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        g_fixture.allowCreate = true;
+        OpenCombo(ctx);
+        ctx->KeyPress(ImGuiKey_DownArrow);
+        ctx->KeyPress(ImGuiKey_Space);
+        ctx->KeyChars("zzz");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK(g_fixture.events.size() == 2 && g_fixture.events[1].Kind == smatchet::dropdown::EventKind::Created);
+        IM_CHECK(g_fixture.comboOpen);
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+
+        // Enter on a filter that matches nothing only finishes: the ticked option the list keeps visible
+        // is not what was typed, so it stays ticked.
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        g_fixture.keepCheckedVisible = true;
+        g_fixture.checked[0] = true;
+        OpenCombo(ctx);
+        ctx->KeyChars("zzz");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 0);
+        IM_CHECK(g_fixture.checked[0]);
+        IM_CHECK(!g_fixture.comboOpen);
+
+        // A held Space (key repeat delivers its character on later frames) toggles once and types nothing.
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        OpenCombo(ctx);
+        ctx->KeyDown(ImGuiKey_Space);
+        ctx->Yield();
+        for (int repeat = 0; repeat < 3; ++repeat) {
+            ctx->KeyChars(" ");
+            ctx->Yield();
+        }
+        ctx->KeyUp(ImGuiKey_Space);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        ctx->KeyChars("io"); // the filter reads "io": a leaked space would not change that, Enter picks iota
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK_STR_EQ(EventId(1), "iota");
+        IM_CHECK(!g_fixture.comboOpen);
+
+        // Enter with an empty filter only finishes: it never unticks the value the default row holds.
+        g_fixture = DropdownFixture();
+        g_fixture.multiSelect = true;
+        g_fixture.checked[0] = true;
+        OpenCombo(ctx);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 0);
+        IM_CHECK(g_fixture.checked[0]);
+        IM_CHECK(!g_fixture.comboOpen);
+
+        smatchet::recents::BeginSharedTestScope();
+    };
+}
+
+// ============================================================================
+// T. Letters typed in order find an option no label holds as written, and Enter picks it.
+// ============================================================================
+void RegisterLettersInOrderFindTheOption(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OneMatcher_LettersInOrderFindTheOption");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+        ctx->KeyChars("lmd"); // no label holds "lmd"; l..m..d only in "lambda"
+        ctx->Yield(2);
+        IM_CHECK(g_fixture.comboOpen);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK(EventIsPick(0));
+        IM_CHECK_STR_EQ(EventId(0), "lambda");
+        IM_CHECK(!g_fixture.comboOpen);
+    };
+}
+
+// ============================================================================
+// U. An exact match hides letters-in-order ones: "la" is in "lambda" only, while "alpha" and "delta"
+//    hold l..a. With them hidden, Down has nowhere to go and Enter still picks "lambda".
+// ============================================================================
+void RegisterExactMatchHidesLettersInOrder(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OneMatcher_ExactMatchHidesLettersInOrder");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+        ctx->KeyChars("la");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_DownArrow); // would land on "alpha" or "delta" if they were listed
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "lambda");
+    };
+}
+
+// ============================================================================
+// V. Case folds beyond ASCII: Greek capitals with a tonos find the lower-case option; the words of the
+//    filter match in any order.
+// ============================================================================
+const char* const kGreekLabels[] = {"\xCE\x91\xCE\xBB\xCF\x86\xCE\xB1",                          // Αλφα
+                                    "\xCE\x92\xCE\xAE\xCF\x84\xCE\xB1 \xCE\xB4\xCF\x8D\xCE\xBF", // Βήτα δύο
+                                    "\xCE\x93\xCE\xAC\xCE\xBC\xCE\xBC\xCE\xB1",                  // Γάμμα
+                                    "",
+                                    "",
+                                    "",
+                                    "",
+                                    "",
+                                    "",
+                                    "",
+                                    "",
+                                    ""};
+static_assert(sizeof(kGreekLabels) / sizeof(kGreekLabels[0]) == static_cast<std::size_t>(kLabelCount),
+              "the fixture reads kLabelCount labels");
+
+void RegisterGreekCapitalsFindLowerCase(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OneMatcher_GreekCapitalsFindLowerCaseInAnyOrder");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        g_fixture.labels = kGreekLabels;
+        g_fixture.itemCount = 3;
+        OpenCombo(ctx);
+        ctx->KeyChars("\xCE\x94\xCE\x8E\xCE\x9F \xCE\x92\xCE\x89\xCE\xA4\xCE\x91"); // ΔΎΟ ΒΉΤΑ
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), kGreekLabels[1]);
+    };
+}
+
+// ============================================================================
+// W. The matched letters are marked in the drawn row: nothing with no filter; for "lam" the marks end
+//    after the "m" of "lambda"; for "lmd" (l, m and d marked apart) they reach on to its "d".
+// ============================================================================
+void RegisterMatchedLettersAreMarked(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OneMatcher_MatchedLettersAreMarked");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+        ctx->Yield(2);
+        IM_CHECK_EQ(g_fixture.markVertices, 0); // nothing typed: nothing marked
+        ctx->KeyChars("lam");
+        ctx->Yield(2);
+        IM_CHECK_GT(g_fixture.markVertices, 0);
+        const float lamEnd = g_fixture.markMaxX;
+        ctx->KeyPress(ImGuiKey_Backspace);
+        ctx->KeyPress(ImGuiKey_Backspace);
+        ctx->KeyChars("md"); // "lmd"
+        ctx->Yield(2);
+        IM_CHECK_GT(g_fixture.markVertices, 0);
+        IM_CHECK_GT(g_fixture.markMaxX, lamEnd + 1.0f);
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 0);
+    };
+}
+
+// ============================================================================
+// X. With a create row, Enter adds what was typed rather than an option that only holds its letters in
+//    order: "lmd" is created, not "lambda" ticked; an arrow key still reaches "lambda".
+// ============================================================================
+void RegisterCreateBeatsLettersInOrder(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OneMatcher_CreateRowBeatsLettersInOrderMatch");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/true);
+        g_fixture.allowCreate = true;
+        OpenCombo(ctx);
+        ctx->KeyChars("lmd");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        if (EventCount() == 1) {
+            IM_CHECK(g_fixture.events[0].Kind == smatchet::dropdown::EventKind::Created);
+        }
+        IM_CHECK_STR_EQ(EventId(0), "lmd");
+        IM_CHECK(!g_fixture.checked[10]); // "lambda" untouched
+        IM_CHECK(g_fixture.comboOpen);    // a tick-box create keeps the popup open and clears the filter
+
+        // Typed again, then Up from the create row onto the near match: Enter ticks it and finishes.
+        ctx->KeyChars("lmd");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_UpArrow);
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK(EventIsPick(1));
+        IM_CHECK_STR_EQ(EventId(1), "lambda");
+        IM_CHECK(!g_fixture.comboOpen);
+        smatchet::recents::BeginSharedTestScope();
+    };
+}
+
+} // namespace
+
+extern "C" void SmatchetRegisterFilterDropdownTests(ImGuiTestEngine* engine) {
+    RegisterTypeThenEnterPicks(engine);                          // A: type on open → Enter picks, closes
+    RegisterArrowsThenEnterPicks(engine);                        // B: Up / Down + Enter
+    RegisterLettersInOrderFindTheOption(engine);                 // T: letters in order find "lambda"
+    RegisterExactMatchHidesLettersInOrder(engine);               // U: an exact match hides letters-in-order rows
+    RegisterGreekCapitalsFindLowerCase(engine);                  // V: Greek capitals, words in any order
+    RegisterMatchedLettersAreMarked(engine);                     // W: the matched letters are marked
+    RegisterCreateBeatsLettersInOrder(engine);                   // X: the create row beats a letters-in-order match
+    RegisterTypeAfterRowClick(engine);                           // C: tick-box click keeps open; typing still filters
+    RegisterTypeWhileScrolling(engine);                          // D: wheel-scroll then type
+    RegisterRecentSection(engine);                               // E: Recent section pinned, hidden while filtering
+    RegisterEscapeCloses(engine);                                // F: Escape closes, no pick
+    RegisterTypeWhileScrollbarHeld(engine);                      // G: keys typed during a scrollbar drag
+    RegisterUntickRecordsNothing(engine);                        // H: unticking is not a recent pick
+    RegisterCreateRow(engine);                                   // I: the 'Add "<text>"' row
+    RegisterKeptTickedDoesNotTakeEnter(engine);                  // J: Enter acts on the match, not a kept ticked option
+    RegisterUnknownRecentPick(engine);                           // K: a recent pick outside the options
+    RegisterPageDown(engine);                                    // L: PageDown
+    RegisterCtrlPageDownDoesNotPage(engine);                     // L2: Ctrl+PageDown is next view, not a page
+    RegisterLoneClearRow(engine);                                // M: empty state under a lone clear row
+    RegisterOptionsArriveLate(engine);                           // N: options arriving under an open popup
+    RegisterHighlightFollowsItsOption(engine);                   // O: rows inserted above the highlight
+    RegisterEnterThatOpensDoesNotPick(engine);                   // P: the Enter that opens the combo is not a pick
+    RegisterReplacedOptionsRefreshDefault(engine);               // Q: options replaced, same row count
+    RegisterProjectPickerRecentsFollowTheFocusedTracker(engine); // R: project picker recents follow the focused tracker
+    RegisterMultiSelectSpaceToggleEnterFinishes(engine);         // S: Space toggles, Enter finishes
+}
+
+#endif // SMATCHET_BUILD_UI_TESTS

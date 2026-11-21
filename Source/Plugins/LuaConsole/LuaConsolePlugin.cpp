@@ -9,7 +9,10 @@
 #include "SmatchetThemedTextEditorPalette.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
+#include "Ui/GestureKeys.h"
+#include "Ui/SmatchetSubmitKeys.h"
 #include "imgui.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -690,13 +693,25 @@ void LuaConsolePlugin::UpdateSplitLayout(DrawCtx& ctx) {
         (std::min)(maxScriptH, (std::max)(ctx.kMinScriptH, luaAutomationScriptPaneUserPx_));
 }
 
+// Ctrl+Enter or F5 runs the row's button, while the Scripts window has the keyboard (not the autocomplete
+// popup above it, which keeps its own keys). The text editor types no newline on Ctrl+Enter.
+static bool LuaRunKeyPressed() {
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy)) {
+        return false;
+    }
+    return ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Enter) ||
+           ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadEnter) || ImGui::IsKeyChordPressed(ImGuiKey_F5);
+}
+
 void LuaConsolePlugin::DrawRunButtonRow(DrawCtx& ctx, const std::string& curName) {
     AppController& app = ctx.app;
     const bool isHooks = IsHooksFile(curName);
     const bool isAutomation = (curName == "Automation.lua");
+    const bool runKey = LuaRunKeyPressed();
+    const char* runKeyName = smatchet::ui::CtrlEnterKeyName();
     if (isHooks) {
         ImGui::SameLine();
-        if (ImGui::Button("Run", ImVec2(70, 0))) {
+        if (smatchet::ui::KeyHintButton("Run", runKeyName, ImVec2(70, 0)) || runKey) {
             std::string e;
             if (SaveCurrentScript(app, e)) {
                 LOG_TRACE("LuaConsole: reloading SmatchetHooks.lua from disk");
@@ -711,7 +726,7 @@ void LuaConsolePlugin::DrawRunButtonRow(DrawCtx& ctx, const std::string& curName
     }
     ImGui::SameLine();
     if (isAutomation) {
-        if (ImGui::Button("Run on selected", ImVec2(150, 0))) {
+        if (smatchet::ui::KeyHintButton("Run on selected", runKeyName, ImVec2(150, 0)) || runKey) {
             std::string e;
             if (SaveCurrentScript(app, e)) {
                 const auto snap = app.GetActiveTicketsSnapshot();
@@ -738,7 +753,7 @@ void LuaConsolePlugin::DrawRunButtonRow(DrawCtx& ctx, const std::string& curName
     }
     ImGui::Checkbox("Background", &runInBackground_);
     ImGui::SameLine();
-    if (ImGui::Button("Run", ImVec2(70, 0))) {
+    if (smatchet::ui::KeyHintButton("Run", runKeyName, ImVec2(70, 0)) || runKey) {
         std::string e;
         if (SaveCurrentScript(app, e)) {
             if (runInBackground_) {
@@ -802,7 +817,8 @@ void LuaConsolePlugin::DrawEditorAndAutocomplete() {
     DrawAutocompletePopup();
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Ctrl+Space: autocomplete. Lua errors from Run may mark lines when a :line: is present.");
+    ImGui::TextDisabled("Ctrl+Enter or F5: run. Ctrl+Space: autocomplete. Lua errors from Run may mark lines when a "
+                        ":line: is present.");
 }
 
 void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) {
@@ -844,9 +860,15 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
     if (openUnsavedSwitchAfterCombo) {
         ImGui::OpenPopup("##lua_unsaved_switch");
     }
-    if (ImGui::BeginPopupModal("##lua_unsaved_switch", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. Saving is not destructive, so Enter saves and switches; Esc cancels.
+    static smatchet::ui::DialogScopeState s_unsavedSwitchDialog;
+    if (smatchet::ui::BeginDialog(s_unsavedSwitchDialog, "##lua_unsaved_switch", nullptr,
+                                  ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Save changes to the current script before switching?");
-        if (ImGui::Button("Save", ImVec2(120, 0))) {
+        smatchet::ui::ConfirmFooterSpec spec = smatchet::ui::UnsavedChangesFooter("Save", "Discard");
+        spec.ButtonSize = ImVec2(120, 0);
+        const smatchet::dialogkeys::ConfirmPick pick = smatchet::ui::ConfirmFooter(s_unsavedSwitchDialog, spec);
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
             std::string e;
             if (SaveCurrentScript(app, e)) {
                 const std::string prev = selectedScriptName_;
@@ -859,9 +881,7 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
                 g_ui.gridEditError = e;
             }
             ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Discard", ImVec2(120, 0))) {
+        } else if (pick == smatchet::dialogkeys::ConfirmPick::Alternate) {
             const std::string prev = selectedScriptName_;
             selectedScriptName_ = pendingScriptName_;
             std::string e;
@@ -871,11 +891,7 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
             }
             ImGui::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_unsavedSwitchDialog);
     }
 
     ImGui::SameLine();
@@ -999,8 +1015,22 @@ void LuaConsolePlugin::DrawSplitterAndConsole(DrawCtx& ctx) {
             dl->AddCircleFilled(ImVec2(cx + static_cast<float>(i) * 6.0f, midY), 1.5f, dotCol);
         }
     }
+    // The divider moves with the mouse, or one step per ui.splitter.grow / ui.splitter.shrink while this
+    // window has the keyboard.
+    float splitDelta = 0.0f;
+    // keyboard-equivalent: ui.splitter.grow, ui.splitter.shrink
     if (splitActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        const float next = luaAutomationScriptPaneHeightPx_ + ImGui::GetIO().MouseDelta.y;
+        splitDelta = ImGui::GetIO().MouseDelta.y;
+    }
+    const float splitStep = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
+    if (smatchet::ui::TakeGestureKeyForCurrentWindow(smatchet::ui::GestureKey::SplitterGrow)) {
+        splitDelta += splitStep;
+    }
+    if (smatchet::ui::TakeGestureKeyForCurrentWindow(smatchet::ui::GestureKey::SplitterShrink)) {
+        splitDelta -= splitStep;
+    }
+    if (splitDelta != 0.0f) {
+        const float next = luaAutomationScriptPaneHeightPx_ + splitDelta;
         const float localMinLogH = ctx.onToolsTab ? ctx.kToolsLogH : ctx.kMinLogH;
         const float localMaxScriptH =
             (std::max)(ctx.kMinScriptH, ctx.splitStackTotalH - localMinLogH - ctx.kSplitGrabH);

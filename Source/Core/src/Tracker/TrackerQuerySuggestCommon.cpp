@@ -2,6 +2,7 @@
 
 #include "TunableLimits.h"
 #include "StringUtil.h"
+#include "TextMatchPure.h"
 
 #include <algorithm>
 #include <cctype>
@@ -134,6 +135,30 @@ void AppendTerms(const std::string& prefix, const char* const* terms, int termCo
     }
 }
 
+namespace {
+
+// True when some word of `nameFolded` starts with `wordFolded`. Words split at the shared matcher's non-word
+// characters (textmatch::IsWordChar on decoded code points), so "points" starts a word of "Story—Points" and
+// of "Story Points" with a no-break space, and never one inside "Points" ("oints"). The name is already
+// folded, so a case change ("StoryPoints") is not a split here.
+bool NameHasWordStartingWith(const std::string& nameFolded, const std::string& wordFolded) {
+    const char* const s = nameFolded.data();
+    const std::size_t n = nameFolded.size();
+    bool prevIsWordChar = false;
+    std::size_t i = 0;
+    while (i < n) {
+        if (!prevIsWordChar && nameFolded.compare(i, wordFolded.size(), wordFolded) == 0) {
+            return true;
+        }
+        std::size_t len = 1;
+        prevIsWordChar = smatchet::textmatch::IsWordChar(smatchet::textmatch::DecodeUtf8(s + i, n - i, len));
+        i += len;
+    }
+    return false;
+}
+
+} // namespace
+
 void AppendFieldCatalog(const std::vector<TrackerField>& fields, const std::string& prefix,
                         std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
     const std::string pre = ToLowerAsciiCopy(prefix);
@@ -150,6 +175,24 @@ void AppendFieldCatalog(const std::vector<TrackerField>& fields, const std::stri
                 std::string label = f.Name + " (" + f.Id + ")";
                 AddSuggestionUnique(out, seen, label, f.Id);
             }
+        }
+    }
+    // Then names with a later word that starts with each typed word, after every prefix hit ("points" finds
+    // "Story Points", "points story" too). Word starts only, through the shared fold: a one-letter prefix must
+    // not pull in every name that merely contains the letter ("s" is not "Assignee"). Ids stay prefix-only.
+    if (prefix.empty()) {
+        return;
+    }
+    const smatchet::textmatch::Query words = smatchet::textmatch::MakeQuery(prefix);
+    for (const auto& f : fields) {
+        if (f.Id.empty() || f.Name.empty() || f.Name == f.Id) {
+            continue;
+        }
+        const std::string name = smatchet::textmatch::FoldCopy(f.Name);
+        const bool all = std::all_of(words.WordsUtf8.begin(), words.WordsUtf8.end(),
+                                     [&name](const std::string& w) { return NameHasWordStartingWith(name, w); });
+        if (all) {
+            AddSuggestionUnique(out, seen, f.Name + " (" + f.Id + ")", f.Id);
         }
     }
 }

@@ -301,6 +301,10 @@ KeybindingsConfig KeybindingsConfig::Defaults() {
     c.Bindings.push_back(MakeBindingMulti({"Ctrl+0", "Ctrl+Num0"}, "ui.zoom.reset", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+V", "ui.open_view", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+G", "grid.clear_selection", "{}"));
+    // Jump into the focused pane's issue search box. The bare "/" is held back while a text
+    // field is active (SmatchetUI::dispatchKeybindings' typing gate), so it never eats a typed
+    // slash; Ctrl+F works from anywhere.
+    c.Bindings.push_back(MakeBindingMulti({"Ctrl+F", "/"}, "grid.search.focus", "{}"));
     // View reveals. "Open Project View" and "Views Dashboard" share the
     // views_dashboard command but bind distinct keys via distinct args (matched
     // semantically by BoundHotkeyDisplayForArgs).
@@ -314,5 +318,21 @@ KeybindingsConfig KeybindingsConfig::Defaults() {
     // Quick-create issue popup (docs/plans/quick-create-issue-unreal-context.md). Ctrl+Shift+J is
     // NOT used here on purpose — the Unreal host reserves it for the overlay visibility toggle.
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+T", "issue.quick_create.open", "{}"));
+    // Keyboard equivalents for pointer gestures (docs/plans/input-ux-w2-gesture-keys.md). The list and
+    // splitter commands act only on the focused widget. Delete is a bare key, so dispatchKeybindings skips it
+    // while a text field has the caret. The splitter's two combos follow the arrow the divider moves along.
+    c.Bindings.push_back(MakeBinding("Alt+Up", "ui.list.move_up", "{}"));
+    c.Bindings.push_back(MakeBinding("Alt+Down", "ui.list.move_down", "{}"));
+    c.Bindings.push_back(MakeBinding("Delete", "ui.list.remove", "{}"));
+    c.Bindings.push_back(MakeBindingMulti({"Shift+Alt+Down", "Shift+Alt+Right"}, "ui.splitter.grow", "{}"));
+    c.Bindings.push_back(MakeBindingMulti({"Shift+Alt+Up", "Shift+Alt+Left"}, "ui.splitter.shrink", "{}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+Alt+PageUp", "view.panel.grow", "{}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+Alt+PageDown", "view.panel.shrink", "{}"));
+    // Primary actions that had no key (INPUT_UX_AUDIT.md § 4.4). The settings search sits next to
+    // Ctrl+, (Preferences); the view keys are the tab-switch chords browsers and editors use. Seeded
+    // into older configs once by migrated_action_keys_v1 (ConfigManager_Load.cpp).
+    c.Bindings.push_back(MakeBinding("Ctrl+Shift+,", "preferences.search.focus", "{}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+PageDown", "view.next", "{}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+PageUp", "view.previous", "{}"));
     return c;
 }

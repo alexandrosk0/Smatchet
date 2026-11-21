@@ -509,6 +509,12 @@ class SmatchetUI {
     void applyPendingViewDelete(AppController& app, UiDrawSession& d);
     void drawViewsConnectivityBanner(AppController& app, UiDrawSession& d);
     void drawViewsJiraDomainPicker(AppController& app, UiDrawSession& d);
+    /// Make `domain` the active Jira site (persisted, catalog refetch) — the Views - Jira Domain
+    /// combo and the "+ ▾" Jira site rows (#2444) share it. `resyncFocused` re-syncs the focused
+    /// pane on the new site; pass false when the focused pane is not a Jira pane. Returns false
+    /// (nothing changed) when no configured site matches `domain`. Defined in
+    /// SmatchetViewsDashboardUi.cpp.
+    bool switchActiveJiraSite(AppController& app, UiDrawSession& d, const std::string& domain, bool resyncFocused);
     void handleViewsDashboardShortcuts(AppController& app, UiDrawSession& d, const ViewDefinition* activeView);
     // Pane-window host (multi-grid-tabs Slice 2): bootstraps d.gridPanes from
     // smatchet_panes.json, draws one dockable window per pane via the re-entrant

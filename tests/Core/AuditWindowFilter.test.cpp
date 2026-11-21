@@ -5,6 +5,7 @@
 
 #include <doctest/doctest.h>
 
+#include "TextMatchPure.h"
 #include "Ui/SmatchetAudit_detail.h"
 
 #include <algorithm>
@@ -198,4 +199,13 @@ TEST_CASE("Audit TSV copy guards a formula in the details cell") {
     const std::vector<std::string> cells = SplitTsvLine(row);
     REQUIRE(cells.size() == 8);
     CHECK(cells[7] == "'+cmd|' /C calc'!A0");
+}
+
+TEST_CASE("Audit search: every word, any order, case-folded beyond ASCII") {
+    const std::string hay =
+        smatchet::textmatch::FoldCopy("{\"action\":\"comment_add\",\"key\":\"PROJ-7\",\"by\":\"Ольга\"}");
+    CHECK(ContainsNoCasePreLower(hay, smatchet::textmatch::FoldCopy("proj-7 COMMENT")));
+    CHECK(ContainsNoCasePreLower(hay, smatchet::textmatch::FoldCopy("ОЛЬГА")));
+    CHECK_FALSE(ContainsNoCasePreLower(hay, smatchet::textmatch::FoldCopy("proj-7 attach")));
+    CHECK_FALSE(ContainsNoCasePreLower(hay, "cmtadd")); // ids and JSON: no letters-in-order matching here
 }

@@ -3,6 +3,7 @@
 #include "CallstackParser.h"
 #include "Logger.h"
 #include "P4Annotate.h"
+#include "Tracker/TrackerInputNormalisePure.h"
 #include "Ui/P4ClPreview.h"
 
 #include <chrono>
@@ -124,11 +125,17 @@ void StartWorker(std::vector<AnnotateRow> rows, AnnotateAnalysisConfig cfg, std:
 
 void RunAnnotateProcessFromBuffers() {
     State().lastUiStatus.clear();
-    State().annotateCfg.P4Executable = State().p4Exe;
-    State().annotateCfg.P4VcExecutable = State().p4vcExe;
-    State().annotateCfg.TimelapseCommandTemplate = State().timeTpl;
-    State().annotateCfg.ChangeCommandTemplate = State().changeTpl;
-    State().annotateCfg.AiChatUrl = State().aiUrl;
+    // The checked fields keep the last value that worked while they show an error: text they refused is not
+    // carried into the config here either, where the next save of any setting would write it to disk.
+    auto& cfg = State().annotateCfg;
+    cfg.P4Executable = TrackerInputNormalise::AcceptedOr(TrackerInputNormalise::NormaliseExecutablePath(State().p4Exe),
+                                                         cfg.P4Executable);
+    cfg.P4VcExecutable = TrackerInputNormalise::AcceptedOr(
+        TrackerInputNormalise::NormaliseExecutablePath(State().p4vcExe), cfg.P4VcExecutable);
+    cfg.TimelapseCommandTemplate = State().timeTpl;
+    cfg.ChangeCommandTemplate = State().changeTpl;
+    cfg.AiChatUrl =
+        TrackerInputNormalise::AcceptedOr(TrackerInputNormalise::ValidateHttpUrl(State().aiUrl), cfg.AiChatUrl);
     // PathRemaps are owned directly by the multi-rule editor (it writes cfg.PathRemaps +
     // persists on each row edit), so no buffer→cfg rebuild is needed here.
     LogAnnotateP4PathsIfChanged("process");

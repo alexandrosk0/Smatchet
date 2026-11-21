@@ -2,6 +2,8 @@
 
 #include "TicketGridFilterPure.h"
 
+#include "TextMatchPure.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -34,40 +36,14 @@ bool IsRawJsonDump(const std::string& s) {
     return false;
 }
 
-unsigned char FoldAscii(unsigned char c) {
-    return (c >= 'A' && c <= 'Z') ? static_cast<unsigned char>(c - 'A' + 'a') : c;
-}
-
 // The separators between filter words: the same four bytes TrimCopyAsciiWhitespace trims, so
 // the trimmed text the grid passes in and the words split from it agree on what a space is.
 bool IsFilterWordSeparator(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
-// This runs per keystroke over every field of every cached ticket, so the fold must stay a
-// compare-and-subtract: std::search with a std::tolower comparator pays two locale calls per byte.
-bool ContainsFolded(const std::string& haystack, const std::string& needleLower) {
-    const std::size_t n = needleLower.size();
-    const std::size_t h = haystack.size();
-    if (n == 0) {
-        return true;
-    }
-    if (h < n) {
-        return false;
-    }
-    const unsigned char first = static_cast<unsigned char>(needleLower[0]);
-    for (std::size_t i = 0; i + n <= h; ++i) {
-        if (FoldAscii(static_cast<unsigned char>(haystack[i])) != first) {
-            continue;
-        }
-        std::size_t k = 1;
-        while (k < n &&
-               FoldAscii(static_cast<unsigned char>(haystack[i + k])) == static_cast<unsigned char>(needleLower[k])) {
-            ++k;
-        }
-        if (k == n) {
-            return true;
-        }
-    }
-    return false;
+// This runs per keystroke over every field of every cached ticket, so the compare allocates nothing:
+// FindFolded decodes and folds both sides as it goes (an ASCII byte pair is a compare-and-add).
+bool ContainsFolded(const std::string& haystack, const std::string& needleFolded) {
+    return smatchet::textmatch::FindFolded(haystack, needleFolded) != std::string::npos;
 }
 
 // Clears the bit of every still-missing word that occurs in `text`.
@@ -90,16 +66,16 @@ std::vector<std::string> SplitGridFilterTokens(const std::string& filter) {
     std::string word;
     for (const char c : filter) {
         if (!IsFilterWordSeparator(c)) {
-            word.push_back(static_cast<char>(FoldAscii(static_cast<unsigned char>(c))));
+            word.push_back(c);
             continue;
         }
         if (!word.empty()) {
-            tokens.push_back(word);
+            tokens.push_back(smatchet::textmatch::FoldCopy(word));
             word.clear();
         }
     }
     if (!word.empty()) {
-        tokens.push_back(std::move(word));
+        tokens.push_back(smatchet::textmatch::FoldCopy(word));
     }
     if (tokens.size() > kGridFilterMaxTokens) {
         tokens.resize(kGridFilterMaxTokens);
@@ -136,4 +112,14 @@ bool TicketMatchesGridFilterTokens(const CachedTicket& ticket, const std::vector
 
 bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filter, const IGridFilterDisplay* display) {
     return TicketMatchesGridFilterTokens(ticket, SplitGridFilterTokens(filter), display);
+}
+
+bool TicketTitleMatchesGridFilterFuzzy(const CachedTicket& ticket, const smatchet::textmatch::Query& query,
+                                       smatchet::textmatch::Scratch& scratch) {
+    if (query.Empty()) {
+        return true;
+    }
+    const std::string& title = ticket.GetFieldValueRef(kGridFilterTitleField);
+    return smatchet::textmatch::Match(query, title.data(), title.size(), smatchet::textmatch::Mode::Fuzzy, scratch)
+        .Matched();
 }

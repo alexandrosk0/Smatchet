@@ -1,4 +1,5 @@
 #include "SmatchetGridUiSupport.h"
+#include "DraftStore.h"
 
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
@@ -13,12 +14,17 @@
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
 #include "Ui/DialogKeysPure.h"
+#include "Ui/SmatchetSubmitKeys.h"
 #include "Ui/SmatchetOfflineQueueActionsUi.h"
 #include "CacheBackendKeyPure.h"
 #include "StringUtil.h"
+#include "Tracker/TrackerFieldValueParseExplain.h"
+#include "TrackerFieldValueUtils.h"
+#include "Ui/SmatchetInlineError.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -30,7 +36,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <map>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -1168,6 +1173,7 @@ struct ConflictModalCtx {
     std::string Theirs;
     std::string Base;
     std::string RichKind = "adf";
+    std::string FieldId; ///< the field the queued edit is for ("" when the context predates it)
     bool Valid = false;
 };
 
@@ -1177,11 +1183,20 @@ static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
         std::string parseErr;
         const nlohmann::json ctx = smatchet::json_safe::ParseBounded(json, parseErr);
         if (parseErr.empty() && ctx.is_object()) {
-            out.Kind = ctx.value("kind", std::string("text"));
-            out.Mine = ctx.value("mine", std::string());
-            out.Theirs = ctx.value("theirs", std::string());
-            out.Base = ctx.value("base", std::string());
-            out.RichKind = ctx.value("richKind", std::string("adf"));
+            // The context's text members and the value each keeps when the key is absent.
+            struct TextMember {
+                const char* Key;
+                const char* Fallback;
+                std::string ConflictModalCtx::* Member;
+            };
+            static const TextMember kMembers[] = {
+                {"kind", "text", &ConflictModalCtx::Kind},        {"mine", "", &ConflictModalCtx::Mine},
+                {"theirs", "", &ConflictModalCtx::Theirs},        {"base", "", &ConflictModalCtx::Base},
+                {"richKind", "adf", &ConflictModalCtx::RichKind}, {"fieldId", "", &ConflictModalCtx::FieldId},
+            };
+            for (const TextMember& m : kMembers) {
+                out.*(m.Member) = ctx.value(m.Key, std::string(m.Fallback));
+            }
             out.Valid = (out.Kind == "text" || out.Kind == "scalar" || out.Kind == "unverified");
         }
     } catch (...) { // catch-all-ok: malformed conflict context → Valid stays false (safe read-only render)
@@ -1200,18 +1215,14 @@ static bool g_conflictEscUnsavedHint = false;         // Esc was pressed around 
 static std::string g_conflictSeed;                    // the resolved field as opened: the "nothing typed" baseline
 static bool g_conflictDraftRestored = false;          // the field opened with a resolution kept from a Cancel
 
-// A resolution that was typed and then cancelled, kept so that Cancel does not lose a hand merge. `Seed`
-// is the field as the resolver opened it then: the text comes back only into a conflict that opens with
-// the same seed, so it never lands on a conflict whose two sides have changed, nor on another edit that
-// was given the same queue id later.
-struct ConflictDraft {
-    std::string Seed;
-    std::string Text;
-};
+// A resolution that was typed and then cancelled, kept so that Cancel does not lose a hand merge. It lives
+// in the draft store (DraftStore.h, surface "offline.conflict", scope = the queue id), so it also survives
+// a restart. The entry's base is the field as the resolver opened it then (`g_conflictSeed`): the text
+// comes back only into a conflict that opens with the same seed, so it never lands on a conflict whose two
+// sides have changed, nor on another edit that was given the same queue id later.
+static const char* const kConflictDraftSurface = "offline.conflict";
 
-// Kept while the app runs, by queue id. Bounded: a resolver is cancelled by hand, a few times a session.
-static std::map<std::int64_t, ConflictDraft> g_conflictDrafts;
-static const std::size_t kConflictDraftsMax = 16;
+static std::string ConflictDraftScope(std::int64_t dbId) { return std::to_string(static_cast<long long>(dbId)); }
 
 static void ResetConflictKeyboardState() {
     g_conflictFocusFieldPending = false;
@@ -1226,46 +1237,36 @@ static bool KeepConflictDraft(const UiDrawSession& d) {
         return false;
     }
     const std::string typed(d.conflictResolveBuf.data());
+    const std::string scope = ConflictDraftScope(d.conflictResolveDbId);
     if (typed == g_conflictSeed) {
-        g_conflictDrafts.erase(d.conflictResolveDbId);
+        smatchet::drafts::Erase(kConflictDraftSurface, scope);
         return false;
     }
-    ConflictDraft& draft = g_conflictDrafts[d.conflictResolveDbId];
-    draft.Seed = g_conflictSeed;
-    draft.Text = typed;
-    // Over the bound, the lowest queue id goes first: the oldest edit, and never the one just kept
-    // unless it is the only one left.
-    while (g_conflictDrafts.size() > kConflictDraftsMax) {
-        auto oldest = g_conflictDrafts.begin();
-        if (oldest->first == d.conflictResolveDbId) {
-            ++oldest;
-        }
-        g_conflictDrafts.erase(oldest);
-    }
-    return true;
+    return smatchet::drafts::Put(kConflictDraftSurface, scope, typed, g_conflictSeed);
 }
 
 // On open, after the field is seeded: puts back the resolution kept for this edit, when the conflict
 // still opens the way it did then.
 static void RestoreConflictDraft(UiDrawSession& d) {
     g_conflictDraftRestored = false;
-    const auto it = g_conflictDrafts.find(d.conflictResolveDbId);
-    if (it == g_conflictDrafts.end()) {
+    const std::string scope = ConflictDraftScope(d.conflictResolveDbId);
+    smatchet::drafts::DraftEntry draft;
+    if (!smatchet::drafts::Get(kConflictDraftSurface, scope, draft)) {
         return;
     }
-    if (d.conflictResolveBuf.empty() || it->second.Seed != g_conflictSeed) {
-        g_conflictDrafts.erase(it);
+    if (d.conflictResolveBuf.empty() || draft.Base != g_conflictSeed) {
+        smatchet::drafts::Erase(kConflictDraftSurface, scope);
         return;
     }
-    const std::size_t n = (std::min)(it->second.Text.size(), d.conflictResolveBuf.size() - 1);
+    const std::size_t n = (std::min)(draft.Text.size(), d.conflictResolveBuf.size() - 1);
     std::fill(d.conflictResolveBuf.begin(), d.conflictResolveBuf.end(), '\0');
-    std::memcpy(d.conflictResolveBuf.data(), it->second.Text.data(), n);
+    std::memcpy(d.conflictResolveBuf.data(), draft.Text.data(), n);
     g_conflictDraftRestored = true;
 }
 
 // "Start over": the field goes back to what the resolver opens with, and the kept resolution is dropped.
 static void DropConflictDraft(UiDrawSession& d) {
-    g_conflictDrafts.erase(d.conflictResolveDbId);
+    smatchet::drafts::Erase(kConflictDraftSurface, ConflictDraftScope(d.conflictResolveDbId));
     g_conflictDraftRestored = false;
     g_conflictEscUnsavedHint = false;
     if (d.conflictResolveBuf.empty()) {
@@ -1278,7 +1279,7 @@ static void DropConflictDraft(UiDrawSession& d) {
 }
 
 static void FinishConflictModal(UiDrawSession& d, const char* statusMsg) {
-    g_conflictDrafts.erase(d.conflictResolveDbId);
+    smatchet::drafts::Erase(kConflictDraftSurface, ConflictDraftScope(d.conflictResolveDbId));
     d.conflictResolveError.clear();
     d.conflictResolveBuf.clear();
     d.conflictContextJson.clear();
@@ -1298,15 +1299,17 @@ static void CancelConflictModal(UiDrawSession& d) {
     ResetConflictKeyboardState();
     ImGui::CloseCurrentPopup();
     if (kept) {
-        ArmOfflineQueuePanelStatus(d, SmatchetLocalization::T("offline.conflict.draft_kept",
-                                                              "What you typed is kept until Smatchet closes. "
+        ArmOfflineQueuePanelStatus(d, SmatchetLocalization::T("offline.conflict.draft_saved",
+                                                              "What you typed is saved, also if Smatchet closes. "
                                                               "Open the conflict again to go on with it."));
     }
 }
 
 struct ConflictModalKeys {
-    bool Save = false;  // Ctrl+Enter, in the panes that have a resolved field
-    bool Close = false; // an Esc that closes: nothing was typed
+    bool Save = false;      // Ctrl+Enter, in the panes that have a resolved field
+    bool Close = false;     // an Esc that closes: nothing was typed
+    bool UseMine = false;   // Alt+M, in the panes that offer Use Mine / Use Theirs
+    bool UseTheirs = false; // Alt+T
 };
 
 // Reads the resolver's own keys. Call inside the modal before any of its items are drawn: a key the resolver
@@ -1319,6 +1322,8 @@ struct ConflictModalKeys {
 // - Ctrl+Enter saves. The field is left first, and nav activation is dropped for the frame: ImGui activates
 //   the button under the keyboard cursor on Enter whatever the modifiers, so Ctrl+Enter with the cursor on
 //   Use Theirs would otherwise resolve to the server's value.
+// - Alt+M / Alt+T pick a side, as Use Mine / Use Theirs do, in the panes that have a resolved field. Both
+//   chords in one frame pick neither, so a stray second key never decides.
 static ConflictModalKeys ReadConflictModalKeys(const UiDrawSession& d, const char* fieldLabel) {
     ImGuiContext& g = *ImGui::GetCurrentContext();
     const bool owns =
@@ -1342,7 +1347,14 @@ static ConflictModalKeys ReadConflictModalKeys(const UiDrawSession& d, const cha
     if (escCancels && !nothingTyped) {
         g_conflictEscUnsavedHint = true;
     }
-    if (fieldActive && (keys.Save || esc != smatchet::dialogkeys::EscapeAction::None)) {
+    if (fieldLabel != nullptr && owns) {
+        const bool mine = ImGui::IsKeyChordPressed(ImGuiMod_Alt | ImGuiKey_M);
+        const bool theirs = ImGui::IsKeyChordPressed(ImGuiMod_Alt | ImGuiKey_T);
+        keys.UseMine = mine && !theirs;
+        keys.UseTheirs = theirs && !mine;
+    }
+    const bool picked = keys.UseMine || keys.UseTheirs;
+    if (fieldActive && (keys.Save || picked || esc != smatchet::dialogkeys::EscapeAction::None)) {
         ImGui::ClearActiveID();
     }
     if (keys.Save) {
@@ -1372,6 +1384,26 @@ static void TakeConflictCaretRequest() {
     g_conflictFocusFieldPending = false;
     if (request == smatchet::dialogkeys::CaretRequest::Take) {
         ImGui::SetKeyboardFocusHere();
+    }
+}
+
+// Use Mine / Use Theirs, by click or by Alt+M / Alt+T, with each button naming its key. Shared by the text and
+// the scalar panes, so the two keep the same keys. `resolve` gets the chosen side's value. One side per frame,
+// and none once the conflict is resolved: a click on one button with the other's chord in the same frame
+// resolves once, to the clicked side.
+template <typename Resolve>
+static void DrawConflictPickButtons(const UiDrawSession& d, const ConflictModalCtx& cc, const ConflictModalKeys& keys,
+                                    Resolve&& resolve) {
+    const bool mineClicked = smatchet::ui::KeyHintButton("Use Mine", "Alt+M", ImVec2(110, 0));
+    ImGui::SameLine();
+    const bool theirsClicked = smatchet::ui::KeyHintButton("Use Theirs", "Alt+T", ImVec2(110, 0));
+    if (d.conflictResolveDbId == 0) {
+        return;
+    }
+    if (mineClicked || (keys.UseMine && !theirsClicked)) {
+        resolve(cc.Mine);
+    } else if (theirsClicked || keys.UseTheirs) {
+        resolve(cc.Theirs);
     }
 }
 
@@ -1439,18 +1471,13 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
                                     kConflictNotRequeued);
     };
 
-    if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
-        doResolve(cc.Mine);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Use Theirs", ImVec2(110, 0))) {
-        doResolve(cc.Theirs);
-    }
+    DrawConflictPickButtons(d, cc, keys, doResolve);
     ImGui::SameLine();
     const bool saveEnabled = !hasConflictMarkers;
     if (!saveEnabled)
         ImGui::BeginDisabled();
-    const bool saveClicked = ImGui::Button("Save resolved", ImVec2(130, 0));
+    const bool saveClicked =
+        smatchet::ui::KeyHintButton("Save resolved", smatchet::ui::CtrlEnterKeyName(), ImVec2(130, 0));
     if (!saveEnabled)
         ImGui::EndDisabled();
     // Ctrl+Enter saves under the same rule as the button: not while a conflict marker is left. Neither the
@@ -1472,8 +1499,66 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
                          "Ctrl+Enter saves. Esc leaves the text box and keeps what you typed.");
 }
 
+// What kind of value the queued edit's field takes, for the hint under the resolved-value box and for the text
+// shown when the replay turns the value down (#115). The kind comes from the field id in the conflict context.
+enum class ScalarConflictKind : unsigned char { Estimate, Sprint, Other };
+
+static ScalarConflictKind ScalarKindForField(const std::string& fieldId) {
+    if (TrackerFieldValueUtils::IsTimeDurationField(fieldId)) {
+        return ScalarConflictKind::Estimate;
+    }
+    return ToLowerAsciiCopy(fieldId).find("sprint") != std::string::npos ? ScalarConflictKind::Sprint
+                                                                         : ScalarConflictKind::Other;
+}
+
+static TrackerParseExplain::ParseMessageId RejectionIdForKind(ScalarConflictKind kind) {
+    switch (kind) {
+    case ScalarConflictKind::Estimate:
+        return TrackerParseExplain::ParseMessageId::ConflictValueRejectedEstimate;
+    case ScalarConflictKind::Sprint:
+        return TrackerParseExplain::ParseMessageId::ConflictValueRejectedSprint;
+    case ScalarConflictKind::Other:
+    default:
+        return TrackerParseExplain::ParseMessageId::ConflictValueRejectedGeneric;
+    }
+}
+
+static const char* ScalarHintForKind(ScalarConflictKind kind) {
+    switch (kind) {
+    case ScalarConflictKind::Estimate:
+        return SmatchetLocalization::T("offline.conflict.hint.estimate", "An estimate takes a time like 3d or 2h 30m.");
+    case ScalarConflictKind::Sprint:
+        return SmatchetLocalization::T("offline.conflict.hint.sprint", "A sprint takes its name or its id.");
+    case ScalarConflictKind::Other:
+    default:
+        return SmatchetLocalization::T("offline.conflict.hint.other", "Enter one of this field's own values.");
+    }
+}
+
+// The value as it will be sent: an estimate is read the tolerant way ("1.5d", "90 m") and sent as "1d 4h" / "1h 30m".
+// `problem` is set when an estimate does not read, and Save value stays off until it does.
+static std::string ResolvedValueToSend(const std::string& typed, ScalarConflictKind kind,
+                                       TrackerParseExplain::ParseMessage& problem) {
+    problem = TrackerParseExplain::ParseMessage();
+    if (kind != ScalarConflictKind::Estimate) {
+        return typed;
+    }
+    const TrackerParseExplain::DurationParse parsed =
+        TrackerParseExplain::ParseDurationInput(typed, TrackerParseExplain::BareNumberUnit::Minutes);
+    if (parsed.Ok) {
+        return parsed.Canonical;
+    }
+    problem =
+        parsed.Empty
+            ? TrackerParseExplain::ParseMessage{TrackerParseExplain::ParseMessageId::ConflictValueRejectedEstimate,
+                                                std::string(), 0, 0}
+            : parsed.Message;
+    return typed;
+}
+
 // Scalar conflict pane (`kind:"scalar"`): mine vs theirs + an editable value. Use Mine / Use
-// Theirs / Save edited. Writes the chosen value verbatim (no Markdown reconversion).
+// Theirs / Save edited. Writes the chosen value as it is (no Markdown reconversion); an estimate is sent in its
+// canonical form ("1h 30m"), read the tolerant way first.
 static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx& cc) {
     AppController& app = octx.app;
     UiDrawSession& d = octx.d;
@@ -1509,29 +1594,47 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
                                              ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
     ImGui::Spacing();
 
+    // The kind of value this field takes: a hint while it reads, the parser's reason while it does not (#115).
+    const ScalarConflictKind kind = ScalarKindForField(cc.FieldId);
+    TrackerParseExplain::ParseMessage valueProblem;
+    const std::string valueToSend = ResolvedValueToSend(std::string(d.conflictResolveBuf.data()), kind, valueProblem);
+    if (valueProblem.IsError()) {
+        smatchet::ui::DrawInlineParseError(valueProblem);
+    } else {
+        ImGui::TextDisabled("%s", ScalarHintForKind(kind));
+    }
+
     auto doResolve = [&](const std::string& chosen) {
         const bool requeued = app.ResolveFieldEditConflict(d.conflictResolveDbId, chosen, std::string(), "scalar");
-        HandleConflictRequeueResult(d, requeued, "Conflict resolved — edit re-queued for replay.",
-                                    "That value cannot be used for this field, so the edit is still waiting and "
-                                    "your resolution is still here. Enter one of the field's values: for a sprint, "
-                                    "its name or id; for an estimate, a value such as 3d.");
+        TrackerParseExplain::ParseMessage rejected;
+        rejected.Id = RejectionIdForKind(kind);
+        const std::string failure =
+            TrackerParseExplain::DescribeParseMessage(rejected) + " " +
+            SmatchetLocalization::T("offline.conflict.kept_edit",
+                                    "The edit is still waiting and your resolution is still here.");
+        HandleConflictRequeueResult(d, requeued, "Conflict resolved — edit re-queued for replay.", failure.c_str());
     };
 
-    if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
-        doResolve(cc.Mine);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Use Theirs", ImVec2(110, 0))) {
-        doResolve(cc.Theirs);
-    }
+    DrawConflictPickButtons(d, cc, keys, doResolve);
     ImGui::SameLine();
     // Neither a key nor the button does anything once Use Mine or Use Theirs has resolved the conflict
     // earlier in this frame: the resolution text is gone by then.
     const bool stillOpen = d.conflictResolveDbId != 0;
-    const bool keyboardSave = (enterSaves || keys.Save) && stillOpen;
-    const bool saveClicked = ImGui::Button("Save value", ImVec2(130, 0));
+    const bool saveBlocked = valueProblem.IsError();
+    const bool keyboardSave = (enterSaves || keys.Save) && stillOpen && !saveBlocked;
+    if (saveBlocked) {
+        ImGui::BeginDisabled();
+    }
+    const bool saveClicked =
+        smatchet::ui::KeyHintButton("Save value", smatchet::ui::CtrlEnterKeyName(), ImVec2(130, 0));
+    if (saveBlocked) {
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", TrackerParseExplain::DescribeParseMessage(valueProblem).c_str());
+        }
+    }
     if ((saveClicked || keyboardSave) && stillOpen) {
-        doResolve(std::string(d.conflictResolveBuf.data()));
+        doResolve(valueToSend);
         if (keyboardSave && !d.conflictResolveError.empty()) {
             g_conflictFocusFieldPending = true; // the value was turned down: caret back in the field to fix it
         }
@@ -1691,7 +1794,7 @@ bool SmatchetOfflineConflictUnsavedHintShownForTest() { return g_conflictEscUnsa
 bool SmatchetOfflineConflictDraftRestoredForTest() { return g_conflictDraftRestored; }
 
 void SmatchetOfflineConflictDraftsClearForTest() {
-    g_conflictDrafts.clear();
+    smatchet::drafts::EraseSurface(kConflictDraftSurface);
     g_conflictDraftRestored = false;
 }
 
@@ -1703,8 +1806,10 @@ static void DrawOfflineDiscardConfirmModal(OfflineDrawCtx& ctx) {
         ImGui::OpenPopup("Discard queued work?###OfflineDiscardConfirm");
         g_offlineDiscardConfirmRequested = false;
     }
-    if (!ImGui::BeginPopupModal("Discard queued work?###OfflineDiscardConfirm", nullptr,
-                                ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. Destructive, so Keep takes the keyboard on open and Enter keeps.
+    static smatchet::ui::DialogScopeState s_discardDialog;
+    if (!smatchet::ui::BeginDialog(s_discardDialog, "Discard queued work?###OfflineDiscardConfirm", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
     ImGui::TextWrapped("%s", SmatchetLocalization::Format(
@@ -1713,17 +1818,16 @@ static void DrawOfflineDiscardConfirmModal(OfflineDrawCtx& ctx) {
                                  "of that offline work. Discard deletes them permanently.",
                                  static_cast<int>(g_offlineDiscardConfirmKeys.size())));
     ImGui::Spacing();
-    if (ImGui::Button("Discard rows")) {
+    const smatchet::dialogkeys::ConfirmPick pick =
+        smatchet::ui::ConfirmFooter(s_discardDialog, smatchet::ui::DestructiveFooter("Discard rows", "Keep"));
+    if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
         DiscardOfflineRowKeys(ctx, g_offlineDiscardConfirmKeys);
         g_offlineDiscardConfirmKeys.clear();
         ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Keep")) {
+    } else if (pick == smatchet::dialogkeys::ConfirmPick::Cancel) {
         g_offlineDiscardConfirmKeys.clear();
-        ImGui::CloseCurrentPopup();
     }
-    ImGui::EndPopup();
+    smatchet::ui::EndDialog(s_discardDialog);
 }
 
 bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {

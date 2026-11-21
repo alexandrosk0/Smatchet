@@ -1,5 +1,6 @@
 // SMATCHET_DEVIATION(rule=tu-line-ceiling; reason=UI orchestrator TU over the 1,200-line advisory ceiling; split in debt 2026-10-03-ui-tu-ceiling-splits; owner=orchestrator; revisit=2027-06-30)
 #include "SmatchetUI.h"
+#include "DraftStore.h"
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "SmatchetViewVisibility.h"
@@ -24,6 +25,7 @@
 #include "SmatchetTheme.h"
 #include "SmatchetUiDensity.h"
 #include "Ui/TouchInputRouter.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "Logger.h"
 #include "Sync/CatalogRestorePure.h"
 #include "Sync/LookupFreshnessPure.h"
@@ -491,6 +493,9 @@ void SmatchetUI::drawInitConfigOnce(AppController& app, UiDrawSession& d) {
         g_ui.cfg.LayoutSchemaVersion = ConfigManager::kCurrentLayoutSchemaVersion;
         ConfigManager::Save(g_ui.cfg);
     }
+
+    // Typed-text drafts (DraftStore.h): read on the store's own worker, then restored as surfaces open.
+    smatchet::drafts::Start(smatchet::drafts::DefaultPath());
 
     g_ui.cfgInitialized = true;
     // Config (incl. cfg.Keybindings) just loaded — force the shortcut parse cache to
@@ -1107,12 +1112,21 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
         return;
     }
     const int frame = ::ImGui::GetFrameCount();
+    const bool modalUp = smatchet::ui::AnyModalDialogOpen();
     bool consumedWheel = false;
     bool wheelAccumulated = false;
     bool wheelFired = false;
     for (size_t i = 0; i < keybindingCache_.size(); ++i) {
         const ParsedKeybinding& pk = keybindingCache_[i];
         if (!smatchet::ui::MatchHotkey(io, pk.hk)) {
+            continue;
+        }
+        // Audit #88: nothing runs behind a modal dialog. A command there could change or remove what the
+        // dialog asks about (Delete view? with its pending target), or open the palette over it. Only zoom,
+        // fullscreen and the focus-scoped list / splitter keys pass (GlobalShortcutAllowedUnderModal). Checked
+        // first: a muted wheel combo leaves the wheel to the dialog, and a muted combo does not count as this
+        // frame's firing of its action in the alias de-dup.
+        if (modalUp && !smatchet::dialogkeys::GlobalShortcutAllowedUnderModal(pk.commandId.c_str())) {
             continue;
         }
         // Wheel bindings own the delta for this frame — mark now, clear after the

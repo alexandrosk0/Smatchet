@@ -221,6 +221,11 @@ void SmatchetUI::drawEmbeddedFocusedGrid(AppController& app, UiDrawSession& d, G
     d.activePaneForDraw = &focused;
     drawActiveProjectWindow(app, d, focused, trackerBanner, /*embedded=*/true);
     d.activePaneForDraw = nullptr;
+    // A grid.search.focus request the header did not take this frame counts down and expires,
+    // as in the desktop pane loop.
+    if (focused.gridSearchFocusFramesLeft > 0) {
+        --focused.gridSearchFocusFramesLeft;
+    }
     // The mobile shell never runs drawGridPaneWindows, so it owns this drain itself. Skipping
     // it would not merely drop a search-box Enter: the latch is session state, so it would sit
     // set until a later desktop frame applied it stale (the hazard DrawNewPaneMenu's

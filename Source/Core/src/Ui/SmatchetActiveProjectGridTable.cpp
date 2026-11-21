@@ -209,7 +209,8 @@ static std::string BuildGridSortFingerprint(const ImGuiTableSortSpecs* sortSpecs
 }
 
 // Step 2 of RebuildGridSortAndFilterProjection: `pane.cachedSortedIndices` → `pane.filteredIndices`.
-// Quick-filter is the every-word full-text match (TicketMatchesGridFilterTokens), fed by the search box's
+// Quick-filter is the every-word full-text match (TicketMatchesGridFilterTokens), with a letters-in-order
+// title fallback when nothing matches as written (TicketTitleMatchesGridFilterFuzzy), fed by the search box's
 // EFFECTIVE filter (GridSearchRowFilterText) rather than the raw box text: a ticket key /
 // structured query in the box is a commit-on-Enter action, and substring-matching it against
 // the rows would blank the grid (most visibly right after its own Enter re-ran the view) —
@@ -267,9 +268,27 @@ static void ApplyGridFilterProjection(GridPane& pane, const std::vector<CachedTi
     };
 
     std::vector<char> keep(tickets.size(), 0);
+    bool anyExact = false; // some row holds every word as written, shown or not (a hidden parent counts)
     for (size_t idx : pane.cachedSortedIndices) {
-        if (idx < tickets.size() && checkMatch(idx) && !isPresentParent(idx)) {
-            keep[idx] = 1;
+        if (idx < tickets.size() && checkMatch(idx)) {
+            anyExact = true;
+            if (!isPresentParent(idx)) {
+                keep[idx] = 1;
+            }
+        }
+    }
+    // No row holds every word as written: fall back to titles that hold the words' letters in order (a typo,
+    // a dropped letter), the shared matcher's exact-first rule. A filter the matcher splits into no words
+    // (only no-break or other wide spaces) falls back to nothing: an empty query would match every title.
+    const smatchet::textmatch::Query query =
+        filterActive && !anyExact ? smatchet::textmatch::MakeQuery(filter) : smatchet::textmatch::Query();
+    if (!query.Empty()) {
+        smatchet::textmatch::Scratch scratch;
+        for (size_t idx : pane.cachedSortedIndices) {
+            if (idx < tickets.size() && !isPresentParent(idx) &&
+                TicketTitleMatchesGridFilterFuzzy(tickets[idx], query, scratch)) {
+                keep[idx] = 1;
+            }
         }
     }
     if (filterActive && hierarchy.storyGroupSort && !hierarchy.hideParents) {
@@ -795,6 +814,32 @@ static void ApplyRowHoverHighlight(float rowHeight) {
     }
 }
 
+// The user selected something since the bulk edit kept its rows: the kept ids no longer describe the selection.
+void DropStaleBulkKeep(GridRectSelection& rectSel) {
+    if (rectSel.KeepStale()) {
+        rectSel.KeepIssueIds.clear();
+        rectSel.KeepRows.clear();
+    }
+}
+
+// Bulk edit keeps its rows selected by issue id (D5): after the re-sort cleared the sort-order selection, select
+// again the rows that show those issues in the new order. Runs only on a clear: once per landed bulk row while a
+// job runs, never on an idle frame.
+void RestoreBulkKeptRows(GridRectSelection& rectSel, bool selectionCleared, const std::vector<size_t>& indices,
+                         const std::vector<CachedTicket>& tickets, std::uint64_t gridSortSig) {
+    if (!selectionCleared || rectSel.KeepIssueIds.empty() || indices.empty()) {
+        return;
+    }
+    static const std::string kNoId;
+    rectSel.RestoreKeptRows(
+        static_cast<int>(indices.size()),
+        [&](int row) -> const std::string& {
+            const size_t ticketIdx = indices[static_cast<size_t>(row)];
+            return ticketIdx < tickets.size() ? tickets[ticketIdx].id : kNoId;
+        },
+        gridSortSig);
+}
+
 } // namespace
 
 // The TicketGrid BeginTable block: the five grid section helpers plus the post-layout inside-table
@@ -1120,8 +1165,13 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     // current sort-order row indices, so any change to sort order or ticket
     // set must clear the selection to avoid nonsense highlights / copies.
     gridSortSig = ComputeGridSortSignature(pane.cachedSortFingerprint, pane.snapshotRevision, tickets.size());
-    if (pane.gridState.RectSel.HasAnySelection() && pane.gridState.RectSel.SortSignature != gridSortSig) {
-        pane.gridState.RectSel.ClearAll();
+    GridRectSelection& rectSel = pane.gridState.RectSel;
+    DropStaleBulkKeep(rectSel);
+    bool selectionCleared = false;
+    if ((rectSel.HasAnySelection() || !rectSel.KeepIssueIds.empty()) && rectSel.SortSignature != gridSortSig) {
+        rectSel.ClearAll();
+        rectSel.KeepRows.clear(); // the cleared selection matches it again; a restore below re-stamps it
+        selectionCleared = true;
     }
 
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.rows");
@@ -1129,14 +1179,21 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     // (no SQLite, no per-row work), and the pane's own cache namespace keys every row lookup below.
     RefreshPendingOverlay(app, ctx.d);
     ctx.cacheBackendKey = app.PaneCacheBackendKey(pane.id);
+    ctx.cellMenu = GridKeyCellMenuCtx{&ctx.tickets,      &pane.filteredIndices,   &ctx.columns,
+                                      &ctx.catalogIndex, &pane.gridState.RectSel, -1,
+                                      nullptr,           &ctx.cacheBackendKey};
     const size_t oldFilteredCount = pane.filteredIndices.size();
     pane.filteredIndices.erase(std::remove_if(pane.filteredIndices.begin(), pane.filteredIndices.end(),
                                               [&](size_t idx) { return idx >= tickets.size(); }),
                                pane.filteredIndices.end());
     if (pane.filteredIndices.size() != oldFilteredCount) {
-        pane.gridState.RectSel.ClearAll();
+        rectSel.ClearAll();
+        rectSel.KeepRows.clear();
+        selectionCleared = true;
     }
     const std::vector<size_t>& indicesToUse = pane.filteredIndices;
+
+    RestoreBulkKeptRows(rectSel, selectionCleared, indicesToUse, tickets, gridSortSig);
 
     // Per-frame cache: raw status string → highlight color. Avoids ToLowerAsciiCopy +
     // 4 find() per visible row — each unique status value is lowercased only once.

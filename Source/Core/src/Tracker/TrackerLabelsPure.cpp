@@ -65,22 +65,4 @@ std::vector<std::string> SortAndUniqueLabels(std::vector<std::string> values) {
     return values;
 }
 
-bool LabelMatchesFilter(const std::string& label, const std::string& filterLower) {
-    if (filterLower.empty()) {
-        return true;
-    }
-    return ToLowerAsciiCopy(label).find(filterLower) != std::string::npos;
-}
-
-std::vector<std::string> FilterSuggestionsForDisplay(const std::vector<std::string>& suggestions,
-                                                     const std::vector<std::string>& selectedLabels,
-                                                     const std::string& filterLower) {
-    std::vector<std::string> out;
-    out.reserve(suggestions.size());
-    std::copy_if(suggestions.begin(), suggestions.end(), std::back_inserter(out), [&](const std::string& suggestion) {
-        return ContainsLabelCaseInsensitive(selectedLabels, suggestion) || LabelMatchesFilter(suggestion, filterLower);
-    });
-    return out;
-}
-
 } // namespace TrackerLabelsPure

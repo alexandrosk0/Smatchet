@@ -1,6 +1,7 @@
 #include "Sync/LeftViewReasonPure.h"
 
 #include "Json/BoundedJsonParse.h"
+#include "StringUtil.h"
 #include "Sync/RemoteVersionPure.h"
 #include "Sync/TicketChangeDiffPure.h"
 
@@ -60,17 +61,7 @@ bool IsBookkeepingField(const std::string& fieldId) {
     return false;
 }
 
-std::string Truncated(const std::string& value) {
-    if (value.size() <= kMaxDisplayValueChars) {
-        return value;
-    }
-    std::size_t cut = kMaxDisplayValueChars;
-    // Never split a UTF-8 sequence: back up to a lead byte.
-    while (cut > 0 && (static_cast<unsigned char>(value[cut]) & 0xC0) == 0x80) {
-        --cut;
-    }
-    return value.substr(0, cut) + "...";
-}
+std::string Truncated(const std::string& value) { return TruncateUtf8WithEllipsis(value, kMaxDisplayValueChars); }
 
 std::string DisplayLabel(const TrackerFieldChange& change,
                          const std::unordered_map<std::string, std::string>& fieldLabels) {

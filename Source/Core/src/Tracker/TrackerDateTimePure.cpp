@@ -71,6 +71,72 @@ int FirstOfMonthWeekday0Sun(int year, int month) {
     return r.tm_wday;
 }
 
+void AddDaysToDate(int& y, int& m, int& d, int deltaDays) {
+    if (m < 1 || m > 12) {
+        m = 1;
+    }
+    d = (std::max)(1, (std::min)(d, DaysInMonth(y, m)));
+    // Step a month at a time: a calendar jump is days to weeks, so the loop stays short. The clamp to a
+    // century bounds the loop for any caller.
+    const int kMaxDeltaDays = 36600;
+    long long left = (std::max)(-kMaxDeltaDays, (std::min)(deltaDays, kMaxDeltaDays));
+    while (left > 0) {
+        const int room = DaysInMonth(y, m) - d;
+        if (left <= room) {
+            d += static_cast<int>(left);
+            return;
+        }
+        left -= room + 1;
+        IncMonth(y, m);
+        d = 1;
+    }
+    while (left < 0) {
+        if (-left < d) {
+            d += static_cast<int>(left);
+            return;
+        }
+        left += d;
+        DecMonth(y, m);
+        d = DaysInMonth(y, m);
+    }
+}
+
+void AddMonthsClampDay(int& y, int& m, int& d, int deltaMonths) {
+    if (m < 1 || m > 12) {
+        m = 1;
+    }
+    // Months since year 0, so the division floors the same way for negative deltas.
+    const long long total = static_cast<long long>(y) * 12 + (m - 1) + deltaMonths;
+    long long newY = total / 12;
+    long long newM0 = total % 12;
+    if (newM0 < 0) {
+        newM0 += 12;
+        newY -= 1;
+    }
+    y = static_cast<int>(newY);
+    m = static_cast<int>(newM0) + 1;
+    d = (std::max)(1, (std::min)(d, DaysInMonth(y, m)));
+}
+
+bool TodayLocalDate(int& y, int& m, int& d) {
+    // SMATCHET_DEVIATION(rule=duplication; reason=the platform-split broken-down-time call is a fixed idiom repeated across the date helpers (CompactDateFormat, AiChatTimestamp, P4Annotate); a shared wrapper would couple these independent units; owner=ui; revisit=2027-03-31)
+    const std::time_t now = std::time(nullptr);
+    std::tm r{};
+#if defined(_WIN32)
+    if (localtime_s(&r, &now) != 0) {
+        return false;
+    }
+#else
+    if (localtime_r(&now, &r) == nullptr) {
+        return false;
+    }
+#endif
+    y = r.tm_year + 1900;
+    m = r.tm_mon + 1;
+    d = r.tm_mday;
+    return true;
+}
+
 ParsedJiraDateTime TodayUtcParsed(bool includeTime) {
     ParsedJiraDateTime p{};
     const std::time_t now = std::time(nullptr);
@@ -95,6 +161,22 @@ ParsedJiraDateTime TodayUtcParsed(bool includeTime) {
     p.TimeZoneWasZ = false;
     p.OffsetSec = 0;
     return p;
+}
+
+bool TodayLocalYmd(int& outYear, int& outMonth, int& outDay) {
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+#if defined(_WIN32)
+    const bool converted = localtime_s(&local, &now) == 0;
+#else
+    const bool converted = localtime_r(&now, &local) != nullptr;
+#endif
+    if (converted) {
+        outYear = local.tm_year + 1900;
+        outMonth = local.tm_mon + 1;
+        outDay = local.tm_mday;
+    }
+    return converted;
 }
 
 void ClampDayToMonth(ParsedJiraDateTime& w, int year, int month) {

@@ -99,6 +99,18 @@ TEST_CASE("PreferencesFilter — keywords keep old-tab muscle memory working") {
     CHECK_FALSE(filter.ShowSetting(kVsyncId));
 }
 
+TEST_CASE("PreferencesFilter — words match in any order, in tier 1") {
+    // "notifications change" is no substring of any haystack, but both words occur in the
+    // "Change notifications" section's rows: tier 1 finds them, so tier 2 never runs.
+    PreferencesFilter filter;
+    filter.Update("notifications change", "en");
+    CHECK(filter.ShowSetting("tracker.notifications.enabled"));
+    filter.Update("  change   notifications ", "en");
+    CHECK(filter.ShowSetting("tracker.notifications.enabled"));
+    // Greek capitals fold to the lower-case letters a translated haystack would hold.
+    CHECK(PreferencesFilter::ToLowerFold("\xCE\x9F\xCE\xA8\xCE\x97") == "\xCE\xBF\xCF\x88\xCE\xB7");
+}
+
 TEST_CASE("PreferencesFilter — section and category titles are part of the haystack") {
     PreferencesFilter filter;
     filter.Update("change notifications", "en");
@@ -223,4 +235,54 @@ TEST_CASE("PreferencesFilter — RecomputeMatchesNow drops a stale dynamic match
     // The caller's follow-up scan re-injects when rows still match.
     filter.AddDynamicMatch(kBindingsId);
     CHECK(filter.ShowSetting(kBindingsId));
+}
+
+// --- Enter in the search box: the caret goes to the first match (RequestFocusOnFirstMatch) -----------
+
+namespace {
+int g_focusHookCalls = 0;
+void CountFocusHook() { ++g_focusHookCalls; }
+} // namespace
+
+TEST_CASE("PreferencesFilter — focus request fires once, on the first shown match") {
+    PreferencesFilter filter;
+    filter.Update("vsync", "en");
+    g_focusHookCalls = 0;
+    filter.RequestFocusOnFirstMatch(&CountFocusHook);
+    CHECK_FALSE(filter.ShowSetting(kUpdatesId)); // hidden: not the target
+    CHECK(g_focusHookCalls == 0);
+    CHECK(filter.ShowSetting(kVsyncId)); // first match: the hook runs before the caller draws it
+    CHECK(g_focusHookCalls == 1);
+    CHECK(filter.ShowSetting(kVsyncId)); // once only
+    CHECK(g_focusHookCalls == 1);
+}
+
+TEST_CASE("PreferencesFilter — focus request ignores an empty query and fail-open unknown ids") {
+    PreferencesFilter filter;
+    filter.Update("", "en");
+    g_focusHookCalls = 0;
+    filter.RequestFocusOnFirstMatch(&CountFocusHook);
+    CHECK(filter.ShowSetting(kVsyncId)); // shows, but nothing was searched for
+    CHECK(g_focusHookCalls == 0);
+
+    filter.Update("vsync", "en");
+    filter.RequestFocusOnFirstMatch(&CountFocusHook);
+    CHECK(filter.ShowSetting("no.such.setting")); // fail-open, not a match
+    CHECK(g_focusHookCalls == 0);
+    CHECK(filter.ShowSetting(kVsyncId));
+    CHECK(g_focusHookCalls == 1);
+}
+
+TEST_CASE("PreferencesFilter — the next Update drops a focus request no setting took") {
+    PreferencesFilter filter;
+    filter.Update("vsync", "en");
+    g_focusHookCalls = 0;
+    filter.RequestFocusOnFirstMatch(&CountFocusHook);
+    filter.Update("vsync", "en"); // next frame, same query
+    CHECK(filter.ShowSetting(kVsyncId));
+    CHECK(g_focusHookCalls == 0);
+    // A null hook is a no-op request.
+    filter.RequestFocusOnFirstMatch(nullptr);
+    CHECK(filter.ShowSetting(kVsyncId));
+    CHECK(g_focusHookCalls == 0);
 }

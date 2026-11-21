@@ -157,6 +157,10 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
         pane.focused = (pane.id == d.focusedPaneId);
         ScopedActivePaneForDraw activePane(d, pane);
         drawActiveProjectWindow(app, d, pane, trackerBanner);
+        // A grid.search.focus request the header did not take this frame counts down and expires.
+        if (pane.gridSearchFocusFramesLeft > 0) {
+            --pane.gridSearchFocusFramesLeft;
+        }
     }
 
     // Focus switch: the pane whose window holds ImGui focus becomes the focused pane —
@@ -204,6 +208,16 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
 
     pumpGridFieldEditsOncePerFrame(app, d, trackerBanner);
 
+    // A "+" caret Jira site row (#2444): switch the global active site before the new pane is
+    // created, so its first sync and cache key resolve to that site. The focused pane follows the
+    // switch only when it is itself a Jira pane. An unknown host (site removed since the click)
+    // degrades to a plain new pane.
+    if (!d.paneAddRequest.sourceId.empty() && !d.paneAddRequest.targetJiraDomain.empty()) {
+        const bool focusedIsJira = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType) == "Jira";
+        if (!switchActiveJiraSite(app, d, d.paneAddRequest.targetJiraDomain, focusedIsJira)) {
+            d.paneAddRequest.targetJiraDomain.clear();
+        }
+    }
     if (SmatchetGridPaneWindows::ApplyPaneAddAndCloseRequests(app, d, ViewState.GetDiskBackends())) {
         SmatchetGridPaneWindows::MarkPanesDirty(d);
     }

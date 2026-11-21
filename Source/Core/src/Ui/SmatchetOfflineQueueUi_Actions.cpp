@@ -7,6 +7,7 @@
 #include "PendingActionTypes.h"
 
 #include "imgui.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -206,24 +207,25 @@ void DrawDiscardConfirm(IAppPendingActions& app) {
         s_discardConfirmRequested = false;
         ImGui::OpenPopup("Discard queued change?###pendingActionDiscard");
     }
-    if (!ImGui::BeginPopupModal("Discard queued change?###pendingActionDiscard", nullptr,
-                                ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. Destructive, so Keep takes the keyboard on open and Enter keeps.
+    static smatchet::ui::DialogScopeState s_discardDialog;
+    if (!smatchet::ui::BeginDialog(s_discardDialog, "Discard queued change?###pendingActionDiscard", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
     ImGui::TextUnformatted("This change has not reached the tracker. Discarding deletes the only copy.");
-    if (ImGui::Button("Discard")) {
+    const smatchet::dialogkeys::ConfirmPick pick =
+        smatchet::ui::ConfirmFooter(s_discardDialog, smatchet::ui::DestructiveFooter("Discard", "Keep"));
+    if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
         if (s_discardId != 0) {
             app.DiscardPendingActions({s_discardId});
         }
         s_discardId = 0;
         ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Keep")) {
+    } else if (pick == smatchet::dialogkeys::ConfirmPick::Cancel) {
         s_discardId = 0;
-        ImGui::CloseCurrentPopup();
     }
-    ImGui::EndPopup();
+    smatchet::ui::EndDialog(s_discardDialog);
 }
 
 } // namespace

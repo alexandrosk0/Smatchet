@@ -31,6 +31,7 @@
 #endif
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -479,7 +480,11 @@ void SmatchetUI::drawLayoutResetConfirmModal(UiDrawSession& d) {
         ImGui::OpenPopup("Reset window layout?");
         d.openLayoutResetConfirm = false;
     }
-    if (ImGui::BeginPopupModal("Reset window layout?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    // Keys: smatchet::ui::ConfirmFooter. The reset cannot be undone, so Cancel takes the keyboard on open and
+    // Enter cancels.
+    static smatchet::ui::DialogScopeState s_layoutResetDialog;
+    if (smatchet::ui::BeginDialog(s_layoutResetDialog, "Reset window layout?", nullptr,
+                                  ImGuiWindowFlags_AlwaysAutoResize)) {
         // Whole sentences per action (not a "%s resets..." fragment) so translations
         // are never forced into English sentence order (pass-1 L7 follow-up).
         const char* sentence =
@@ -513,20 +518,19 @@ void SmatchetUI::drawLayoutResetConfirmModal(UiDrawSession& d) {
         // must not silently disable every future confirmation.
         ImGui::Checkbox("Don't ask again", &d.layoutResetDontAskStaged);
         ImGui::Spacing();
-        if (ImGui::Button("Reset layout and continue")) {
+        const smatchet::dialogkeys::ConfirmPick pick = smatchet::ui::ConfirmFooter(
+            s_layoutResetDialog, smatchet::ui::DestructiveFooter("Reset layout and continue"));
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
             if (d.layoutResetDontAskStaged && !d.cfg.SkipLayoutResetConfirm) {
                 d.cfg.SkipLayoutResetConfirm = true; // persisted by the Save in apply below
             }
             applyPendingLayoutResetAction(d);
             ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
+        } else if (pick == smatchet::dialogkeys::ConfirmPick::Cancel) {
             d.pendingLayoutResetAction = PendingLayoutResetAction::None;
             d.layoutResetDontAskStaged = false;
-            ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_layoutResetDialog);
     }
 }
 

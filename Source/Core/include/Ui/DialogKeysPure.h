@@ -1,5 +1,9 @@
 #pragma once
 
+#include "Ui/GestureKeysPure.h"
+
+#include <cstring>
+
 /// Pure decisions shared by the dialogs that hold typed text: the worklog dialog, the offline conflict
 /// resolver, the long-text editor and the field viewer. No ImGui here: the callers read the keys, the
 /// focus and the popup state, and these say what follows.
@@ -58,6 +62,60 @@ inline bool DismissedPopupComesBack(bool hasUnsavedText, bool comingBackNow, int
         return false;
     }
     return lastReopenFrame < 0 || nowFrame - lastReopenFrame > settleFrames;
+}
+
+/// Which button of a confirm dialog takes the keyboard when it opens, and what Enter runs when no button
+/// holds the keyboard cursor.
+enum class ConfirmDefault : unsigned char {
+    Safe,   ///< the Cancel / Keep button
+    Primary ///< the action button
+};
+
+/// A confirm defaults to its safe button when its action destroys something or widens a trust boundary
+/// (`safeByDefault`: a consent prompt), so Enter or Space straight after it opens never loses data.
+inline ConfirmDefault ResolveConfirmDefault(bool primaryDestructive, bool safeByDefault) {
+    return (primaryDestructive || safeByDefault) ? ConfirmDefault::Safe : ConfirmDefault::Primary;
+}
+
+/// The button a confirm dialog's footer ran this frame.
+enum class ConfirmPick : unsigned char {
+    None,      ///< nothing yet
+    Primary,   ///< the action button
+    Alternate, ///< the optional second action ("Discard & switch" beside "Save & switch")
+    Cancel     ///< the safe button, or Esc
+};
+
+/// What Enter does in a confirm dialog. While the keyboard cursor is visible on an item of the dialog,
+/// ImGui activates that item itself on Enter, and the footer reads the click (`navItemTakesEnter`). Otherwise
+/// (the dialog was opened with the mouse, or the cursor was hidden by a click) Enter runs the default
+/// button. Nothing while a popup above the dialog has the keyboard, and nothing on the frame the dialog
+/// opens (`dialogOwnedKeyboardLastFrame` false): ImGui focuses a new popup at once, so the Enter that opened
+/// the dialog would otherwise also answer it.
+inline ConfirmPick ResolveConfirmEnter(bool enterPressed, bool dialogOwnsKeyboard, bool dialogOwnedKeyboardLastFrame,
+                                       bool navItemTakesEnter, ConfirmDefault def) {
+    if (!enterPressed || !dialogOwnsKeyboard || !dialogOwnedKeyboardLastFrame || navItemTakesEnter) {
+        return ConfirmPick::None;
+    }
+    return def == ConfirmDefault::Safe ? ConfirmPick::Cancel : ConfirmPick::Primary;
+}
+
+/// App-wide shortcuts stay off while a modal dialog is up: a command run behind a confirm can change or
+/// remove the very thing the confirm is about. Only commands that change how the app looks, never what it
+/// holds, still run (zoom, fullscreen). The command palette is muted too. The focus-scoped gesture commands
+/// (ui.list.*, ui.splitter.*) also run: they reach only the list or divider that has the keyboard, and those
+/// sit inside dialogs (the Customize Toolbar button list, the long-text editor's divider).
+inline bool GlobalShortcutAllowedUnderModal(const char* commandId) {
+    if (commandId == nullptr) {
+        return false;
+    }
+    if (smatchet::ui::IsFocusScopedGestureCommand(commandId)) {
+        return true;
+    }
+    static const char kZoomPrefix[] = "ui.zoom.";
+    if (std::strncmp(commandId, kZoomPrefix, sizeof(kZoomPrefix) - 1) == 0) {
+        return true;
+    }
+    return std::strcmp(commandId, "app.fullscreen.toggle") == 0;
 }
 
 } // namespace dialogkeys
