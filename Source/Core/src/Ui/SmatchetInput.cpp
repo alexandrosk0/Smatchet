@@ -211,4 +211,20 @@ MultilineResult Multiline(const char* label, std::string& value, const ImVec2& s
     return r;
 }
 
+bool ClearSearchOnEscape(ImGuiID searchId, char* buf) {
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    if (searchId == 0 || (g.ActiveId != searchId && g.ActiveIdPreviousFrame != searchId) ||
+        !ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        return false;
+    }
+    buf[0] = '\0';
+    if (g.ActiveId == searchId) {
+        ImGui::ClearActiveID();
+    }
+    if (g.InputTextDeactivatedState.ID == searchId) {
+        g.InputTextDeactivatedState.ClearFreeMemory();
+    }
+    return true;
+}
+
 } // namespace SmatchetInput

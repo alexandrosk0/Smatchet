@@ -29,6 +29,9 @@
 #include "TicketFieldEditorCommitPolicyPure.h"
 #include "TicketFieldEditorDurationPopupPure.h"
 #include "Ui/FieldPreviewLinePure.h"
+#include "Ui/SmatchetInlineError.h"
+#include "Ui/SmatchetToast.h"
+#include "Tracker/TrackerFieldValueParseExplain.h"
 #include "TouchCellEditGesture.h"
 #include "Types/ProjectComponentsTypes.h"
 #include "TextEditor.h"
@@ -369,6 +372,22 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
     return submitted || finalDeactivated;
 }
 
+smatchet::components::ComponentOptionsPick
+smatchet::components::PickProjectComponents(AppController& app, const std::string& projectKey,
+                                            const TrackerField& field, const std::string& catalogProjectKey,
+                                            ProjectComponentsLookup& holder) {
+    holder = app.GetComponentOptionsForProject(projectKey);
+    if (holder.freshness != smatchet::offline::DataFreshness::Fresh && app.EnsureProjectComponentsLoaded(projectKey)) {
+        holder = app.GetComponentOptionsForProject(projectKey); // report the fetch this frame, not the next
+    }
+    // `catalogProjectKey` was read with the catalog `field` came from (resolved once per pane per frame by the grid,
+    // captured with the field by the popup): no lookup or lock per cell, and never another catalog's scope.
+    const bool catalogIsRowProject =
+        !holder.options && smatchet::components::CatalogIsRowProject(catalogProjectKey, projectKey);
+    return PickComponentOptions(holder, catalogIsRowProject, field.AllowedValueOptions,
+                                app.GetLastTrackerConnectivityState());
+}
+
 namespace {
 
 void QueueEdit(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
@@ -438,11 +457,18 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
     bool explicitSubmit = false;
     bool deactivated = false;
 
+    // The duration field's own rectangle: the widget ends in a "▼" button, so the error is placed from this.
+    ImVec2 durationRectMin(0.0f, 0.0f);
+    ImVec2 durationRectMax(0.0f, 0.0f);
+
     if (isDuration) {
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (editJustStarted) {
             ImGui::SetKeyboardFocusHere();
         }
+        durationRectMin = ImGui::GetCursorScreenPos();
+        durationRectMax =
+            ImVec2(durationRectMin.x + ImGui::GetContentRegionAvail().x, durationRectMin.y + ImGui::GetFrameHeight());
         EditCbUser cbUser{&state};
         const bool committedOrDeactivated = DrawDurationFieldWithSuggestions(
             "##textedit_duration", state.EditBuffer, sizeof(state.EditBuffer), ImGuiInputTextFlags_CallbackAlways,
@@ -469,6 +495,18 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
     }
 
     const bool escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
+    // A typed duration is read the tolerant way ("1.5h", "90 m", "1:30"); one that does not read is explained
+    // under the field while the user types and is never committed (#38). An untouched value is left alone: a
+    // tracker figure this reader cannot parse is not the user's typo.
+    const bool durationEdited = isDuration && state.EditInitialValue != std::string(state.EditBuffer);
+    const TrackerParseExplain::DurationParse typedDuration =
+        durationEdited
+            ? TrackerParseExplain::ParseDurationInput(state.EditBuffer, TrackerParseExplain::BareNumberUnit::Minutes)
+            : TrackerParseExplain::DurationParse();
+    const bool durationUnreadable = durationEdited && !typedDuration.Ok && !typedDuration.Empty;
+    if (durationUnreadable) {
+        smatchet::ui::DrawInlineParseErrorBelowRect(typedDuration.Message, durationRectMin, durationRectMax);
+    }
     const std::string originalValue = ticket.GetFieldValue(field.Id);
     // Dirty check against the buffer's start content (state.EditInitialValue) — the value as loaded
     // when the edit opened — NOT the live field value. They are the same today (both GetFieldValue),
@@ -476,7 +514,31 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
     // the buffer against the live value would then read an untouched edit as dirty and fire a
     // spurious PUT. EditInitialValue is captured once at edit-start, so the dirty verdict reflects
     // only what the USER typed, never an out-of-band store change.
-    const bool valueChanged = state.EditInitialValue != std::string(state.EditBuffer);
+    bool valueChanged = state.EditInitialValue != std::string(state.EditBuffer);
+    if (isDuration && !escapePressed && (explicitSubmit || deactivated) && valueChanged) {
+        if (durationUnreadable) {
+            if (explicitSubmit) {
+                // Enter on text that does not read: stay in the field with the explanation under it.
+                ImGui::PushID("##textedit_duration");
+                ImGui::GetStateStorage()->SetInt(ImGui::GetID("##needRepositionAndFocus"), 1);
+                ImGui::PopID();
+                return;
+            }
+            // Focus left the cell: the caret cannot be kept, so say why nothing was saved.
+            SmatchetToastManager::Instance().Push(
+                SmatchetLocalization::T("field_editor.duration_not_saved", "Time not saved"),
+                (field.Name.empty() ? field.Id : field.Name) + ": " +
+                    TrackerParseExplain::DescribeParseMessage(typedDuration.Message),
+                ToastType::Warning);
+            state.ClearEditing();
+            return;
+        }
+        if (typedDuration.Ok && typedDuration.Canonical.size() < sizeof(state.EditBuffer)) {
+            // Commit the spelling the tracker and the sort already understand: "90 m" becomes "1h 30m".
+            std::memcpy(state.EditBuffer, typedDuration.Canonical.c_str(), typedDuration.Canonical.size() + 1);
+            valueChanged = state.EditInitialValue != std::string(state.EditBuffer);
+        }
+    }
     // DR23: if the stored value was longer than EditBuffer it was truncated on seed. Committing the
     // truncated copy would silently overwrite the field, destroying the untruncated tail — refuse the
     // commit (the value stays intact) and warn. The single-line inline cap stays; edit long values in
@@ -833,34 +895,21 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
     }
 }
 
-// The option list a components editor or cell uses for its row (Pillar 6): the row's own project list,
-// live or saved, kicking a background fetch while it is not live; else the catalog's list when the
-// catalog was fetched for that same project; else none. Never another project's list: the catalog of a
-// cross-project view would offer components that do not exist in this row's project. `holder` keeps
-// the returned list alive.
+// The option list a components editor or cell uses for its row: PickProjectComponents on the row's project.
 smatchet::components::ComponentOptionsPick PickRowComponents(AppController& app, const CachedTicket& ticket,
                                                              const TrackerField& field,
                                                              const std::string& catalogProjectKey,
                                                              ProjectComponentsLookup& holder) {
-    const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
-    holder = app.GetComponentOptionsForProject(projectKey);
-    if (holder.freshness != smatchet::offline::DataFreshness::Fresh && app.EnsureProjectComponentsLoaded(projectKey)) {
-        holder = app.GetComponentOptionsForProject(projectKey); // report the fetch this frame, not the next
-    }
-    // `field` comes from the catalog this pane's cells read; `catalogProjectKey` is that catalog's scope, resolved
-    // once per pane per frame (no lookup or lock per cell).
-    const bool catalogIsRowProject =
-        !holder.options && smatchet::components::CatalogIsRowProject(catalogProjectKey, projectKey);
-    return smatchet::components::PickComponentOptions(holder, catalogIsRowProject, field.AllowedValueOptions,
-                                                      app.GetLastTrackerConnectivityState());
+    return smatchet::components::PickProjectComponents(app, smatchet::ExtractIssueKeyPrefix(ticket.id), field,
+                                                       catalogProjectKey, holder);
 }
 
 void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue, SpreadsheetState& state,
                              std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled, bool singleClickToEdit,
                              const std::string& catalogProjectKey) {
-    // The grid components MultiSelect is scoped to THIS row's own Jira project, as PickRowComponents
-    // explains. Every other field keeps the global AllowedValueOptions.
+    // The grid components MultiSelect is scoped to THIS row's own Jira project, as PickProjectComponents
+    // (TicketFieldEditor.h) explains. Every other field keeps the global AllowedValueOptions.
     const std::vector<TrackerFieldOption>* opts = &field.AllowedValueOptions;
     ProjectComponentsLookup rowComponents;
     smatchet::offline::DataFreshness optionsFreshness = smatchet::offline::DataFreshness::Fresh;

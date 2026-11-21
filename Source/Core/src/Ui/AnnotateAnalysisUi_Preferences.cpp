@@ -6,6 +6,8 @@
 #include "Ui/PreferencesFilter.h"
 #include "SmatchetFieldRender.h"
 #include "TrackerFieldSchema.h"
+#include "Tracker/TrackerInputNormalisePure.h"
+#include "Ui/SmatchetInlineError.h"
 #include "Ui/SmatchetInput.h"
 
 #include <algorithm>
@@ -36,6 +38,30 @@ SmatchetInput::TextOptions SettingFieldOptions(bool trim) {
 // when an edit ends with a changed value (Enter, Tab, a click away; Esc reverts and saves nothing).
 void DrawSettingTextField(const char* label, std::string& text, std::string& cfgField, const char* reason, bool trim) {
     if (SmatchetInput::Text(label, text, SettingFieldOptions(trim)).committed && text != cfgField) {
+        cfgField = text;
+        PersistAnnotateCfg(reason);
+    }
+}
+
+// A path or link field the user pastes into (#82, #128): the shared text field over the form's string. When
+// the edit ends, the quotes "Copy as path" adds and stray spaces come off the text; text that cannot be used
+// is explained under the field and is not saved, so the config keeps the last value that worked.
+template <typename NormaliseFn>
+void DrawCheckedSettingField(const char* label, std::string& text, std::string& cfgField, const char* reason,
+                             NormaliseFn normalise) {
+    const bool committed = SmatchetInput::Text(label, text, SettingFieldOptions(true)).committed;
+    const TrackerInputNormalise::PathParse parsed = normalise(text);
+    if (!parsed.Ok) {
+        smatchet::ui::DrawInlineParseError(parsed.Message);
+        return;
+    }
+    if (!committed) {
+        return;
+    }
+    if (parsed.Rewritten) {
+        text = parsed.Value;
+    }
+    if (text != cfgField) {
         cfgField = text;
         PersistAnnotateCfg(reason);
     }
@@ -122,7 +148,8 @@ void DrawAnnotateAnalysisFields(PreferencesFilter& filter) {
     }
 
     if (filter.ShowSetting("annotate.analysis.ai_chat_url")) {
-        DrawSettingTextField("AI chat URL (optional)", State().aiUrl, cfg.AiChatUrl, "edit_aiurl", true);
+        DrawCheckedSettingField("AI chat URL (optional)", State().aiUrl, cfg.AiChatUrl, "edit_aiurl",
+                                TrackerInputNormalise::ValidateHttpUrl);
     }
 }
 
@@ -132,11 +159,13 @@ void DrawAnnotatePerforceFields(PreferencesFilter& filter) {
     auto& cfg = State().annotateCfg;
 
     if (filter.ShowSetting("connections.perforce.p4_exe")) {
-        DrawSettingTextField("p4 executable", State().p4Exe, cfg.P4Executable, "edit_p4exe", true);
+        DrawCheckedSettingField("p4 executable", State().p4Exe, cfg.P4Executable, "edit_p4exe",
+                                TrackerInputNormalise::NormaliseExecutablePath);
     }
 
     if (filter.ShowSetting("connections.perforce.p4vc_exe")) {
-        DrawSettingTextField("p4vc executable", State().p4vcExe, cfg.P4VcExecutable, "edit_p4vcexe", true);
+        DrawCheckedSettingField("p4vc executable", State().p4vcExe, cfg.P4VcExecutable, "edit_p4vcexe",
+                                TrackerInputNormalise::NormaliseExecutablePath);
     }
 
     if (filter.ShowSetting("connections.perforce.timelapse_cmd")) {
@@ -221,18 +250,32 @@ void DrawAnnotatePathRemaps(bool filtering) {
             State().remapBufs[i].to = remaps[i].ToPrefix;
         }
     }
+    // Row whose "from" field takes the caret this frame: the row Add path remap just added, or the next row
+    // Enter in a filled last "to" field adds. UI thread only, like the rest of this editor.
+    static int s_focusFromRow = -1;
     int removeIdx = -1;
+    bool addRow = false;
     for (size_t i = 0; i < remaps.size(); ++i) {
         ImGui::PushID(static_cast<int>(i));
         ImGui::SetNextItemWidth(220.f);
+        if (s_focusFromRow == static_cast<int>(i)) {
+            ImGui::SetKeyboardFocusHere();
+            s_focusFromRow = -1;
+        }
         // Prefixes keep their exact spelling (a trailing separator is meaningful), so no trim.
         const bool fromDirty =
             SmatchetInput::Text("from", State().remapBufs[i].from, SettingFieldOptions(false)).committed &&
             State().remapBufs[i].from != remaps[i].FromPrefix;
         ImGui::SameLine();
         ImGui::SetNextItemWidth(220.f);
-        const bool toDirty = SmatchetInput::Text("to", State().remapBufs[i].to, SettingFieldOptions(false)).committed &&
-                             State().remapBufs[i].to != remaps[i].ToPrefix;
+        const SmatchetInput::TextResult toEdit =
+            SmatchetInput::Text("to", State().remapBufs[i].to, SettingFieldOptions(false));
+        const bool toDirty = toEdit.committed && State().remapBufs[i].to != remaps[i].ToPrefix;
+        // Enter in the last row's "to", with both halves filled, starts the next rule.
+        if (toEdit.enterCommitted && i + 1 == remaps.size() && !State().remapBufs[i].from.empty() &&
+            !State().remapBufs[i].to.empty()) {
+            addRow = true;
+        }
         ImGui::SameLine();
         const bool remove = ImGui::Button("Remove");
         ImGui::PopID();
@@ -251,11 +294,25 @@ void DrawAnnotatePathRemaps(bool filtering) {
         PersistAnnotateCfg("remove_remap");
     }
     if (ImGui::Button("Add path remap")) {
+        addRow = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", SmatchetLocalization::T("annotate.remap.enter_adds_hint",
+                                                        "Enter in the last row's \"to\" field adds the next rule"));
+    }
+    if (addRow) {
         remaps.push_back(PathRemapRule{});
         State().remapBufs.push_back(RemapEditBuf{});
+        s_focusFromRow = static_cast<int>(remaps.size()) - 1;
         PersistAnnotateCfg("add_remap");
     }
 }
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+namespace {
+std::vector<PathRemapRule> g_uiTestRemapStash;
+} // namespace
+#endif
 
 // Annotate > Colors body. The owning PrefsSection draws the header, so the rows sit bare.
 void DrawAnnotateColors(PreferencesFilter& filter) {
@@ -282,3 +339,31 @@ void DrawAnnotateColors(PreferencesFilter& filter) {
 }
 
 } // namespace AnnotateInternal
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+// Bucket-E seams for the path-remap keyboard flow (tests/ui/gesture_keys.test.cpp). Begin stashes the live
+// rules and empties the editor; End puts them back and saves, so a test run leaves the config as it found it.
+extern "C" void SmatchetUiTestDrawAnnotatePathRemaps() { AnnotateInternal::DrawAnnotatePathRemaps(false); }
+
+extern "C" void SmatchetUiTestAnnotateRemapsBegin() {
+    AnnotateInternal::g_uiTestRemapStash = State().annotateCfg.PathRemaps;
+    State().annotateCfg.PathRemaps.clear();
+    State().remapBufs.clear();
+}
+
+extern "C" void SmatchetUiTestAnnotateRemapsEnd() {
+    State().annotateCfg.PathRemaps = AnnotateInternal::g_uiTestRemapStash;
+    State().remapBufs.clear(); // re-seeded from the rules on the next draw
+    AnnotateInternal::g_uiTestRemapStash.clear();
+    AnnotateInternal::PersistAnnotateCfg("ui_test_restore");
+}
+
+extern "C" int SmatchetUiTestAnnotateRemapCount() { return static_cast<int>(State().annotateCfg.PathRemaps.size()); }
+
+extern "C" const char* SmatchetUiTestAnnotateRemapFrom(int i) {
+    const auto& remaps = State().annotateCfg.PathRemaps;
+    return i >= 0 && static_cast<std::size_t>(i) < remaps.size()
+               ? remaps[static_cast<std::size_t>(i)].FromPrefix.c_str()
+               : "";
+}
+#endif

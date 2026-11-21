@@ -9,7 +9,9 @@
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"
 #include "ConfigManager.h"
+#include "SmatchetUiSession.h"
 #include "ViewColumnsPure.h"
+#include "ViewCyclePure.h"
 #include "Views.h"
 
 #include <algorithm>
@@ -17,6 +19,10 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+// The shared UI-thread session; the file-static definition lives in SmatchetUI.cpp (see
+// BuiltinCommands_Ui.cpp). view.next / view.previous read the Views editor's draft from it.
+extern UiDrawSession g_ui;
 
 // The include block + namespace-open + first-JSON-builder-function shape below matches
 // PaneCommands.cpp's own opening token-for-token — every Commands/*.cpp command-group file
@@ -171,6 +177,19 @@ void RegisterViewCurrentCommand(AppController& app, Views& views, CommandRegistr
     reg.Register(std::move(c));
 }
 
+// The view.activate effect, shared by view.next / view.previous: switch, persist, sync. UI thread only
+// (the callers hop there first).
+CommandResult ActivateViewAndSync(AppController& app, Views& views, const std::string& id) {
+    if (!views.Activate(id)) {
+        return CommandResult::Failure(ErrorCode::NotFound, "View '" + id + "' not found.");
+    }
+    views.Save();
+    app.SyncWithBackend(nullptr, &views.GetStore());
+    nlohmann::json out;
+    out["activated"] = id;
+    return CommandResult::Success(std::move(out));
+}
+
 void RegisterViewActivateCommand(AppController& app, Views& views, CommandRegistry& reg) {
     Command c;
     c.Name = "view.activate";
@@ -187,14 +206,72 @@ void RegisterViewActivateCommand(AppController& app, Views& views, CommandRegist
     // view.activate mutates ActiveViewId + persists views + kicks a sync. All three
     // touch UI-thread-owned state; do the mutation on the UI thread, then return.
     c.Handler = [&app, &views](const nlohmann::json& args, const CommandContext&) {
-        return RunOnUiThreadAsCommandResult(app, [&app, &views, args]() {
-            const std::string id = args.value("id", std::string());
-            if (!views.Activate(id)) {
-                return CommandResult::Failure(ErrorCode::NotFound, "View '" + id + "' not found.");
+        return RunOnUiThreadAsCommandResult(
+            app, [&app, &views, args]() { return ActivateViewAndSync(app, views, args.value("id", std::string())); });
+    };
+    c.Idempotent = false;
+    reg.Register(std::move(c));
+}
+
+// view.next (step +1) / view.previous (step -1): the neighbouring view in the order view.list and the view
+// pickers show, wrapping at both ends. Rebindable keys (Ctrl+PageDown / Ctrl+PageUp by default) and
+// palette entries, so switching views needs no mouse.
+void RegisterViewStepCommand(AppController& app, Views& views, CommandRegistry& reg, const char* name, int step) {
+    Command c;
+    c.Name = name;
+    c.Category = "view";
+    c.Summary = step > 0 ? "Switch to the next view in the view list (wraps from the last to the first) and sync it."
+                         : "Switch to the previous view in the view list (wraps from the first to the last) and "
+                           "sync it.";
+    c.Description = "Returns {activated: <view id>}, plus unchanged: true when the only view is already active. "
+                    "When the Views editor holds edits that were not applied, nothing is switched: the "
+                    "'Discard changes?' question is raised instead and the result is {activated: null, "
+                    "pendingConfirm: <view id>}. "
+                    "With no active view, the next view is the first one and the "
+                    "previous view is the last one. Fails with NotFound when there are no views.\n"
+                    "Example: Smatchet.exe cmd " +
+                    std::string(name);
+    c.Handler = [&app, &views, step](const nlohmann::json& /*args*/, const CommandContext&) {
+        return RunOnUiThreadAsCommandResult(app, [&app, &views, step]() {
+            const ViewsStore& store = views.GetStore();
+            int activeIndex = -1;
+            for (std::size_t i = 0; i < store.Views.size(); ++i) {
+                if (store.Views[i].Id == store.ActiveViewId) {
+                    activeIndex = static_cast<int>(i);
+                    break;
+                }
             }
-            views.Save();
-            app.SyncWithBackend(nullptr, &views.GetStore());
-            return CommandResult::Success({{"activated", id}});
+            const int target = smatchet::views::CycleViewIndex(static_cast<int>(store.Views.size()), activeIndex, step);
+            if (target < 0) {
+                return CommandResult::Failure(ErrorCode::NotFound, "There are no views to switch to.");
+            }
+            // Copied: activation persists and syncs, and the id must outlive any change to the store.
+            const std::string id = store.Views[static_cast<std::size_t>(target)].Id;
+            // The same guard a sidebar click gets (viewsRequestActivate): edits in the Views editor the
+            // user has not applied are not thrown away by a key. Ask first, on the dashboard, which is
+            // raised so the question is on screen. Only a draft that belongs to the active view counts; it
+            // is judged on a rebased copy, with a rename still being typed counted (see the helper).
+            if (activeIndex >= 0 && target != activeIndex && g_ui.viewDraftId == store.ActiveViewId &&
+                ViewDraftWouldLoseEditsOnSwitch(g_ui.viewDraft, g_ui.viewDraftBase,
+                                                store.Views[static_cast<std::size_t>(activeIndex)],
+                                                g_ui.viewsTitleEditing, g_ui.viewNameBuf)) {
+                g_ui.viewsPendingActivateId = id;
+                g_ui.viewsShowDiscardConfirm = true;
+                g_ui.showViewsDashboard = true;
+                g_ui.requestViewsDashboardFocus = true;
+                nlohmann::json pending;
+                pending["activated"] = nullptr;
+                pending["pendingConfirm"] = id;
+                return CommandResult::Success(std::move(pending));
+            }
+            if (target == activeIndex) {
+                // The only view: already active, so nothing to save or re-sync.
+                nlohmann::json out;
+                out["activated"] = id;
+                out["unchanged"] = true;
+                return CommandResult::Success(std::move(out));
+            }
+            return ActivateViewAndSync(app, views, id);
         });
     };
     c.Idempotent = false;
@@ -721,6 +798,8 @@ void RegisterViewCommands(AppController& app, Views& views) {
     RegisterViewGetCommand(app, views, reg);
     RegisterViewCurrentCommand(app, views, reg);
     RegisterViewActivateCommand(app, views, reg);
+    RegisterViewStepCommand(app, views, reg, "view.next", 1);
+    RegisterViewStepCommand(app, views, reg, "view.previous", -1);
     RegisterViewRefreshActiveCommand(app, views, reg);
     RegisterViewCreateCommand(app, views, reg);
     RegisterViewUpdateCommand(app, views, reg);

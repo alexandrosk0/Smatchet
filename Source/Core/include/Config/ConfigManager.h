@@ -329,6 +329,15 @@ struct TrackerConfig {
     // Same replace-not-merge rationale as MigratedMenuShortcutsV1; a user who later
     // removes the binding keeps it removed.
     bool MigratedQuickCreateHotkeyV1 = false;
+    // One-shot migration flag: seeds the gesture-key bindings (ui.list.*, ui.splitter.*, view.panel.grow /
+    // shrink) into a config saved by an older build. Same replace-not-merge rationale and the same
+    // "a binding the user already has, or cleared after the seed, is left alone" contract.
+    bool MigratedGestureKeysV1 = false;
+    // One-shot migration flag: seeds the primary-action bindings added by the input UX audit
+    // (preferences.search.focus, view.next, view.previous) into a config saved by an older build.
+    // Same replace-not-merge rationale as MigratedMenuShortcutsV1; a binding the user already gave
+    // one of those commands is kept, and a user who later removes one keeps it removed.
+    bool MigratedActionKeysV1 = false;
     // One-shot migration flag: seeds the grid search focus binding ("grid.search.focus",
     // Ctrl+F and /) into a config saved by an older build. Same replace-not-merge rationale
     // as MigratedMenuShortcutsV1; a user who later removes the binding keeps it removed.

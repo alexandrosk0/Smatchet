@@ -179,7 +179,7 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
 - **Dual-target**: everything is in `Source/Core`, so `SmatchetCore_DX12` compiles it as well. There is no `SMATCHET_WITH_MCP` gating, because the command goes through the registry.
 - **Localization churn**: `grid.bulk.*` keys only, added through `SmatchetLocalization::T` / `Label` / `Format` with the English fallback kept in step with the table. `Command::Title`, `Summary` and `Params` stay plain English, because MCP publishes them verbatim.
 - **PR #2432 conflict**: P1 needs #2432 merged, or is stacked on its branch. Shared files are `SmatchetUiSession.h` (different hunks: :115 and :1072 versus #2432 near :1130) and `SpreadsheetState.h` (`GridRectSelection` :19-66 versus #2432's removal at :114-126). This plan does not touch `TicketFieldEditor.cpp` or `TrackerLabelsEditor.cpp`. Conflict risk is low.
-- **Bulk rows are not cancellable (P1)**: the palette/Lua worker has no cancel token, and shutdown drops bulk rows still waiting in `queuedFieldEdits` (a `LOG_WARN` counts them). Rows already enqueued offline are safe; unsent ones are not persisted. Follow-up: a cancel token for the worker and persisting unsent bulk rows.
+- **Bulk rows are not cancellable (P1)**: the palette/Lua worker has no cancel token (backlog: `docs/self-improvement/categories/debt/2026-11-16-bulk-edit-no-cancel-token.md`), and shutdown drops bulk rows still waiting in `queuedFieldEdits` (a `LOG_WARN` counts them; tracked as GitHub Issue #2448, a lost user write). Rows already enqueued offline are safe; unsent ones are not persisted.
 - **Per-project option resolution**: a multi-value add/remove skips a row whose current value is not in the clicked row's option list (`grid.bulk.skip_unresolved`) instead of guessing, so a row from another project with different options is reported, not corrupted.
 - **Non-goals**: multi-field apply in one gesture, ADF long-text bulk edit, a full undo stack, and bulk edit from the Views dashboard.
 
@@ -249,7 +249,15 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
 - **Bulk edit in the Views dashboard**: no action.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- P1 shipped in #2434 (merged into #2432's branch) and landed on `develop` with #2432 (`60e4ea0e2`).
+- Bulk-edit finish PR (this branch, `claude/bulk-edit-finish-4acd0e`), after the P1 code review:
+  - Bucket-E cases for the labels multi-value picker (Replace / Add / Remove toggle, Apply, Enter in the tick-box list, Enter with nothing ticked) and CI wiring of `test-ui-bulk-field-edit` into the grid bucket-E driver loop.
+  - Grid preview checks editability with the job's latched backend key and issue type, not the focused pane's.
+  - The toast's first-error text is cut on a UTF-8 character boundary (`TruncateUtf8WithEllipsis`, shared with `LeftViewReasonPure`).
+  - `ticket.set_field_bulk` mode validation moved into `ValidateBulkMode`.
+  - `PickProjectComponents` shared by the grid components cell and the bulk popup (was a hand copy).
+  - Enter in the tick-box list of the bulk modal applies the pick (`FilterDropdown` `EventKind::Done`); the draw-in-the-popup contract is documented.
+  - Quick-create Esc is held back only by popups opened from its own window.
 
 ## Deviations from plan
 - **Pre-implementation `grill-with-docs` (2026-11-14):** five gaps fixed before any code was written. (1) ADR-0016 scalar-base capture for every bulk row, through a shared `CaptureScalarBase`. (2) The per-cell menu ctx holds no owned strings (Ui § Per-cell allocation). (3) The P3 Jira bulk path goes through `FieldEditPipelineService`, not a grid-side commit branch, and P3 updates the Ui § Grid one-in-flight wording. (4) The cli, lua and mcp guides are updated. (5) Toast wording follows Ui § Toasts say what happened. The user chose the command name `ticket.set_field_bulk`.
@@ -259,10 +267,18 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
 - **P1 code review (2026-11-15), fixed in P1:** `PlanBulkRows` (`Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp:327`) skips "already has this value" rows; `add` / `remove` with empty `values` is rejected; a missing `Threading` is a `HandlerError`; the async branch needs a UI thread with a frame loop (the in-process one-shot CLI has none and runs synchronously, so it cannot drop rows at shutdown); `IAppTicketMutations` gained `GetLastTrackerConnectivityState` / `IsShuttingDown` (`Source/Core/include/Interfaces/IAppTicketMutations.h:45`) for the worker.
 - **Selection hit-test uses `NoPopupHierarchy`:** a popup opened from the grid window counts as its child, so a right-click menu click was read as a click on the grid and cleared the selection. Both the cell hit-test and the click-outside clear now ignore popup children. A left click on a cell while a popup is open now only closes the popup (deliberate).
 - **Deliberately deferred (not P1):** quitting mid-job drops the rows not yet sent (logged with `LOG_WARN`; persisting them is a follow-up); per-row `TrackerField` copies / a double `Prepare` for very large jobs (measure with perf-gatekeeper before changing); a cancel token for the palette worker; labels add / remove merge case-insensitively on purpose.
-- **Plan stays in `active/`:** only P1 ships in this PR; P2 and P3 are still ahead.
+- **Review follow-ups deferred with a record:** quitting mid-job drops unsent rows (GitHub Issue #2448); no cancel token for the palette worker or a running job (`docs/self-improvement/categories/debt/2026-11-16-bulk-edit-no-cancel-token.md`, planned with Revert in P2).
+- **Ctrl+F while a popup is open (not in this PR):** `grid.search.focus` calls `SetWindowFocus()` while the bulk dialog (or any popup) is open, which closes the popup. The fix is in `SmatchetGridHeaderUi.cpp`, which plan-lock `pane-picker-jira-sites` (branch `claude/plus-dropdown-two-jira-261a42`) claimed during this work, so it is deferred. Tracked as GitHub Issue #2449, with a ready-made bucket-E test that fails without the fix.
+- **`DrawActions` in `SmatchetQuickCreateIssueUi.cpp`** has 27 decision points (cap 30, soft warning at the cap's edge); left as is.
+- **Plan stays in `active/`:** only P1 ships here; P2 and P3 are still ahead.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+- Doctests (`ninja-test-msvc`, `SmatchetTests.exe`): 4218 / 4218 passed, including the `TruncateUtf8WithEllipsis` and `BulkFieldEditPure` cases.
+- Bucket-E (`ninja-ui-test-msvc`): `test-ui-bulk-field-edit` 10 / 10, `test-ui-filter-dropdown` 19 / 19, `test-ui-data-dependent-windows` 12 / 12.
+- `bash scripts/dev/pre-ship.sh`: all gates passed except the review ack, which is recorded after the code-review pass.
+- Build gate: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` passed (fresh configure, 1107 steps).
+- Not done: a bucket-E case for Ctrl+F while a popup is open (item deferred to Issue #2449; the test was written and failed without the fix, as expected, and is attached to the Issue).
+- Manual residue: none.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*

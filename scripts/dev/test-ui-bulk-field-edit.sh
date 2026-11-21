@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # test-ui-bulk-field-edit.sh — bucket-E driver for the grid's "Set <Field> for N rows..." bulk edit
-# (tests/ui/bulk_field_edit.test.cpp, docs/plans/bulk-edit-rows.md P1). Generates a 12-issue Jira fixture with a
+# (tests/ui/bulk_field_edit.test.cpp, docs/plans/active/bulk-edit-rows.md P1). Generates a 12-issue Jira fixture with a
 # priority catalog into the throwaway profile, runs `ui_test.run --name=BulkFieldEdit` against an ephemeral spawn
 # and parses the JSON envelope.
 #
 # Covers through the real UI (right-click menu, popup, confirm button): the menu item's visibility rules, a pick that
-# saves every row, the confirm step above 10 rows with uneditable / unchanged rows listed as skipped, and the offline
-# queue path. Asserts the backend saw one update per row, the job summary, the summary toast and the kept selection.
+# saves every row, the confirm step above 10 rows with uneditable / unchanged rows listed as skipped, the offline
+# queue path, and the multi-value (labels) picker: Replace / Add / Remove, the Apply button, Enter in the tick-box
+# list. Asserts the backend saw one update per row, the job summary, the summary toast and the kept selection.
 #
 # Spawn-warmup retry: the headless `--spawn` runner intermittently launches the ephemeral app "cold" and the whole
 # queued test set fails 0-of-N (spawn_warmup_deterministic_gate.test.cpp). Retry ONLY on that wipeout signal
@@ -62,6 +63,8 @@ for n in range(1, 13):
             "status": {"name": "Open", "id": "1"},
             "priority": prio,
             "assignee": {"displayName": "Alice Tester"},
+            # Odd keys carry "alpha", SMAT-2 carries "alpha" and "gamma": the multi-value (labels) cases read them.
+            "labels": ["alpha"] if n % 2 == 1 else (["alpha", "gamma"] if n == 2 else []),
             # SMAT-12 is its own type: editmeta is cached per type, so marking one issue read-only for a field must
             # not turn every other row read-only with it.
             "issuetype": {"name": "Bug" if n == 12 else "Task"},
@@ -80,6 +83,7 @@ fixture = {
                 {"id": "5", "value": "Trivial"},
             ]},
             {"id": "summary", "name": "Summary", "family": "Text", "options": []},
+            {"id": "labels", "name": "Labels", "family": "Labels", "options": []},
         ],
         "components": [],
         "issueTypeMeta": [],
@@ -89,7 +93,7 @@ fixture = {
         "fullSyncCompleted": True,
         "warning": "",
         "fetchError": "",
-        "selectedFields": ["summary", "status", "priority", "assignee", "issuetype"],
+        "selectedFields": ["summary", "status", "priority", "assignee", "issuetype", "labels"],
         "jiraSearchPages": [{"issues": issues, "isLast": True}],
     }],
     "mutations": {"updateIssueFields": [], "createIssue": []},

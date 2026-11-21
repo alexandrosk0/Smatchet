@@ -74,6 +74,22 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
         Core/TrackerDateTimePure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
+        # Input UX Wave 2 piece 4.5: the parse-and-explain layer (durations, dates, issue references,
+        # site URLs, executable paths, query structure). Pure and ImGui-free, so the Linux subset runs it.
+        Core/TrackerFieldValueParseExplain.test.cpp
+        Core/TrackerInputNormalisePure.test.cpp
+        Core/JqlQueryValidatePure.test.cpp
+        # Worklog Save validation + the shared dialog keys (header-only, ImGui-free); reads durations through
+        # the parse-and-explain layer above, so the natural spellings (#38) are covered on Linux too.
+        Core/SmatchetWorklogSubmitPure.test.cpp
+        # The grid search box's mode decision (header-only; reuses ExtractIssueKeyPrefix and the key parsers).
+        Core/GridSearchInputClassifier.test.cpp
+        # Preferences save: trim + site-URL normalisation (the helpers are inline in a private header).
+        Core/PreferencesCredentialTrim.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueParseExplain.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueParseExplainText.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerInputNormalisePure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlQueryValidatePure.cpp"
         # Scenario capture-size parse + the request-vs-achieved verdict (#2092). Pure,
         # ImGui-free, no threads — belongs in the portable subset so the contract that
         # keeps bucket-C from comparing wrong-sized captures is covered on Linux too,
@@ -93,6 +109,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # touch-sized hit targets (Ui/TouchSizingPure.h) — header-only, ImGui-free, no threads.
         Core/TouchGesturePure.test.cpp
         Core/TouchSizingPure.test.cpp
+        # Keyboard-gesture latch (Ui/GestureKeysPure.h) — header-only, ImGui-free, no threads.
+        Core/GestureKeysPure.test.cpp
         # Drag-to-paint checkbox gesture (click a checkbox and drag across its neighbours to
         # set the whole run) — header-only, ImGui-free, no threads
         # (SmatchetDragCheckboxPure.h); the ImGui wrapper SmatchetDragCheckbox.h feeds live
@@ -486,6 +504,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui" # SmatchetPreferencesUi_detail.h (private header, inline helpers)
         "${CMAKE_SOURCE_DIR}/tests/support"
     )
     target_compile_definitions(SmatchetTsanTests PRIVATE
@@ -938,6 +957,9 @@ add_executable(SmatchetTests
     Core/TrackerHttpSslPure.test.cpp
     Core/TrackerIssueExistsProbe.test.cpp
     Core/TrackerDateTimePure.test.cpp
+    Core/TrackerFieldValueParseExplain.test.cpp
+    Core/TrackerInputNormalisePure.test.cpp
+    Core/JqlQueryValidatePure.test.cpp
     Core/TicketFieldEditorLongTextPure.test.cpp
     # Shared value-dropdown (docs/plans/shared-dropdown-recents.md): the ImGui-free row model
     # (header-only) and the recent-picks store (links Source/Core/src/RecentSelections.cpp below).
@@ -1503,6 +1525,10 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/P4AnnotateParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueParseExplain.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueParseExplainText.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerInputNormalisePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlQueryValidatePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketFieldEditorLongTextPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridDurationSortPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridSortPure.cpp"
@@ -1895,6 +1921,11 @@ add_executable(SmatchetTests
     Core/PaneAddRequest.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetGridPaneWindows_detail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/PaneCommands_detail.cpp"
+    # Issue #2444 — "+ ▾" new-pane picker rows: one per credentialed tracker kind, one per
+    # Jira site when there are 2+ sites (the caret was hidden with two Jira sites). Pure; the
+    # Jira-instance helpers it calls (JiraBackendInstancesPure.cpp) are already linked above.
+    Core/PaneBackendTargets.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/PaneBackendTargetsPure.cpp"
     # window-expand-button.md — pure transition core behind the per-window Expand /
     # Minimize control: save-on-expand, consume-once restore replay, second-expand
     # hand-off, and the closed-while-expanded self-heal. The _detail TU is ImGui-free
@@ -1958,6 +1989,8 @@ add_executable(SmatchetTests
     # only the engine-free UiTestOutcomeFormat.cpp so it pulls no imgui/cpr/sqlite.
     Core/UiTestOutcomeFormat.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/UiTestOutcomeFormat.cpp"
+    # Keyboard equivalents for pointer gestures (docs/plans/input-ux-w2-gesture-keys.md) — header-only latch.
+    Core/GestureKeysPure.test.cpp
 )
 
 # Whisper dictation router — link the production TU that matches the parent

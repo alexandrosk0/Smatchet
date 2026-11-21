@@ -37,15 +37,18 @@
 
 #include "TicketFieldEditor_detail.h"  // SmatchetTest_RenderTextInlineEdit forwarder
 #include "TicketFieldEditor_Worklog.h" // the worklog dialog + its test snapshot
+#include "Ui/SmatchetSubmitKeys.h"     // what the key-hint button and the placeholder drew
 
-#include "AppController.h"                     // IAppThreading for the dialog's worker; IssueCreateResult
-#include "CachedTicketTypes.h"                 // CachedTicket
-#include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
-#include "Interfaces/IAppTicketMutations.h"    // the facet the dialog saves through
-#include "PendingActionTypes.h"                // PendingActionSubmitResult
-#include "SmatchetUiSession.h"                 // PendingFieldEdit
-#include "SpreadsheetState.h"                  // SpreadsheetState
-#include "TrackerFieldSchema.h"                // TrackerField
+#include "AppController.h"                         // IAppThreading for the dialog's worker; IssueCreateResult
+#include "CachedTicketTypes.h"                     // CachedTicket
+#include "DraftStore.h"                            // the entry the worklog dialog keeps
+#include "Commands/Scenarios/UiTestScenario.h"     // SmatchetActiveUiTestAppController
+#include "Interfaces/IAppTicketMutations.h"        // the facet the dialog saves through
+#include "PendingActionTypes.h"                    // PendingActionSubmitResult
+#include "SmatchetUiSession.h"                     // PendingFieldEdit
+#include "SpreadsheetState.h"                      // SpreadsheetState
+#include "Tracker/TrackerFieldValueParseExplain.h" // the dialog and the field explain a bad time with it
+#include "TrackerFieldSchema.h"                    // TrackerField
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -377,7 +380,13 @@ bool g_worklogOpenRequested = false;
 const char* kWorklogHostWindow = "SmatchetTest::WorklogDialog";
 const char* kWorklogIssueId = "WLOGTEST-1"; // no grid row has it, so only this harness draws the dialog
 const char* kWorklogOwnerField = "timespent";
-const char* kWorklogBadTimeError = "Invalid Time spent format. Please use e.g. 2h 30m.";
+// "0m" reads as a duration but logs nothing, so the dialog asks for a time above zero (the same words the field
+// shows under itself). Built with the parser's own text so the case holds in any language.
+std::string WorklogBadTimeError() {
+    TrackerParseExplain::ParseMessage zero;
+    zero.Id = TrackerParseExplain::ParseMessageId::DurationRequiredPositive;
+    return TrackerParseExplain::DescribeParseMessage(zero);
+}
 
 using TicketFieldEditorWorklog::GetWorklogDialogSnapshotForTests;
 using TicketFieldEditorWorklog::WorklogDialogTestSnapshot;
@@ -432,7 +441,10 @@ void CloseWorklogDialog(ImGuiTestContext* ctx) {
 
 // Opens a fresh dialog and waits for its first draw. False (and a failed check) when the app is
 // missing or the dialog never appeared.
-bool OpenWorklogDialogForTest(ImGuiTestContext* ctx) {
+bool OpenWorklogDialogForTest(ImGuiTestContext* ctx, bool keepDrafts = false) {
+    if (!keepDrafts) {
+        smatchet::drafts::ResetForTests(); // an entry an earlier case kept must not prefill this one
+    }
     if (SmatchetActiveUiTestAppController() == nullptr) {
         IM_CHECK_NO_RET(SmatchetActiveUiTestAppController() != nullptr);
         return false;
@@ -495,7 +507,7 @@ void RegisterWorklogEnterOnBadTimeSpent(ImGuiTestEngine* engine) {
         ctx->KeyChars("0m");
         ctx->KeyPress(ImGuiKey_Enter);
         IM_CHECK_NO_RET(WorklogYieldUntil(
-            ctx, 30, []() { return GetWorklogDialogSnapshotForTests().ErrorMsg == kWorklogBadTimeError; }));
+            ctx, 30, []() { return GetWorklogDialogSnapshotForTests().ErrorMsg == WorklogBadTimeError(); }));
         IM_CHECK_NO_RET(WaitForCaretInTimeSpent(ctx));
         ctx->Yield(6);
         const WorklogDialogTestSnapshot snap = GetWorklogDialogSnapshotForTests();
@@ -571,6 +583,33 @@ void RegisterWorklogCtrlEnterFromDescription(ImGuiTestEngine* engine) {
     };
 }
 
+// N. Save prints its key (Ctrl+Enter) and the empty description shows its placeholder inside the box,
+// which goes once something is typed (INPUT_UX_AUDIT.md #6). Fails if the dialog goes back to a plain
+// Save button or a bare multiline field.
+void RegisterWorklogSaveNamesItsKey(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterWorklogDialogTest(engine, "WorklogDialog_SaveNamesItsKey_DescriptionPlaceholder");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OpenWorklogDialogForTest(ctx)) {
+            return;
+        }
+        IM_CHECK_NO_RET(WaitForCaretInTimeSpent(ctx));
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(smatchet::ui::KeyHintDrawnForTest("Save").c_str(), "Ctrl+Enter");
+        IM_CHECK_NO_RET(smatchet::ui::PlaceholderDrawnForTest("##WorklogDesc"));
+        ImGuiWindow* dialog = WorklogDialogOnTop();
+        IM_CHECK_NO_RET(dialog != nullptr);
+        if (dialog != nullptr) {
+            ctx->SetRef(dialog->ID);
+            ctx->ItemClick("##WorklogDesc");
+            ctx->KeyChars("notes");
+            ctx->Yield(3); // the last placeholder draw ages out of the seam's two-frame window
+            IM_CHECK_STR_EQ_NO_RET(GetWorklogDialogSnapshotForTests().Description.c_str(), "notes");
+            IM_CHECK_NO_RET(!smatchet::ui::PlaceholderDrawnForTest("##WorklogDesc"));
+        }
+        CloseWorklogDialog(ctx);
+    };
+}
+
 // I. Esc on a dialog nothing was typed into closes it at once, although the caret is in a field.
 void RegisterWorklogEscOnUntouchedDialog(ImGuiTestEngine* engine) {
     ImGuiTest* t = RegisterWorklogDialogTest(engine, "WorklogDialog_EscUntouched_ClosesAtOnce");
@@ -629,7 +668,7 @@ void RegisterWorklogCtrlEnterDoesNotPressFocusedButton(ImGuiTestEngine* engine) 
             ctx->Yield(2);
             ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Enter);
             IM_CHECK_NO_RET(WorklogYieldUntil(
-                ctx, 30, []() { return GetWorklogDialogSnapshotForTests().ErrorMsg == kWorklogBadTimeError; }));
+                ctx, 30, []() { return GetWorklogDialogSnapshotForTests().ErrorMsg == WorklogBadTimeError(); }));
             ctx->Yield(4);
             IM_CHECK_NO_RET(GetWorklogDialogSnapshotForTests().Active);
             IM_CHECK_NO_RET(g_worklogMutations.CallCount() == 0);
@@ -671,6 +710,47 @@ void RegisterWorklogEscKeepsTypedDate(ImGuiTestEngine* engine) {
         CloseWorklogDialog(ctx);
     };
 }
+// M. Cancel (or the second Esc) with something typed keeps it: the entry is stored as it is typed, and
+// the next open of the same issue puts it back with a line that says so. Clear drops it.
+void RegisterWorklogCancelKeepsEntry(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterWorklogDialogTest(engine, "WorklogDialog_EscKeepsEntry_RestoredOnReopen");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OpenWorklogDialogForTest(ctx)) {
+            return;
+        }
+        IM_CHECK_NO_RET(WaitForCaretInTimeSpent(ctx));
+        ctx->KeyChars("1h");
+        ctx->Yield(2);
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(smatchet::drafts::Get("worklog.time", kWorklogIssueId, stored));
+        IM_CHECK_STR_EQ_NO_RET(stored.Text.c_str(), "1h");
+
+        ctx->KeyPress(ImGuiKey_Escape); // leaves the field
+        ctx->Yield(4);
+        ctx->KeyPress(ImGuiKey_Escape); // cancels
+        IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 10, []() { return !GetWorklogDialogSnapshotForTests().Active; }));
+        IM_CHECK_NO_RET(smatchet::drafts::Get("worklog.time", kWorklogIssueId, stored));
+        IM_CHECK_NO_RET(g_worklogMutations.CallCount() == 0);
+
+        IM_CHECK_NO_RET(OpenWorklogDialogForTest(ctx, /*keepDrafts=*/true));
+        ctx->Yield(3);
+        const WorklogDialogTestSnapshot reopened = GetWorklogDialogSnapshotForTests();
+        IM_CHECK_STR_EQ_NO_RET(reopened.TimeSpent.c_str(), "1h");
+        IM_CHECK_NO_RET(reopened.DraftRestored);
+
+        // Clear empties the box and drops the entry.
+        ImGuiWindow* dialog = WorklogDialogOnTop();
+        IM_CHECK_NO_RET(dialog != nullptr);
+        if (dialog != nullptr) {
+            ctx->SetRef(dialog->ID);
+            ctx->ItemClick("Clear");
+            ctx->Yield(4);
+            IM_CHECK_STR_EQ_NO_RET(GetWorklogDialogSnapshotForTests().TimeSpent.c_str(), "");
+            IM_CHECK_NO_RET(!smatchet::drafts::Get("worklog.time", kWorklogIssueId, stored));
+        }
+        CloseWorklogDialog(ctx);
+    };
+}
 } // namespace
 
 extern "C" void SmatchetRegisterDurationInlineEditCommitTests(ImGuiTestEngine* engine) {
@@ -686,6 +766,8 @@ extern "C" void SmatchetRegisterDurationInlineEditCommitTests(ImGuiTestEngine* e
     RegisterWorklogEscKeepsTypedText(engine);                  // J: Esc, text typed
     RegisterWorklogCtrlEnterDoesNotPressFocusedButton(engine); // K: Ctrl+Enter with the cursor on Cancel
     RegisterWorklogEscKeepsTypedDate(engine);                  // L: Esc, start date typed into
+    RegisterWorklogCancelKeepsEntry(engine);                   // M: Esc Esc keeps the entry, reopen restores
+    RegisterWorklogSaveNamesItsKey(engine);                    // N: Save names Ctrl+Enter, placeholder
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

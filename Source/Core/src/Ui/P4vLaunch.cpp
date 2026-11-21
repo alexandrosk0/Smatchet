@@ -5,8 +5,10 @@
 #include "Ui/P4vLaunch.h"
 
 #include "Logger.h"
+#include "SmatchetLocalization.h"
 #include "StringUtil.h"
 #include "Ui/P4vLaunchArgQuotePure.h"
+#include "Ui/SmatchetToast.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -126,7 +128,13 @@ std::string WideToUtf8ForLog(const std::wstring& w) {
 
 bool LaunchP4VcLike(const AnnotateAnalysisConfig& cfg, const std::string& timelapseTemplate,
                     const std::string& changeTemplate, bool isTimelapse, const std::string& file, int line,
-                    const std::string& cl) {
+                    const std::string& cl, std::string* outFailureReason) {
+    const auto fail = [outFailureReason](const std::string& reason) {
+        if (outFailureReason != nullptr) {
+            *outFailureReason = reason;
+        }
+        return false;
+    };
     const std::wstring workDir = WorkingDirWideForFile(file);
     const wchar_t* workDirPtr = workDir.empty() ? nullptr : workDir.c_str();
 
@@ -164,8 +172,13 @@ bool LaunchP4VcLike(const AnnotateAnalysisConfig& cfg, const std::string& timela
         if (r <= 32) {
             LOG_WARN("LaunchP4VcLike: ShellExecuteW failed, result=%lld GetLastError=%lu", static_cast<long long>(r),
                      static_cast<unsigned long>(GetLastError()));
+            return fail(SmatchetLocalization::Format(
+                "p4v.fail.start_p4vc",
+                "Could not start p4vc (%s). Set the p4vc executable under Preferences > Connections > Perforce, or "
+                "install P4V.",
+                WideToUtf8ForLog(app).c_str()));
         }
-        return r > 32;
+        return true;
     }
 
     std::string cmd;
@@ -184,20 +197,28 @@ bool LaunchP4VcLike(const AnnotateAnalysisConfig& cfg, const std::string& timela
     if (P4vLaunch::P4vCustomCommandFieldRejected(file) || P4vLaunch::P4vCustomCommandFieldRejected(cl)) {
         LOG_WARN("LaunchP4VcLike: custom command rejected because a {file}/{cl} value contains a double-quote "
                  "or ends with a backslash");
-        return false;
+        return fail(SmatchetLocalization::T("p4v.fail.unsafe_value",
+                                            "The command was not run: this file or changelist has a double quote "
+                                            "or ends in a backslash, which would break the command line. Use the "
+                                            "default p4vc command, or open the item in P4V yourself."));
     }
     ReplacePlaceholder(cmd, "{file}", file);
     ReplacePlaceholder(cmd, "{line}", std::to_string(line));
     ReplacePlaceholder(cmd, "{cl}", cl);
     if (cmd.find('\r') != std::string::npos || cmd.find('\n') != std::string::npos) {
         LOG_WARN("LaunchP4VcLike: custom command rejected because it contains newline characters");
-        return false;
+        return fail(SmatchetLocalization::T("p4v.fail.line_break",
+                                            "The command was not run: it has a line break in it. Fix the command "
+                                            "under Preferences > Connections > Perforce so it is on one line."));
     }
     std::string exeUtf8;
     std::string argsUtf8;
     if (!SplitCommandExecutableAndArgs(cmd, exeUtf8, argsUtf8)) {
         LOG_WARN("LaunchP4VcLike: custom command parse failed. Expected: <exe> [args]");
-        return false;
+        return fail(SmatchetLocalization::T("p4v.fail.parse",
+                                            "The command was not run: it must start with a program, like "
+                                            "p4vc.exe timelapse {file}. Fix it under Preferences > Connections > "
+                                            "Perforce."));
     }
     LOG_INFO("LaunchP4VcLike (custom direct launch): exe=\"%s\" args=\"%s\"", exeUtf8.c_str(), argsUtf8.c_str());
     const std::wstring wexe = Utf8ToWide(exeUtf8);
@@ -208,17 +229,44 @@ bool LaunchP4VcLike(const AnnotateAnalysisConfig& cfg, const std::string& timela
     if (r <= 32) {
         LOG_WARN("LaunchP4VcLike: ShellExecuteW(custom) failed, result=%lld GetLastError=%lu",
                  static_cast<long long>(r), static_cast<unsigned long>(GetLastError()));
+        return fail(SmatchetLocalization::Format("p4v.fail.start_custom",
+                                                 "Could not start \"%s\". Check the program name in the command "
+                                                 "under Preferences > Connections > Perforce.",
+                                                 exeUtf8.c_str()));
     }
-    return r > 32;
+    return true;
 }
 
 #else
 
 bool LaunchP4VcLike(const AnnotateAnalysisConfig&, const std::string&, const std::string&, bool, const std::string&,
-                    int, const std::string&) {
+                    int, const std::string&, std::string* outFailureReason) {
+    if (outFailureReason != nullptr) {
+        *outFailureReason =
+            SmatchetLocalization::T("p4v.fail.windows_only", "Opening P4V from here only works on Windows.");
+    }
     return false;
 }
 
 #endif
+
+bool LaunchP4VcLikeReporting(const AnnotateAnalysisConfig& cfg, const std::string& timelapseTemplate,
+                             const std::string& changeTemplate, bool isTimelapse, const std::string& file, int line,
+                             const std::string& cl, std::string* outStatusLine) {
+    std::string reason;
+    if (LaunchP4VcLike(cfg, timelapseTemplate, changeTemplate, isTimelapse, file, line, cl, &reason)) {
+        return true;
+    }
+    if (reason.empty()) {
+        reason = SmatchetLocalization::T("p4v.fail.generic", "P4V did not start. Check the P4V settings under "
+                                                             "Preferences > Connections > Perforce.");
+    }
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("p4v.fail.title", "Could not open Perforce"), reason,
+                                          ToastType::Error);
+    if (outStatusLine != nullptr) {
+        *outStatusLine = "Error: " + reason;
+    }
+    return false;
+}
 
 } // namespace P4vLaunch

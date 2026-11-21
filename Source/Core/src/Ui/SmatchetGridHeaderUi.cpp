@@ -16,8 +16,10 @@
 #include "IssueDraft.h"
 #include "ProjectResolver.h"
 #include "SmatchetLocalization.h"
-#include "Ui/SmatchetBackendDisplay.h"
+#include "Ui/PaneBackendTargetsPure.h"
 #include "Ui/SmatchetIconButtons.h"
+#include "Ui/SmatchetInput.h"
+#include "Ui/SmatchetViewSwitchTooltip.h"
 #include "SmatchetImGuiFonts.h"
 
 #include "IconsFontAwesome6.h"
@@ -188,8 +190,9 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
 
 // Header "+" / "▾" split-button (pane-backend-picker Slice 2; moved from the pane
 // strip to the left of the view selector). Bare "+" always duplicates this pane (no
-// backend arg = same-backend path). "▾" caret renders only when ≥2 backends have
-// minimum credentials present; it opens a popup that lists each credentialed backend.
+// backend arg = same-backend path). "▾" caret renders only when the picker has ≥2 rows
+// (PaneBackendTargetsPure: one per credentialed backend, one per Jira site when there are
+// 2+ sites); a Jira site row switches the global active site before the pane opens.
 // Selecting a backend (with no specific view) opens its default/active view; an
 // optional view submenu lists saved views. The host applies requests after the pane
 // loop (never mutates gridPanes mid-iteration).
@@ -204,14 +207,10 @@ void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
                                                         "drag its tab to an edge for a side-by-side split)"));
     }
 
-    const std::vector<std::string>& knownKeys = ConfigManager::KnownBackendKeys();
-    int credCount = 0;
-    for (const auto& key : knownKeys) {
-        if (ConfigManager::BackendCredentialsPresent(d.cfg, key)) {
-            ++credCount;
-        }
-    }
-    if (credCount < 2) {
+    // One row per credentialed tracker kind, one per site for Jira with 2+ sites (#2444).
+    const std::vector<smatchet::pane_targets::NewPaneTarget> targets =
+        smatchet::pane_targets::BuildNewPaneTargets(d.cfg);
+    if (!smatchet::pane_targets::ShowNewPaneCaret(targets)) {
         return;
     }
 
@@ -225,29 +224,27 @@ void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
     }
 
     if (ImGui::BeginPopup("##PaneNewOnBackend")) {
-        for (const auto& key : knownKeys) {
-            if (!ConfigManager::BackendCredentialsPresent(d.cfg, key)) {
-                continue;
-            }
-            const auto it = diskBackends.find(key);
+        for (const smatchet::pane_targets::NewPaneTarget& target : targets) {
+            const auto it = diskBackends.find(target.BackendKey);
             const bool hasViews = (it != diskBackends.end() && !it->second.Views.empty());
-            const std::string label = "New " + BackendDisplayName(key) + " pane"; // P2-M18
-
-            if (hasViews && ImGui::BeginMenu(label.c_str())) {
+            // The label is also the ImGui id; Jira site rows differ by host, so ids stay unique.
+            if (hasViews && ImGui::BeginMenu(target.Label.c_str())) {
                 const ViewWorkspaceState& ws = it->second;
                 for (const auto& v : ws.Views) {
                     const bool isActive = (v.Id == ws.ActiveViewId);
                     if (ImGui::MenuItem(v.Name.c_str(), nullptr, isActive)) {
                         d.paneAddRequest.sourceId = pane.id;
-                        d.paneAddRequest.targetBackendKey = key;
+                        d.paneAddRequest.targetBackendKey = target.BackendKey;
                         d.paneAddRequest.targetViewId = v.Id;
+                        d.paneAddRequest.targetJiraDomain = target.SwitchToJiraDomain;
                     }
                 }
                 ImGui::EndMenu();
             } else if (!hasViews) {
-                if (ImGui::MenuItem(label.c_str())) {
+                if (ImGui::MenuItem(target.Label.c_str())) {
                     d.paneAddRequest.sourceId = pane.id;
-                    d.paneAddRequest.targetBackendKey = key;
+                    d.paneAddRequest.targetBackendKey = target.BackendKey;
+                    d.paneAddRequest.targetJiraDomain = target.SwitchToJiraDomain;
                 }
             }
         }
@@ -305,23 +302,8 @@ void DrawGridSearchBox(UiDrawSession& d, GridPane& pane) {
         ImGui::SetWindowFocus();
         ImGui::SetKeyboardFocusHere();
     }
-    // Esc in the box clears the search and leaves the box. ImGui's keyboard-nav cancel runs in
-    // NewFrame and has usually taken the caret out already on the Esc frame, so the box counts as
-    // the Esc target when it held the caret this frame or the last one. A box that lost the caret
-    // before it drew writes its edited text back when it next draws, from ImGui's saved copy of
-    // the deactivated field. Dropping that copy keeps the cleared buffer cleared.
-    const ImGuiID filterId = pane.gridSearchInputId;
-    ImGuiContext& g = *ImGui::GetCurrentContext();
-    if (filterId != 0 && (g.ActiveId == filterId || g.ActiveIdPreviousFrame == filterId) &&
-        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-        pane.gridSearchBuf[0] = '\0';
-        if (g.ActiveId == filterId) {
-            ImGui::ClearActiveID();
-        }
-        if (g.InputTextDeactivatedState.ID == filterId) {
-            g.InputTextDeactivatedState.ClearFreeMemory();
-        }
-    }
+    // Esc in the box clears the search and leaves the box: the shared helper the settings search uses.
+    SmatchetInput::ClearSearchOnEscape(pane.gridSearchInputId, pane.gridSearchBuf);
     ImGui::SetNextItemWidth(260.0f);
     // The placeholder distinguishes this ISSUE-search box from the command-search entry points
     // (menu-bar box / Ctrl+Shift+P palette) and names the key that jumps here. The ##GridFilter
@@ -401,7 +383,10 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
         ImGui::EndCombo();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Switch active grid view");
+        // Names the view-switch keys, read live so a rebind shows at once.
+        SmatchetViewSwitchTooltip::Show(
+            SmatchetLocalization::T("grid.view_selector.tooltip", "Switch active grid view"),
+            d.cfg.Keybindings.Bindings);
     }
 
     // Refresh View — re-runs the active view's query and refreshes the grid.

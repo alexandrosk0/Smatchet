@@ -126,8 +126,8 @@ void SmatchetUserInfoUi::drawVcsRow(AppController& app, UiDrawSession& d, const 
 
 void SmatchetUserInfoUi::activateVcsRow(AppController& app, const Vcs::VcsSubmission& row) {
     if (row.Source == Vcs::VcsSource::P4) {
-        P4vLaunch::LaunchP4VcLike(annotateCfg_, std::string(), std::string(), /*isTimelapse=*/false, std::string(), 0,
-                                  row.Id);
+        P4vLaunch::LaunchP4VcLikeReporting(annotateCfg_, std::string(), std::string(), /*isTimelapse=*/false,
+                                           std::string(), 0, row.Id);
         return;
     }
     if (!row.Url.empty()) {

@@ -1,4 +1,5 @@
 #include "TicketFieldEditor_Worklog.h"
+#include "Ui/SmatchetInlineError.h"
 
 // The time-tracking (worklog) dialog of the ticket grid, split out of TicketFieldEditor.cpp: seeding,
 // the logged/remaining bar, the duration and date inputs, and Save on a worker. Reaches the controller
@@ -8,10 +9,12 @@
 #include "CachedTicketTypes.h"
 #include "Commands/IAppThreading.h"
 #include "CompactDateFormat.h"
+#include "DraftStore.h"
 #include "Interfaces/IAppTicketMutations.h"
 #include "Logger.h"
 #include "PendingActionTypes.h"
 #include "SmatchetLocalization.h"
+#include "StringUtil.h"
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerFieldValueParser.h"
 #include "TrackerFieldValueUtils.h"
@@ -19,6 +22,7 @@
 #include "Ui/PendingActionSubmitAsync.h"
 #include "Ui/DialogKeysPure.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
+#include "Ui/SmatchetSubmitKeys.h"
 #include "Ui/SmatchetToast.h"
 #include "Ui/SmatchetWorklogSubmitPure.h"
 
@@ -125,6 +129,12 @@ struct ActiveWorklogDialogState {
     int TimeSpentFocusFramesLeft = 0;
     /// The dialog itself (not a popup above it) had the keyboard on the last draw.
     bool OwnedKeyboardLastFrame = false;
+    /// The two text boxes as last handed to the draft store (DraftStore.h), to notice a change without
+    /// allocating each frame.
+    std::string DraftSyncedSpent;
+    std::string DraftSyncedDescription;
+    /// The boxes were filled from an entry kept by an earlier open.
+    bool DraftRestored = false;
 };
 
 static ActiveWorklogDialogState s_ActiveWorklogState;
@@ -132,6 +142,75 @@ static ActiveWorklogDialogState s_ActiveWorklogState;
 /// One focus request plus one retry; each needs the frame after it to land.
 constexpr int kTimeSpentFocusFrames = 4;
 constexpr const char* kTimeSpentFieldLabel = "##WorklogTimeSpent";
+
+/// Draft store surfaces of the two text boxes; the scope is the issue (DraftStore.h).
+constexpr const char* kWorklogSpentDraftSurface = "worklog.time";
+constexpr const char* kWorklogDescriptionDraftSurface = "worklog.description";
+
+/// Keeps what is typed in the two boxes as a draft, so Cancel, Esc, a restart or a crash does not lose it.
+/// Called once per frame while the dialog is up; it compares the boxes with what was last handed over.
+void SyncWorklogDraft() {
+    ActiveWorklogDialogState& st = s_ActiveWorklogState;
+    if (st.SubmitInFlight) {
+        return; // being sent: the draft is erased when it lands
+    }
+    if (st.DraftSyncedSpent != st.TimeSpent) {
+        st.DraftSyncedSpent = st.TimeSpent;
+        smatchet::drafts::Put(kWorklogSpentDraftSurface, st.IssueId, st.DraftSyncedSpent);
+    }
+    if (st.DraftSyncedDescription != st.WorkDescription) {
+        st.DraftSyncedDescription = st.WorkDescription;
+        smatchet::drafts::Put(kWorklogDescriptionDraftSurface, st.IssueId, st.DraftSyncedDescription);
+    }
+}
+
+void EraseWorklogDraft(const std::string& issueId) {
+    smatchet::drafts::Erase(kWorklogSpentDraftSurface, issueId);
+    smatchet::drafts::Erase(kWorklogDescriptionDraftSurface, issueId);
+}
+
+/// At open: puts back the entry kept for this issue. Not while this issue's last submit is still
+/// running: that text is what is being sent.
+void RestoreWorklogDraft() {
+    ActiveWorklogDialogState& st = s_ActiveWorklogState;
+    st.DraftSyncedSpent.clear();
+    st.DraftSyncedDescription.clear();
+    st.DraftRestored = false;
+    if (st.SubmitInFlight) {
+        return;
+    }
+    smatchet::drafts::DraftEntry spent;
+    smatchet::drafts::DraftEntry description;
+    if (smatchet::drafts::Get(kWorklogSpentDraftSurface, st.IssueId, spent)) {
+        std::strncpy(st.TimeSpent, spent.Text.c_str(), sizeof(st.TimeSpent) - 1);
+        st.TimeSpent[sizeof(st.TimeSpent) - 1] = '\0';
+        st.DraftRestored = true;
+    }
+    if (smatchet::drafts::Get(kWorklogDescriptionDraftSurface, st.IssueId, description)) {
+        std::strncpy(st.WorkDescription, description.Text.c_str(), sizeof(st.WorkDescription) - 1);
+        st.WorkDescription[sizeof(st.WorkDescription) - 1] = '\0';
+        st.DraftRestored = true;
+    }
+    st.DraftSyncedSpent = st.TimeSpent;
+    st.DraftSyncedDescription = st.WorkDescription;
+}
+
+/// The "restored" line with its Clear button, above the time inputs. Clearing empties both boxes; the
+/// next SyncWorklogDraft erases the kept entry.
+void DrawWorklogDraftNotice() {
+    ActiveWorklogDialogState& st = s_ActiveWorklogState;
+    if (!st.DraftRestored) {
+        return;
+    }
+    ImGui::TextDisabled("%s", SmatchetLocalization::T("worklog.draft_restored", "Restored your unsaved entry."));
+    ImGui::SameLine();
+    if (ImGui::SmallButton(SmatchetLocalization::T("worklog.draft_clear", "Clear"))) {
+        st.TimeSpent[0] = '\0';
+        st.WorkDescription[0] = '\0';
+        st.DraftRestored = false;
+        st.TimeSpentFocusFramesLeft = kTimeSpentFocusFrames;
+    }
+}
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 /// Latched by the draw for GetWorklogDialogSnapshotForTests.
@@ -161,14 +240,14 @@ static smatchet::worklog::WorklogSubmitInFlightSet s_WorklogSubmitInFlightIssueI
 void ComputeWorklogProgressSeconds(long long& outDisplaySpentSec, long long& outDisplayRemSec) {
     const long long spentSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeSpent);
     const long long remSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
-    const long long newSpentSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
+    const long long newSpentSec = smatchet::worklog::TypedDurationSeconds(s_ActiveWorklogState.TimeSpent);
 
     outDisplaySpentSec = spentSec + newSpentSec;
     outDisplayRemSec = remSec;
     if (newSpentSec > 0 && !s_ActiveWorklogState.TimeRemainingManuallyEdited) {
         outDisplayRemSec = (std::max)(0LL, remSec - newSpentSec);
     } else if (s_ActiveWorklogState.TimeRemainingManuallyEdited) {
-        outDisplayRemSec = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeRemaining);
+        outDisplayRemSec = smatchet::worklog::TypedDurationSeconds(s_ActiveWorklogState.TimeRemaining);
     }
 }
 
@@ -181,6 +260,9 @@ void ApplyWorklogSaveResult(int gen, const std::string& issueId, const PendingAc
     // Erasing only THIS id leaves any other ticket's outstanding submit latched.
     smatchet::worklog::ClearWorklogSubmitInFlight(s_WorklogSubmitInFlightIssueIds, issueId);
     const bool ok = result.K != PendingActionSubmitResult::Kind::Failed;
+    if (ok) {
+        EraseWorklogDraft(issueId); // sent or saved to the queue: the kept entry is done
+    }
     const std::string err = result.Error.empty() ? std::string("the worklog could not be saved.") : result.Error;
     if (result.K == PendingActionSubmitResult::Kind::Queued && result.NeedsReview) {
         // The send may have landed: replay never resends it, so say what the user has to do.
@@ -251,13 +333,22 @@ void HandleWorklogSave(IAppThreading& threading, IAppTicketMutations& mutations)
         s_ActiveWorklogState.ErrorMsg = validationError;
         return;
     }
+    // A Time remaining the user typed must read too: Jira refuses a worklog whose remaining estimate it cannot parse.
+    const TrackerParseExplain::ParseMessage remainingProblem = smatchet::worklog::TimeRemainingProblem(
+        s_ActiveWorklogState.TimeRemainingManuallyEdited ? std::string(s_ActiveWorklogState.TimeRemaining)
+                                                         : std::string());
+    if (remainingProblem.IsError()) {
+        s_ActiveWorklogState.ErrorMsg = TrackerParseExplain::DescribeParseMessage(remainingProblem);
+        return;
+    }
 
     IAppTicketMutations* mutationsPtr = &mutations;
     // Latched at Save: the worklog goes to this pane's tracker even if focus moves before the worker runs.
     const PendingActionTarget target = mutations.LatchPendingActionTarget();
     const std::string issueId = s_ActiveWorklogState.IssueId;
-    const std::string timeSpent = s_ActiveWorklogState.TimeSpent;
-    const std::string timeRemaining = s_ActiveWorklogState.TimeRemaining;
+    // What goes out is the canonical form ("1h 30m"), whatever natural spelling was typed.
+    const std::string timeSpent = smatchet::worklog::CanonicalDurationText(s_ActiveWorklogState.TimeSpent);
+    const std::string timeRemaining = smatchet::worklog::CanonicalDurationText(s_ActiveWorklogState.TimeRemaining);
     const std::string adjEst = s_ActiveWorklogState.TimeRemainingManuallyEdited ? "new" : "auto";
     const std::string description = s_ActiveWorklogState.WorkDescription;
     const std::string startedDate = s_ActiveWorklogState.DateStarted;
@@ -361,6 +452,45 @@ void PrimeTimeSpentFocus(ImGuiID spentInputId) {
     }
 }
 
+// Rewrites a duration buffer to its canonical spelling when what is typed reads: "90 m" -> "1h 30m".
+// Text that does not read is left as typed, so the user can fix it.
+void RewriteDurationBufferToCanonical(char* buf, std::size_t bufSize) {
+    const std::string typed = buf;
+    const std::string canonical = smatchet::worklog::CanonicalDurationText(typed);
+    if (canonical != typed && canonical.size() < bufSize) {
+        std::memcpy(buf, canonical.c_str(), canonical.size() + 1);
+    }
+}
+
+// Under a duration field: the red line that says what is wrong while the text does not read, or the dim
+// "= 1h 30m" once it reads in a spelling other than the canonical one. Blank shows the format hint instead.
+// `required`: Time spent must be above zero; Time remaining may be zero or blank.
+void DrawTypedDurationFeedback(const char* typedText, bool required) {
+    const std::string typed = typedText;
+    const TrackerParseExplain::DurationParse parsed = smatchet::worklog::ParseTypedDuration(typed);
+    if (parsed.Empty) {
+        if (required) {
+            ImGui::TextDisabled(
+                "%s", SmatchetLocalization::T("worklog.duration_hint", "Examples: 1h 30m, 1.5h, 90m, 2d (d=8h, w=5d)"));
+        }
+        return;
+    }
+    if (!parsed.Ok) {
+        smatchet::ui::DrawInlineParseError(parsed.Message);
+        return;
+    }
+    if (required && parsed.Seconds <= 0) {
+        TrackerParseExplain::ParseMessage zero;
+        zero.Id = TrackerParseExplain::ParseMessageId::DurationRequiredPositive;
+        smatchet::ui::DrawInlineParseError(zero);
+        return;
+    }
+    // Only a spelling that is not already canonical earns a preview line: "1h 30m" shows nothing.
+    if (!EqualsIgnoreCaseAscii(TrimCopyAsciiWhitespace(typed), parsed.Canonical)) {
+        smatchet::ui::DrawInlineParseHint("= " + parsed.Canonical);
+    }
+}
+
 // Time-spent + time-remaining duration inputs, including the auto-decrement of remaining. Returns
 // true when Enter was pressed in Time spent (the dialog's quick submit).
 bool DrawWorklogTimeInputs() {
@@ -383,8 +513,10 @@ bool DrawWorklogTimeInputs() {
     s_WorklogTimeSpentActiveForTests = spentActive;
 #endif
     if (spentCommitted) {
+        // The field takes the canonical spelling once it is committed: "90 m" becomes "1h 30m".
+        RewriteDurationBufferToCanonical(s_ActiveWorklogState.TimeSpent, sizeof(s_ActiveWorklogState.TimeSpent));
         if (!s_ActiveWorklogState.TimeRemainingManuallyEdited) {
-            long long spentVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
+            long long spentVal = smatchet::worklog::TypedDurationSeconds(s_ActiveWorklogState.TimeSpent);
             long long remVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TotalTimeRemaining);
             if (spentVal > 0) {
                 long long newRem = (std::max)(0LL, remVal - spentVal);
@@ -399,7 +531,7 @@ bool DrawWorklogTimeInputs() {
             }
         }
     }
-    ImGui::TextDisabled("Use the format: 2w 4d 6h 45m (w=weeks, d=days, h=hours, m=minutes)");
+    DrawTypedDurationFeedback(s_ActiveWorklogState.TimeSpent, /*required=*/true);
 
     ImGui::Spacing();
     ImGui::Text("Time remaining");
@@ -407,8 +539,10 @@ bool DrawWorklogTimeInputs() {
     if (DrawDurationFieldWithSuggestions("##WorklogTimeRemaining", s_ActiveWorklogState.TimeRemaining,
                                          sizeof(s_ActiveWorklogState.TimeRemaining), 0, nullptr, nullptr,
                                          &s_ActiveWorklogState.TimeRemainingManuallyEdited, false)) {
-        // value changed!
+        RewriteDurationBufferToCanonical(s_ActiveWorklogState.TimeRemaining,
+                                         sizeof(s_ActiveWorklogState.TimeRemaining));
     }
+    DrawTypedDurationFeedback(s_ActiveWorklogState.TimeRemaining, /*required=*/false);
     return spentEnter;
 }
 
@@ -488,7 +622,7 @@ void DrawWorklogButtons(IAppThreading& threading, IAppTicketMutations& mutations
     if (wasInFlight) {
         ImGui::BeginDisabled();
     }
-    const bool saveClicked = ImGui::Button("Save", ImVec2(80, 0));
+    const bool saveClicked = smatchet::ui::KeyHintButton("Save", smatchet::ui::CtrlEnterKeyName(), ImVec2(80, 0));
     if (wasInFlight) {
         ImGui::EndDisabled();
     } else if (ImGui::IsItemHovered()) {
@@ -548,9 +682,12 @@ void DrawWorklogDescription() {
         }
         ImGui::EndPopup();
     }
-    ImGui::InputTextMultiline("##WorklogDesc", s_ActiveWorklogState.WorkDescription,
-                              sizeof(s_ActiveWorklogState.WorkDescription),
-                              ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4));
+    // Ctrl+Enter here is read by ReadWorklogKeys for the whole dialog; the helper adds the placeholder
+    // and keeps Tab moving on.
+    smatchet::ui::SubmitMultilineInput(
+        "##WorklogDesc", s_ActiveWorklogState.WorkDescription, sizeof(s_ActiveWorklogState.WorkDescription),
+        ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4),
+        SmatchetLocalization::T("worklog.desc_placeholder", "What did you work on? (optional)"));
 }
 
 } // namespace
@@ -589,6 +726,7 @@ void OpenWorklogDialog(const CachedTicket& ticket, const std::string& ownerField
     s_ActiveWorklogState.CloseRequested = false;
     s_ActiveWorklogState.TimeSpentFocusFramesLeft = kTimeSpentFocusFrames;
     s_ActiveWorklogState.OwnedKeyboardLastFrame = false;
+    RestoreWorklogDraft();
     // Burn a fresh generation on every open (#1713 contract). Without this, a post-back from a
     // submit whose dialog was cancelled mid-flight would still match `Gen` after the user
     // re-opened the SAME ticket and would close the freshly-opened dialog under them.
@@ -659,6 +797,7 @@ void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& muta
     ImGui::Spacing();
 
     // Inputs
+    DrawWorklogDraftNotice();
     const bool spentEnter = DrawWorklogTimeInputs();
 
     ImGui::Spacing();
@@ -679,6 +818,7 @@ void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& muta
     ImGui::Spacing();
 
     DrawWorklogButtons(threading, mutations, keys, spentEnter);
+    SyncWorklogDraft();
 
     ImGui::EndPopup();
 }
@@ -692,6 +832,7 @@ WorklogDialogTestSnapshot GetWorklogDialogSnapshotForTests() {
     snap.TimeSpent = s_ActiveWorklogState.TimeSpent;
     snap.Description = s_ActiveWorklogState.WorkDescription;
     snap.ErrorMsg = s_ActiveWorklogState.ErrorMsg;
+    snap.DraftRestored = s_ActiveWorklogState.DraftRestored;
     return snap;
 }
 

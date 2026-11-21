@@ -43,6 +43,8 @@ struct LongTextEditorTestSnapshot {
     bool Dirty = false;
     /// The "discard your changes?" confirm was up at the end of the last draw.
     bool DiscardConfirmOpen = false;
+    /// The buffer was filled from an unsaved edit kept by an earlier open.
+    bool DraftRestored = false;
     std::string Buffer;
 };
 LongTextEditorTestSnapshot SmatchetTest_GetLongTextEditorSnapshot();

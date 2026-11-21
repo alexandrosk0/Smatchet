@@ -38,9 +38,12 @@
 
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h"
+#include "FakeNetworkSwitch.h" // hold the fixture tracker down so a resolved edit is not replayed mid-case
 #include "SmatchetUiSession.h"
 #include "Ui/SmatchetGridUiSupport.h"         // SmatchetOfflineConflictUnsavedHintShownForTest
+#include "Ui/SmatchetInlineError.h"           // InlineErrorKindForTests — the parser's reason is on screen
 #include "Ui/SmatchetOfflineQueueActionsUi.h" // SmatchetOfflineConflictDraft*ForTest
+#include "Ui/SmatchetSubmitKeys.h"            // KeyHintDrawnForTest
 #include "UiTestWriteScope.h" // BucketE::UiTestWriteScope — disable fresh-install read-only so the write lands
 
 #include "imgui.h"
@@ -258,6 +261,8 @@ void RunPerKindModalTest(ImGuiTestContext* ctx) {
 // ---- Keyboard cases ----------------------------------------------------------
 
 const char* const kScalarJson = "{\"kind\":\"scalar\",\"mine\":\"5\",\"theirs\":\"8\"}";
+const char* const kScalarEstimateJson =
+    "{\"kind\":\"scalar\",\"mine\":\"3600\",\"theirs\":\"7200\",\"fieldId\":\"timeoriginalestimate\"}";
 const char* const kTextJson = "{\"kind\":\"text\",\"mine\":\"a\",\"theirs\":\"b\"}";
 const char* const kScalarField = "##SCResolved";
 const char* const kTextField = "##CRResolved";
@@ -335,6 +340,33 @@ void CaseScalarEnterSaves(ImGuiTestContext* ctx, const KeyboardCase& c) {
     const ImGuiID fieldId = ctx->GetID(kScalarField);
     const bool caretBack = YieldUntil(ctx, [&] { return ImGui::GetActiveID() == fieldId; }, 30);
     IM_CHECK_NO_RET(caretBack);
+}
+
+// The queue service writes the field id into the conflict context, so an estimate field reads the typed value
+// as a duration: text that does not read shows the parser's reason, text that reads clears it, and a field with
+// no known kind has nothing to validate.
+void CaseScalarEstimateFieldValidatesAsTyped(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    smatchet::ui::ResetInlineErrorForTests();
+    if (!OpenWithCaretIn(ctx, kScalarEstimateJson, c.EditId + kNotQueuedOffset, kScalarField)) {
+        return;
+    }
+    ctx->KeyCharsReplace("xyz");
+    ctx->Yield(3);
+    IM_CHECK_NO_RET(smatchet::ui::InlineErrorKindForTests() == "error");
+    IM_CHECK_NO_RET(!smatchet::ui::InlineErrorTextForTests().empty());
+
+    ctx->KeyCharsReplace("1h 30m");
+    ctx->Yield(3);
+    IM_CHECK_NO_RET(smatchet::ui::InlineErrorKindForTests() != "error");
+
+    CancelConflictModal(ctx);
+    smatchet::ui::ResetInlineErrorForTests();
+    if (!OpenWithCaretIn(ctx, kScalarJson, c.EditId + kNotQueuedOffset, kScalarField)) {
+        return;
+    }
+    ctx->KeyCharsReplace("xyz");
+    ctx->Yield(3);
+    IM_CHECK_NO_RET(smatchet::ui::InlineErrorKindForTests() != "error");
 }
 
 // Ctrl+Enter does nothing while a conflict marker is left: the Save button is disabled then.
@@ -600,6 +632,49 @@ void CaseRowClickAndSpaceDoNotOpen(ImGuiTestContext* ctx, const KeyboardCase& c)
     IM_CHECK_NO_RET(!WindowIsLive(kModalTitle));
 }
 
+// The queued payload of the case's edit, or empty when the row is gone.
+std::string QueuedPayload(const KeyboardCase& c) {
+    for (const PendingFieldEditRecord& row : c.App->GetPendingFieldEdits()) {
+        if (row.Id == c.EditId) {
+            return row.FieldsPayloadJson;
+        }
+    }
+    return std::string();
+}
+
+// Alt+M / Alt+T resolve to mine / theirs, as Use Mine / Use Theirs do, and each button prints its key
+// (INPUT_UX_AUDIT.md #111). The fixture tracker is held down, so the re-queued edit stays queued and
+// its payload shows which side the key chose.
+void CasePickKeysResolveToEachSide(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    smatchet_tests::ScopedFakeNetworkReset networkReset;
+    smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+    const struct {
+        ImGuiKeyChord Chord;
+        const char* Chosen; // the side the key picks (kScalarJson: mine 5, theirs 8)
+        const char* Other;
+    } picks[] = {{ImGuiMod_Alt | ImGuiKey_M, "\"5\"", "\"8\""}, {ImGuiMod_Alt | ImGuiKey_T, "\"8\"", "\"5\""}};
+    for (const auto& pick : picks) {
+        if (!OpenWithCaretIn(ctx, kScalarJson, c.EditId, kScalarField)) {
+            return;
+        }
+        IM_CHECK_STR_EQ_NO_RET(smatchet::ui::KeyHintDrawnForTest("Use Mine").c_str(), "Alt+M");
+        IM_CHECK_STR_EQ_NO_RET(smatchet::ui::KeyHintDrawnForTest("Use Theirs").c_str(), "Alt+T");
+        ctx->KeyPress(pick.Chord);
+        const bool resolved = YieldUntil(ctx, [] { return !WindowIsLive(kModalTitle); }, 60);
+        if (!resolved) {
+            ctx->LogError("the pick key did not resolve the conflict");
+        }
+        IM_CHECK_NO_RET(resolved);
+        if (!resolved) {
+            return;
+        }
+        const std::string payload = QueuedPayload(c);
+        IM_CHECK_NO_RET(!payload.empty());
+        IM_CHECK_NO_RET(payload.find(pick.Chosen) != std::string::npos);
+        IM_CHECK_NO_RET(payload.find(pick.Other) == std::string::npos);
+    }
+}
+
 void RegisterKeyboardCase(ImGuiTestEngine* engine, const char* name, KeyboardCaseBody body) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineConflictModalPanes", name);
     t->UserData = reinterpret_cast<void*>(body);
@@ -618,6 +693,7 @@ extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* 
     RegisterKeyboardCase(engine, "Scalar_CaretInFieldOnOpen", CaseScalarCaretInFieldOnOpen);
     RegisterKeyboardCase(engine, "Text_CaretInFieldOnOpen", CaseTextCaretInFieldOnOpen);
     RegisterKeyboardCase(engine, "Scalar_EnterSaves", CaseScalarEnterSaves);
+    RegisterKeyboardCase(engine, "Scalar_EstimateFieldValidatesAsTyped", CaseScalarEstimateFieldValidatesAsTyped);
     RegisterKeyboardCase(engine, "Scalar_CtrlEnterDoesNotPressFocusedButton",
                          CaseScalarCtrlEnterDoesNotPressFocusedButton);
     RegisterKeyboardCase(engine, "Text_CtrlEnterBlockedByMarkers", CaseTextCtrlEnterBlockedByMarkers);
@@ -629,6 +705,7 @@ extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* 
     RegisterKeyboardCase(engine, "Unverified_EscCloses", CaseUnverifiedEscCloses);
     RegisterKeyboardCase(engine, "ConflictRow_EnterOpensResolver", CaseRowEnterOpensResolver);
     RegisterKeyboardCase(engine, "ConflictRow_ClickAndSpaceDoNotOpen", CaseRowClickAndSpaceDoNotOpen);
+    RegisterKeyboardCase(engine, "Scalar_AltMAndAltTPickASide", CasePickKeysResolveToEachSide);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

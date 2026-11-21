@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ComponentOptionsPickPure.h"
 #include "LocalCacheManager.h"
 #include "SmatchetUiSession.h"
 #include "TicketGridModel.h"
@@ -10,6 +11,22 @@
 
 class AppController;
 struct TrackerGridFieldAsyncState;
+
+namespace smatchet {
+namespace components {
+/// The option list a components editor, cell or the bulk-edit picker uses for one Jira project (Pillar 6): the
+/// project's own list, live or saved, kicking a background fetch while it is not live; else the catalog's list when
+/// the catalog was fetched for that same project; else none. Never another project's list: the catalog of a
+/// cross-project view would offer components that do not exist in this project. `holder` keeps the project list
+/// alive; the catalog fallback points into `field.AllowedValueOptions`, so `field` must outlive the use of the
+/// returned options too (never pass a temporary). The grid derives `projectKey` from the row's issue id, the bulk popup
+/// from the clicked row's. `catalogProjectKey` is the project the catalog `field` came from was fetched for (""
+/// = unscoped), captured with that catalog by the caller (the grid's per-pane / shared frame index, the popup's
+/// request), never read live: the catalog's list stands in only when it names `projectKey`.
+ComponentOptionsPick PickProjectComponents(AppController& app, const std::string& projectKey, const TrackerField& field,
+                                           const std::string& catalogProjectKey, ProjectComponentsLookup& holder);
+} // namespace components
+} // namespace smatchet
 
 class TicketFieldEditor {
   public:

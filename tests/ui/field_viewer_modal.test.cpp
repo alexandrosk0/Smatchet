@@ -8,6 +8,8 @@
 
 #include "AppController.h"
 #include "CachedTicketTypes.h"
+#include "DictationInsertionRouter.h" // a dictation splice into the comment box
+#include "DraftStore.h"
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "FakeNetworkSwitch.h"
 #include "FakeTrackerClient.h" // the posts the fixture tracker received
@@ -16,6 +18,7 @@
 #include "TrackerFieldSchema.h"
 #include "Types/ConnectivityTypes.h"
 #include "Ui/SmatchetFieldViewerModalUi.h"
+#include "Ui/SmatchetSubmitKeys.h"
 #include "UiTestWriteScope.h" // the fresh profile is read-only, which disables the inputs under test
 
 #include "imgui.h"
@@ -23,10 +26,16 @@
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <functional>
+#include <future>
+#include <iterator>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -154,6 +163,40 @@ void CloseLongTextForTest(ImGuiTestContext* ctx) {
     }
 }
 
+// Looks for `needle` in a file without reading it on the UI thread (Pillar 2): each poll either starts one
+// read on a worker or looks at the result of the one it started on an earlier frame, and never blocks.
+class FileContainsPoll {
+  public:
+    FileContainsPoll(std::string path, std::string needle) : path_(std::move(path)), needle_(std::move(needle)) {}
+
+    bool operator()() {
+        if (found_) {
+            return true; // latched: asking again after success stays true
+        }
+        if (!pending_.valid()) {
+            const std::string path = path_;
+            const std::string needle = needle_;
+            pending_ = std::async(std::launch::async, [path, needle]() {
+                /* PILLAR2_WORKER_ONLY */ // est-latency: 1ms - reads one small file, off the UI thread
+                std::ifstream in(path, std::ios::binary);
+                const std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                return body.find(needle) != std::string::npos;
+            });
+            return false;
+        }
+        if (pending_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            return false;
+        }
+        found_ = pending_.get(); // the future is spent: the next poll starts a new read unless found
+        return found_;
+    }
+
+  private:
+    std::string path_;
+    std::string needle_;
+    std::future<bool> pending_;
+    bool found_ = false;
+};
 } // namespace
 
 // OfflineFirst/FieldViewer_HistoryOpensAndEscCloses: the History field opens the generic viewer
@@ -241,6 +284,7 @@ static void RegisterFieldViewerHistoryReplacesComments(ImGuiTestEngine* engine) 
     if (!OfflineFirstFixtureActive(ctx)) {                                                                             \
         return;                                                                                                        \
     }                                                                                                                  \
+    smatchet::drafts::ResetForTests(); /* a draft one case leaves must not prefill the next */                         \
     smatchet_tests::ScopedFakeNetworkReset networkReset;                                                               \
     BucketE::UiTestWriteScope writeScope;                                                                              \
     AppController* app = SmatchetActiveUiTestAppController();                                                          \
@@ -573,6 +617,208 @@ static void RegisterLongTextTitleBarCloseKeepsText(ImGuiTestEngine* engine) {
     };
 }
 
+// OfflineFirst/Comments_PostButtonNamesItsKey_PlaceholderInsideBox: the Post Comment button prints
+// Ctrl+Enter, and the placeholder is drawn inside the empty box (not on a line under it) and goes once
+// something is typed (INPUT_UX_AUDIT.md #6 / #59).
+static void RegisterCommentsPostButtonNamesKey(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_PostButtonNamesItsKey_PlaceholderInsideBox");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket ticket = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(smatchet::ui::KeyHintDrawnForTest("Post Comment").c_str(), "Ctrl+Enter");
+        IM_CHECK_NO_RET(smatchet::ui::PlaceholderDrawnForTest("##CommentsPostBox"));
+
+        ctx->KeyChars("typed");
+        ctx->Yield(3); // the last placeholder draw ages out of the seam's two-frame window
+        IM_CHECK_NO_RET(!smatchet::ui::PlaceholderDrawnForTest("##CommentsPostBox"));
+        IM_CHECK_STR_EQ_NO_RET(smatchet::ui::KeyHintDrawnForTest("Post Comment").c_str(), "Ctrl+Enter");
+        CloseCommentsViewer(ctx);
+    };
+}
+
+// The draft store key the comments box uses for `issueId` on the focused tracker.
+static std::string CommentsDraftScopeForTest(AppController& app, const char* issueId) {
+    return app.FocusedCacheBackendKey() + "|" + issueId;
+}
+
+// OfflineFirst/Comments_DraftSurvivesReplaceAndComesBack: what is typed in the comment box is kept as it
+// is typed. Opening another issue's comments (which replaces the viewer) does not lose it, and opening
+// the first issue again brings it back with a line that says so.
+static void RegisterCommentsDraftSurvivesReplace(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_DraftSurvivesReplaceAndComesBack");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket first = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, first, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->KeyChars("kept across a close");
+        ctx->Yield(2);
+
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(smatchet::drafts::Get("comments", CommentsDraftScopeForTest(*app, "OFF-1"), stored));
+        IM_CHECK_STR_EQ_NO_RET(stored.Text.c_str(), "kept across a close");
+
+        const CachedTicket second = MakeTicketWithHistory("OFF-2", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, second, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->Yield(3);
+        IM_CHECK_STR_EQ_NO_RET(GetCommentsModalSnapshotForTests().PostDraft.c_str(), "");
+        IM_CHECK_NO_RET(!GetCommentsModalSnapshotForTests().DraftRestored);
+
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, first, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->Yield(3);
+        IM_CHECK_STR_EQ_NO_RET(GetCommentsModalSnapshotForTests().PostDraft.c_str(), "kept across a close");
+        IM_CHECK_NO_RET(GetCommentsModalSnapshotForTests().DraftRestored);
+        CloseCommentsViewer(ctx); // discards: the box is not empty
+    };
+}
+
+#if defined(SMATCHET_WITH_WHISPER) // the router is a no-op stub without Whisper
+// OfflineFirst/Comments_DictatedTextIsKeptAsDraft: text dictated into the comment box is kept like typed
+// text. The router writes the buffer without an edit event, so a draft kept only on IsItemEdited would
+// miss it, and a stale draft would come back after the comment was posted.
+static void RegisterCommentsDictatedTextIsKept(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_DictatedTextIsKeptAsDraft");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket ticket = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->KeyChars("typed");
+        ctx->Yield(2);
+        g_dictationRouter.InsertIntoFocusedInputText(" and dictated", GImGui->ActiveId);
+        ctx->Yield(3);
+
+        const std::string box = GetCommentsModalSnapshotForTests().PostDraft;
+        IM_CHECK_NO_RET(box.find("dictated") != std::string::npos);
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(smatchet::drafts::Get("comments", CommentsDraftScopeForTest(*app, "OFF-1"), stored));
+        IM_CHECK_STR_EQ_NO_RET(stored.Text.c_str(), box.c_str());
+        CloseCommentsViewer(ctx); // discards: the box is not empty
+    };
+}
+#endif
+
+// OfflineFirst/Comments_DiscardErasesTheKeptDraft: Esc asks, and choosing "Discard comment" throws the
+// text away for good: nothing is kept, and the next open starts with an empty box.
+static void RegisterCommentsDiscardErasesDraft(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_DiscardErasesTheKeptDraft");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket ticket = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->KeyChars("to be thrown away");
+        ctx->Yield(2);
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(smatchet::drafts::Get("comments", CommentsDraftScopeForTest(*app, "OFF-1"), stored));
+
+        ctx->KeyPress(ImGuiKey_Escape); // leaves the box
+        ctx->Yield(3);
+        ctx->KeyPress(ImGuiKey_Escape); // asks
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(GetFieldViewerSnapshotForTests().Active);
+        IM_CHECK_NO_RET(smatchet::drafts::Get("comments", CommentsDraftScopeForTest(*app, "OFF-1"), stored));
+
+        IM_CHECK_NO_RET(ClickInTopModal(ctx, "Discard comment"));
+        IM_CHECK_NO_RET(YieldUntil(ctx, 30, []() { return !GetFieldViewerSnapshotForTests().Active; }));
+        IM_CHECK_NO_RET(!smatchet::drafts::Get("comments", CommentsDraftScopeForTest(*app, "OFF-1"), stored));
+
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ctx->Yield(3);
+        IM_CHECK_STR_EQ_NO_RET(GetCommentsModalSnapshotForTests().PostDraft.c_str(), "");
+        IM_CHECK_NO_RET(!GetCommentsModalSnapshotForTests().DraftRestored);
+        CloseCommentsViewer(ctx);
+    };
+}
+
+// OfflineFirst/LongText_DraftComesBackOnReopen: the edit typed in the long-text editor is kept per issue
+// and field. Closing the editor without answering the question (here the way a replace or an exit does,
+// by dropping its state) leaves it, and the next open puts it back with the dirty guard armed; "Discard
+// changes" erases it.
+static void RegisterLongTextDraftComesBack(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "LongText_DraftComesBackOnReopen");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        OpenLongTextForTest(*app, "seed text");
+        IM_CHECK_NO_RET(TypeIntoLongText(ctx, "abc"));
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(smatchet::drafts::Get("longtext", "OFF-1|description", stored));
+        IM_CHECK_NO_RET(stored.Text.find("abc") != std::string::npos);
+        IM_CHECK_STR_EQ_NO_RET(stored.Base.c_str(), "seed text");
+
+        CloseLongTextEditor(); // not a discard: the draft stays
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(smatchet::drafts::Get("longtext", "OFF-1|description", stored));
+
+        OpenLongTextForTest(*app, "seed text");
+        IM_CHECK_NO_RET(YieldUntil(ctx, 30, []() { return SmatchetTest_GetLongTextEditorSnapshot().Active; }));
+        ctx->Yield(3);
+        const LongTextEditorTestSnapshot restored = SmatchetTest_GetLongTextEditorSnapshot();
+        IM_CHECK_NO_RET(restored.DraftRestored);
+        IM_CHECK_NO_RET(restored.Dirty);
+        IM_CHECK_NO_RET(restored.Buffer.find("abc") != std::string::npos);
+
+        // Esc asks (the restored text is unsaved), and discarding erases the draft.
+        CloseLongTextForTest(ctx);
+        IM_CHECK_NO_RET(!SmatchetTest_GetLongTextEditorSnapshot().Active);
+        IM_CHECK_NO_RET(!smatchet::drafts::Get("longtext", "OFF-1|description", stored));
+
+        OpenLongTextForTest(*app, "seed text");
+        ctx->Yield(4);
+        IM_CHECK_NO_RET(!SmatchetTest_GetLongTextEditorSnapshot().DraftRestored);
+        IM_CHECK_NO_RET(!SmatchetTest_GetLongTextEditorSnapshot().Dirty);
+        CloseLongTextForTest(ctx);
+    };
+}
+
+// OfflineFirst/DraftStore_PersistsWithoutStopAndReloads: the draft store writes a draft to its file on its
+// own worker while the app runs (so a crash keeps it), and a restart (Stop, then Start on the same file)
+// brings it back. This is the worker half of the store; the map's rules (isolation, bounds, eviction, the
+// file format) are doctest cases in OfflineFirstPure.test.cpp. Needs no fixture: the profile is isolated.
+static void RegisterDraftStorePersistsAndReloads(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "DraftStore_PersistsWithoutStopAndReloads");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const std::string path = smatchet::drafts::DefaultPath();
+        FileContainsPoll fileHasText(path, "kept by the worker");
+        // The store works on wall-clock time (a write debounce, a worker start), and the test engine runs
+        // frames unthrottled, so every wait here is a deadline in seconds, not a frame count.
+        const auto waitFor = [ctx](const std::function<bool()>& done) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            bool ok = done();
+            while (!ok && std::chrono::steady_clock::now() < deadline) {
+                ctx->Yield();
+                ok = done();
+            }
+            return ok; // the last answer: a stateful predicate is not asked once more after the loop
+        };
+        IM_CHECK_NO_RET(waitFor([]() { return smatchet::drafts::IsLoaded(); }));
+        smatchet::drafts::ResetForTests();
+        IM_CHECK_NO_RET(smatchet::drafts::Put("comments", "UITEST|OFF-9", "kept by the worker", "its base"));
+
+        // It reaches the disk with no Stop: the debounce is under a second, the cap two seconds.
+        IM_CHECK_NO_RET(waitFor([&fileHasText]() { return fileHasText(); }));
+
+        // A restart: nothing in memory, the file is read at Start.
+        smatchet::drafts::Stop();
+        smatchet::drafts::ResetForTests();
+        smatchet::drafts::DraftEntry entry;
+        IM_CHECK_NO_RET(!smatchet::drafts::Get("comments", "UITEST|OFF-9", entry));
+        smatchet::drafts::Start(path);
+        IM_CHECK_NO_RET(waitFor([]() { return smatchet::drafts::IsLoaded(); }));
+        IM_CHECK_NO_RET(smatchet::drafts::Get("comments", "UITEST|OFF-9", entry));
+        IM_CHECK_STR_EQ_NO_RET(entry.Text.c_str(), "kept by the worker");
+        IM_CHECK_STR_EQ_NO_RET(entry.Base.c_str(), "its base");
+
+        smatchet::drafts::ResetForTests(); // the worker is running again: it writes the empty store
+    };
+}
+
 #undef SMATCHET_INPUT_CASE_PREAMBLE
 
 extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
@@ -588,10 +834,18 @@ extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
     RegisterCommentsEscOnFilledBoxOnlyLeaves(engine);
     RegisterCommentsTemplateOpenKeepsPrefill(engine);
     RegisterCommentsOtherIssueStartsEmpty(engine);
+    RegisterCommentsPostButtonNamesKey(engine);
     RegisterLongTextUntouchedEscCloses(engine);
     RegisterLongTextEscWithTextAsksAndKeeps(engine);
     RegisterLongTextCancelAsksDiscardCloses(engine);
     RegisterLongTextTitleBarCloseKeepsText(engine);
+    RegisterCommentsDraftSurvivesReplace(engine);
+#if defined(SMATCHET_WITH_WHISPER)
+    RegisterCommentsDictatedTextIsKept(engine);
+#endif
+    RegisterCommentsDiscardErasesDraft(engine);
+    RegisterLongTextDraftComesBack(engine);
+    RegisterDraftStorePersistsAndReloads(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

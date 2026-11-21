@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <cstdlib> // std::strtoll (CPP_CODE_AUDIT.md #33f — was only transitively included)
 #include <string>
 #include <vector>
@@ -41,6 +42,20 @@ inline std::string ToLowerAsciiCopy(std::string s) {
     return s;
 }
 
+/// `text` cut to at most `maxBytes` bytes, never inside a UTF-8 sequence, with "..." appended when anything was cut.
+/// A byte-level resize can leave half a character, which shows as a replacement glyph.
+inline std::string TruncateUtf8WithEllipsis(const std::string& text, std::size_t maxBytes) {
+    if (text.size() <= maxBytes) {
+        return text;
+    }
+    // Back off past continuation bytes (0b10xxxxxx) so the cut lands on the start of a character.
+    std::size_t cut = maxBytes;
+    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0u) == 0x80u) {
+        --cut;
+    }
+    return text.substr(0, cut) + "...";
+}
+
 /// Case-insensitive equality with the same folding as ToLowerAsciiCopy, without allocating.
 inline bool EqualsIgnoreCaseAscii(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) {
@@ -52,6 +67,11 @@ inline bool EqualsIgnoreCaseAscii(const std::string& a, const std::string& b) {
         }
     }
     return true;
+}
+
+/// True when `s` ends with `suffix` (case-sensitive, byte-wise). An empty suffix always matches.
+inline bool EndsWithAscii(const std::string& s, const std::string& suffix) {
+    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
 inline std::string ToUpperAsciiCopy(std::string s) {

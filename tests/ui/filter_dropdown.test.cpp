@@ -26,6 +26,10 @@
 //      highlight since the filter last changed; otherwise Space is typed); Enter finishes, first acting on
 //      the highlighted row when a filter is typed and nothing was toggled for it (pick or create), and
 //      only closing with an empty filter.
+//  14. The shared matcher (TextMatchPure.h, docs/plans/input-ux-w2-one-matcher.md): letters typed in
+//      order find an option no label holds as written, the rows are ranked, exact matches hide
+//      letters-in-order ones, a Greek capital finds its lower-case option, and the matched letters are
+//      marked in the drawn row (the theme's selected-text colour, counted in the rows' draw list).
 //
 // COMPLEMENTS tests/Core/FilterDropdownPure.test.cpp (row model, highlight moves, scroll maths) and
 // tests/Core/RecentSelections.test.cpp (the store). THIS suite drives the production DrawBody inside a
@@ -49,6 +53,8 @@
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -83,6 +89,9 @@ struct DropdownFixture {
     float popupContentHeight = 0.0f;   // the popup's content height, while it is open
     ImGuiWindow* rowsWindow = nullptr; // the scrolling list inside the popup, while it is open
     std::vector<smatchet::dropdown::Event> events;
+    const char* const* labels = kLabels; // the option labels (and ids), kLabelCount of them
+    int markVertices = 0;                // vertices in the match-mark colour in the rows' draw list, last frame
+    float markMaxX = 0.0f;               // the rightmost of them (screen x)
 };
 
 DropdownFixture g_fixture;
@@ -110,8 +119,8 @@ void DrawDropdownHarness(ImGuiTestContext* ctx) {
             smatchet::dropdown::Item items[kLabelCount];
             const int listed = s->itemCount > s->skipFirst ? s->itemCount - s->skipFirst : 0;
             for (int i = 0; i < listed; ++i) {
-                items[i].Id = kLabels[s->skipFirst + i];
-                items[i].Label = kLabels[s->skipFirst + i];
+                items[i].Id = s->labels[s->skipFirst + i];
+                items[i].Label = s->labels[s->skipFirst + i];
                 items[i].Checked = s->checked[s->skipFirst + i];
             }
             smatchet::dropdown::Options options;
@@ -136,6 +145,18 @@ void DrawDropdownHarness(ImGuiTestContext* ctx) {
             for (ImGuiWindow* child : popup->DC.ChildWindows) {
                 if (std::strstr(child->Name, "##dropdown_rows") != nullptr) {
                     s->rowsWindow = child;
+                }
+            }
+            // The rows child has ended for this frame, so its draw list holds every row's marks.
+            s->markVertices = 0;
+            s->markMaxX = 0.0f;
+            if (s->rowsWindow != nullptr && s->rowsWindow->DrawList != nullptr) {
+                const ImU32 mark = ImGui::GetColorU32(ImGuiCol_TextSelectedBg);
+                for (const ImDrawVert& v : s->rowsWindow->DrawList->VtxBuffer) {
+                    if (v.col == mark) {
+                        ++s->markVertices;
+                        s->markMaxX = (std::max)(s->markMaxX, v.pos.x);
+                    }
                 }
             }
             ImGui::EndCombo();
@@ -486,7 +507,7 @@ void RegisterKeptTickedDoesNotTakeEnter(ImGuiTestEngine* engine) {
         g_fixture.checked[0] = true; // "alpha" is ticked and sorts above every match
         OpenCombo(ctx);
 
-        ctx->KeyChars("io"); // rows: alpha (kept), iota
+        ctx->KeyChars("io"); // rows: iota (the match, ranked first), alpha (kept)
         ctx->Yield(2);
         ctx->KeyPress(ImGuiKey_Enter);
         ctx->Yield(2);
@@ -543,6 +564,24 @@ void RegisterPageDown(ImGuiTestEngine* engine) {
         ctx->Yield(2);
         IM_CHECK_EQ(EventCount(), 1);
         IM_CHECK_STR_EQ(EventId(0), "lambda");
+    };
+}
+
+// ============================================================================
+// L2. Ctrl+PageDown is the global next-view shortcut, not a page move: the highlight stays put.
+// ============================================================================
+void RegisterCtrlPageDownDoesNotPage(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "CtrlPageDown_DoesNotMoveAPage");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_PageDown); // "alpha" (row 0) stays highlighted
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "alpha");
     };
 }
 
@@ -796,11 +835,14 @@ void RegisterMultiSelectSpaceToggleEnterFinishes(ImGuiTestEngine* engine) {
         g_fixture = DropdownFixture();
         g_fixture.multiSelect = true;
         OpenCombo(ctx);
-        ctx->KeyChars("i o"); // "i o" matches no option; with the Space dropped it would match "iota"
+        // Words match in any order, so "i o" finds "iota" just as "io" would: the Space is told apart by the
+        // events. Typed text, the Space toggled "iota" and Enter (filter changed since) would tick it again.
+        ctx->KeyChars("i o");
         ctx->Yield(2);
         ctx->KeyPress(ImGuiKey_Enter);
         ctx->Yield(2);
-        IM_CHECK_EQ(EventCount(), 0);
+        IM_CHECK_EQ(EventCount(), 1); // only Enter acted: the Space was filter text
+        IM_CHECK_STR_EQ(EventId(0), "iota");
         g_fixture = DropdownFixture();
         g_fixture.multiSelect = true;
         OpenCombo(ctx);
@@ -902,11 +944,155 @@ void RegisterMultiSelectSpaceToggleEnterFinishes(ImGuiTestEngine* engine) {
     };
 }
 
+// ============================================================================
+// T. Letters typed in order find an option no label holds as written, and Enter picks it.
+// ============================================================================
+void RegisterLettersInOrderFindTheOption(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OneMatcher_LettersInOrderFindTheOption");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+        ctx->KeyChars("lmd"); // no label holds "lmd"; l..m..d only in "lambda"
+        ctx->Yield(2);
+        IM_CHECK(g_fixture.comboOpen);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK(EventIsPick(0));
+        IM_CHECK_STR_EQ(EventId(0), "lambda");
+        IM_CHECK(!g_fixture.comboOpen);
+    };
+}
+
+// ============================================================================
+// U. An exact match hides letters-in-order ones: "la" is in "lambda" only, while "alpha" and "delta"
+//    hold l..a. With them hidden, Down has nowhere to go and Enter still picks "lambda".
+// ============================================================================
+void RegisterExactMatchHidesLettersInOrder(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OneMatcher_ExactMatchHidesLettersInOrder");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+        ctx->KeyChars("la");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_DownArrow); // would land on "alpha" or "delta" if they were listed
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), "lambda");
+    };
+}
+
+// ============================================================================
+// V. Case folds beyond ASCII: Greek capitals with a tonos find the lower-case option; the words of the
+//    filter match in any order.
+// ============================================================================
+const char* const kGreekLabels[] = {"\xCE\x91\xCE\xBB\xCF\x86\xCE\xB1",                          // Αλφα
+                                    "\xCE\x92\xCE\xAE\xCF\x84\xCE\xB1 \xCE\xB4\xCF\x8D\xCE\xBF", // Βήτα δύο
+                                    "\xCE\x93\xCE\xAC\xCE\xBC\xCE\xBC\xCE\xB1",                  // Γάμμα
+                                    "",
+                                    "",
+                                    "",
+                                    "",
+                                    "",
+                                    "",
+                                    "",
+                                    "",
+                                    ""};
+static_assert(sizeof(kGreekLabels) / sizeof(kGreekLabels[0]) == static_cast<std::size_t>(kLabelCount),
+              "the fixture reads kLabelCount labels");
+
+void RegisterGreekCapitalsFindLowerCase(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OneMatcher_GreekCapitalsFindLowerCaseInAnyOrder");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        g_fixture.labels = kGreekLabels;
+        g_fixture.itemCount = 3;
+        OpenCombo(ctx);
+        ctx->KeyChars("\xCE\x94\xCE\x8E\xCE\x9F \xCE\x92\xCE\x89\xCE\xA4\xCE\x91"); // ΔΎΟ ΒΉΤΑ
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        IM_CHECK_STR_EQ(EventId(0), kGreekLabels[1]);
+    };
+}
+
+// ============================================================================
+// W. The matched letters are marked in the drawn row: nothing with no filter; for "lam" the marks end
+//    after the "m" of "lambda"; for "lmd" (l, m and d marked apart) they reach on to its "d".
+// ============================================================================
+void RegisterMatchedLettersAreMarked(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OneMatcher_MatchedLettersAreMarked");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/false);
+        OpenCombo(ctx);
+        ctx->Yield(2);
+        IM_CHECK_EQ(g_fixture.markVertices, 0); // nothing typed: nothing marked
+        ctx->KeyChars("lam");
+        ctx->Yield(2);
+        IM_CHECK_GT(g_fixture.markVertices, 0);
+        const float lamEnd = g_fixture.markMaxX;
+        ctx->KeyPress(ImGuiKey_Backspace);
+        ctx->KeyPress(ImGuiKey_Backspace);
+        ctx->KeyChars("md"); // "lmd"
+        ctx->Yield(2);
+        IM_CHECK_GT(g_fixture.markVertices, 0);
+        IM_CHECK_GT(g_fixture.markMaxX, lamEnd + 1.0f);
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 0);
+    };
+}
+
+// ============================================================================
+// X. With a create row, Enter adds what was typed rather than an option that only holds its letters in
+//    order: "lmd" is created, not "lambda" ticked; an arrow key still reaches "lambda".
+// ============================================================================
+void RegisterCreateBeatsLettersInOrder(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterDropdownTest(engine, "OneMatcher_CreateRowBeatsLettersInOrderMatch");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        ResetFixture(/*multiSelect=*/true);
+        g_fixture.allowCreate = true;
+        OpenCombo(ctx);
+        ctx->KeyChars("lmd");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 1);
+        if (EventCount() == 1) {
+            IM_CHECK(g_fixture.events[0].Kind == smatchet::dropdown::EventKind::Created);
+        }
+        IM_CHECK_STR_EQ(EventId(0), "lmd");
+        IM_CHECK(!g_fixture.checked[10]); // "lambda" untouched
+        IM_CHECK(g_fixture.comboOpen);    // a tick-box create keeps the popup open and clears the filter
+
+        // Typed again, then Up from the create row onto the near match: Enter ticks it and finishes.
+        ctx->KeyChars("lmd");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiKey_UpArrow);
+        ctx->Yield();
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(2);
+        IM_CHECK_EQ(EventCount(), 2);
+        IM_CHECK(EventIsPick(1));
+        IM_CHECK_STR_EQ(EventId(1), "lambda");
+        IM_CHECK(!g_fixture.comboOpen);
+        smatchet::recents::BeginSharedTestScope();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterFilterDropdownTests(ImGuiTestEngine* engine) {
     RegisterTypeThenEnterPicks(engine);                          // A: type on open → Enter picks, closes
     RegisterArrowsThenEnterPicks(engine);                        // B: Up / Down + Enter
+    RegisterLettersInOrderFindTheOption(engine);                 // T: letters in order find "lambda"
+    RegisterExactMatchHidesLettersInOrder(engine);               // U: an exact match hides letters-in-order rows
+    RegisterGreekCapitalsFindLowerCase(engine);                  // V: Greek capitals, words in any order
+    RegisterMatchedLettersAreMarked(engine);                     // W: the matched letters are marked
+    RegisterCreateBeatsLettersInOrder(engine);                   // X: the create row beats a letters-in-order match
     RegisterTypeAfterRowClick(engine);                           // C: tick-box click keeps open; typing still filters
     RegisterTypeWhileScrolling(engine);                          // D: wheel-scroll then type
     RegisterRecentSection(engine);                               // E: Recent section pinned, hidden while filtering
@@ -917,6 +1103,7 @@ extern "C" void SmatchetRegisterFilterDropdownTests(ImGuiTestEngine* engine) {
     RegisterKeptTickedDoesNotTakeEnter(engine);                  // J: Enter acts on the match, not a kept ticked option
     RegisterUnknownRecentPick(engine);                           // K: a recent pick outside the options
     RegisterPageDown(engine);                                    // L: PageDown
+    RegisterCtrlPageDownDoesNotPage(engine);                     // L2: Ctrl+PageDown is next view, not a page
     RegisterLoneClearRow(engine);                                // M: empty state under a lone clear row
     RegisterOptionsArriveLate(engine);                           // N: options arriving under an open popup
     RegisterHighlightFollowsItsOption(engine);                   // O: rows inserted above the highlight

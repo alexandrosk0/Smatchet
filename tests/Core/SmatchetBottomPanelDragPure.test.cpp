@@ -190,3 +190,29 @@ TEST_CASE("ShouldKeepRestoreKey drops a remembered tab once its window is open a
     CHECK(pure::ShouldKeepRestoreKey(false));
     CHECK_FALSE(pure::ShouldKeepRestoreKey(true));
 }
+
+TEST_CASE("ShouldHideOnDragEnd hides only on a release while armed, and never after Esc cancelled the drag") {
+    CHECK(pure::ShouldHideOnDragEnd(/*armed=*/true, /*released=*/true, /*escCancelled=*/false));
+    CHECK_FALSE(pure::ShouldHideOnDragEnd(true, true, /*escCancelled=*/true));
+    CHECK_FALSE(pure::ShouldHideOnDragEnd(/*armed=*/false, true, false));
+    CHECK_FALSE(pure::ShouldHideOnDragEnd(true, /*released=*/false, false));
+    CHECK_FALSE(pure::ShouldHideOnDragEnd(false, false, true));
+}
+
+TEST_CASE("NudgeTargetExtent moves the extent by one step and holds it inside the parent split") {
+    // Room both ways: the step is taken as asked.
+    CHECK(pure::NudgeTargetExtent(300.0f, 32.0f, 40.0f, 900.0f) == doctest::Approx(332.0f));
+    CHECK(pure::NudgeTargetExtent(300.0f, -32.0f, 40.0f, 900.0f) == doctest::Approx(268.0f));
+    // The minimum holds a shrink, and the parent less one minimum holds a grow.
+    CHECK(pure::NudgeTargetExtent(50.0f, -32.0f, 40.0f, 900.0f) == doctest::Approx(40.0f));
+    CHECK(pure::NudgeTargetExtent(850.0f, 32.0f, 40.0f, 900.0f) == doctest::Approx(860.0f));
+    // A request already at a bound stays there (a repeat press at the limit changes nothing).
+    CHECK(pure::NudgeTargetExtent(40.0f, -32.0f, 40.0f, 900.0f) == doctest::Approx(40.0f));
+    CHECK(pure::NudgeTargetExtent(860.0f, 32.0f, 40.0f, 900.0f) == doctest::Approx(860.0f));
+    // A parent too small for two panes leaves only the minimum, whichever way the step points.
+    CHECK(pure::NudgeTargetExtent(200.0f, 32.0f, 40.0f, 70.0f) == doctest::Approx(40.0f));
+    CHECK(pure::NudgeTargetExtent(20.0f, -32.0f, 40.0f, 70.0f) == doctest::Approx(40.0f));
+    // The result is the same bound ApplyPendingExtent uses, so writing it changes nothing further.
+    const float target = pure::NudgeTargetExtent(300.0f, 5000.0f, 40.0f, 900.0f);
+    CHECK(pure::NudgeTargetExtent(target, 0.0f, 40.0f, 900.0f) == doctest::Approx(target));
+}

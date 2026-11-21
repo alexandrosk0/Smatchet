@@ -7,6 +7,7 @@
 // compiles into both SmatchetStandalone and SmatchetCore_DX12 (Unreal).
 
 #include "Commands/Command.h"
+#include "TextMatchPure.h"
 
 #include <memory>
 #include <string>
@@ -52,6 +53,12 @@ class CommandPaletteUi {
 
     /// Index of the highlighted row in the filtered list. Test-observability accessor.
     int SelectedIndex() const { return selected_; }
+
+    /// The listed rows, best match first: their count, the command id of row `i` ("" past the end) and how
+    /// many marked runs the row's title draws. Test-observability accessors.
+    int FilteredCount() const;
+    const char* FilteredName(int i) const;
+    std::size_t FilteredTitleRangeCount(int i) const;
 
     /// The line shown for the last failed dispatch ("Could not run: ..."), kept until the
     /// next input; empty when the last run succeeded. Test-observability accessor.
@@ -130,8 +137,25 @@ class CommandPaletteUi {
     /// Filtered command list for the current frame.
     std::vector<Command> filtered_;
 
+    /// What matched the query in each `filtered_` row (parallel to it; empty ranges with no query).
+    struct RowRanges {
+        std::vector<textmatch::ByteRange> Title;
+        std::vector<textmatch::ByteRange> Summary;
+        bool Exact = false; // every word occurred as written
+    };
+    std::vector<RowRanges> filteredRanges_;
+
+    /// Recent commands listed first with no query, and boosted under one.
+    static constexpr std::size_t kRecentCount = 8;
+
     /// Populate `filtered_` from the registry based on `filterBuf_`.
     void rebuildFiltered(AppController& app);
+
+    /// `filtered_` / `filteredRanges_` for a non-empty query, ranked (consumes `all`).
+    void rankByQuery(const textmatch::Query& query, std::vector<Command>& all, const std::vector<std::string>& recents);
+
+    /// One row's title and summary with the matched letters marked, at the row's text origin.
+    void drawRowText(int row, const std::string& primary, const std::string& summary, const ImVec2& pos) const;
 
     /// Dispatch the currently-selected command (or show arg form for required params).
     void dispatchSelected();
