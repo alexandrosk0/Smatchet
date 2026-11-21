@@ -8,7 +8,7 @@ left, each because another PR edited its file when it was written:
 
 - **Quick-create Create button hint.** The Create button should print its key the way every other submit button
   does (`smatchet::ui::KeyHintButton`, `Ui/SmatchetSubmitKeys.h`). File: `Source/Core/src/Ui/SmatchetQuickCreateIssueUi.cpp`,
-  edited by open PR #2450 (bulk edit).
+  edited by PR #2450 (bulk edit), which has since merged, so this one is unblocked too.
 - **fr-FR rows.** The Wave 2 key strings render their English fallbacks: the 4.4 keys (`keys.ctrl_enter` and the
   rest named in the plan) plus the four tooltip keys the lock-deferrals PR added, `views.sidebar_search_tooltip`,
   `views.next_view_key`, `views.previous_view_key` and `grid.view_selector.tooltip`. File:
@@ -20,10 +20,10 @@ left, each because another PR edited its file when it was written:
   tooltip and the grid header's view selector name the \`view.next\` / \`view.previous\` keys |`.
 
 Concrete next action:
-Now: add the fr-FR rows for the keys above in their own PR, which the visual-validation rule covers like any
-product-text change. After #2439 merges: add the shortcut guide row above. After #2450 merges: draw Quick-create's
-Create through `KeyHintButton` with `CtrlEnterKeyName()` and add a bucket-E check next to the existing Quick-create
-cases (`KeyHintDrawnForTest`). Delete each bullet as it lands; archive the entry when all three are done.
+Now: draw Quick-create's Create through `KeyHintButton` with `CtrlEnterKeyName()` and add a bucket-E check next
+to the existing Quick-create cases (`KeyHintDrawnForTest`); add the fr-FR rows for the keys above in their own PR,
+which the visual-validation rule covers like any product-text change. After #2439 merges: add the shortcut guide
+row above. Delete each bullet as it lands; archive the entry when all three are done.
 
 Status: open
 Last-reviewed: 2026-11-20

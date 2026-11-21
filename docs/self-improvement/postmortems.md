@@ -34,6 +34,42 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-21 · PR #2439, #2442, #2450, #2461, #2464, #2465, #2466, #2467, #2468 · override: `cr-out-of-band` on all nine (+ `plan-lock-out-of-band` on #2439); red check: `Perf PR-fast (windows-2022)` on #2450
+
+### What escaped
+Nine PRs merged to `develop` between 2026-11-20 and 2026-11-21 with `cr-out-of-band` and a `cr-disposition:` label, each added with the user's OK (per-PR, in chat). CodeRabbit never reviewed their final heads: the repository is under 10 stars, so its check run is `skipped`, `neutral` or `cancelled` and it reviews only on a rate-limited manual trigger. #2439 also carried `plan-lock-out-of-band`. #2442 is a CI-only change from a cloud session, merged by the watcher after the user approved it in the coordinator's chat.
+
+| PR | merged (UTC) | head | note |
+|---|---|---|---|
+| #2450 | 2026-11-20 21:41:34 | `dbd2e073e` | grid bulk edit; `Perf PR-fast (windows-2022)` has a re-run started 21:40:32 that failed 22:02:38, after the merge |
+| #2439 | 2026-11-21 03:38:30 | `4ed2dc347` | drafts and undo; a code-review agent verdict pinned to the head |
+| #2442 | 2026-11-21 14:54:42 | `2d37e008e` | sanitizer-lane trigger set (CI only) |
+| #2461, #2464 | 2026-11-21 12:38 | `a8d735988`, `c507f3b78` | Wave 3 plan PRs (docs) |
+| #2465 | 2026-11-21 13:31:44 | `77e295dc0` | Wave 3 plan PR (docs) |
+| #2468 | 2026-11-21 15:11:54 | `15e012b13` | dialog contract slice 3; see below |
+| #2466, #2467 | 2026-11-21 16:31, 16:45 | `fbc7adba9`, `9f6f0e78c` | attachments plan (docs); deferrals fix |
+
+No merge-snapshot row existed for any of the nine (the `merge-snapshot holes` nudge listed #2461 and #2464; the older ones were outside its 6 h window). They are added in this change: `GATES_PASSED` / `orchestrator` for the PRs the in-session poller merged (#2439, #2461, #2464, #2466, #2467, #2468, plus #2462), `BACKFILLED` / `git-janitor` for the four it did not merge or could not prove (#2442, #2450, #2463, #2465).
+
+#2468 then turned `develop` red: Bucket-E `SplitterDragAfterMinimizeKeepsDocking` failed on the merge commit (run 44917896468) while its own PR checks were green. The 4.1 session is root-causing it; that escape gets its own entry once the cause is known.
+
+### Root cause
+- **CodeRabbit waivers:** the known shape from the 2026-11-20 entry below. No obtainable automatic review; a separate-context code-review agent stood in, its verdict pinned to the merged head in each PR body.
+- **#2465:** merged under a waiver the user approved in chat ("Waive all three"); the PR's own authoring session did not apply the label and reported that CodeRabbit never reviewed the final head, so the provenance lives in chat, not on the PR.
+- **#2450:** a `Perf PR-fast` re-run was in flight one minute before the merge and failed 21 minutes after it. Whether the merge path saw it as pending is not determinable from a `BACKFILLED` row. Cause of the failure not established (see Filed as).
+- **Snapshot holes:** the in-session poller calls `merge-gates.sh` and `gh pr merge` directly and writes no row, as in the 2026-11-20 entry.
+
+Provenance: check-run conclusions and labels were read from the GitHub API on 2026-11-21 after 16:45Z. Row projections came from `safe-admin-merge.sh`'s `downgraded_red_checks` / `override_labels_csv`, sourced from a worktree based on `origin/develop` (`cd0e5102f`).
+
+### Preventing gate
+None for the CodeRabbit waivers: each was a deliberate, user-approved override. For #2450, open: the gate would be a re-read of the rollup at merge time, if the re-run turns out to have raced the poller. Filed below; it closes when that is answered.
+
+### Eval case
+None. The waivers are decisions, and the #2450 gap is a CI re-run race, so neither is agent-reviewable.
+
+### Filed as
+[`categories/process/2026-11-21-perf-rerun-in-flight-at-merge-and-failed-after-2450.md`](categories/process/2026-11-21-perf-rerun-in-flight-at-merge-and-failed-after-2450.md); the `cr-out-of-band` / label-only trigger noise is already in [`categories/tooling/2026-11-20-postmortem-owed-flags-an-override-whose-gate-passed-on-the-merged-head.md`](categories/tooling/2026-11-20-postmortem-owed-flags-an-override-whose-gate-passed-on-the-merged-head.md).
+
 ## 2026-11-20 · PR #2440, #2441 · override: `cr-out-of-band` + `plan-lock-out-of-band` on both (CodeRabbit `skipped` on both merged heads; `Plan-lock gate` green on both)
 
 ### What escaped

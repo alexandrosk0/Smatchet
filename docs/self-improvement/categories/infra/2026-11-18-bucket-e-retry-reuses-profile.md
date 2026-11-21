@@ -10,7 +10,7 @@
 
 The suite outgrew the 160 s `--timeout` on llvmpipe (~163 s), so attempts 1 and 2 tripped the deadline and were killed. The retry loop then ran attempt 3 with the same user profile the killed attempts had written to (no `SMATCHET_USER_DATA` per attempt), so it booted on a non-default dock layout. It finished in time but failed `WindowExpand/SplitterDragAfterMinimizeKeepsDocking` and `WindowExpand/ScriptingWindowContributesTabBarToggle` (Log and Scripting not docked), and `ResetLayout/LiveHostProbe` logged "no canonical node realized". The failure read as a docking regression in the PR when the real cause was the deadline. The same pattern was seen earlier on #2433 and passed on a re-run.
 
-The deadline was raised to 230 s on develop (#2438's CI change), which removes the trigger for now but not the contamination.
+The deadline was raised to 230 s on develop (#2438's CI change), which removed the trigger only until the suite grew again: develop run 44917896468 (2026-11-21, 338 tests) hit 230 s on all three attempts, and the retries failed `WindowExpand/SplitterDragAfterMinimizeKeepsDocking` (`anyMoved`) the same way. #2470 raised it to 300 s, the third raise of the same knob; the contamination is still there.
 
 ## Concrete next action
 
