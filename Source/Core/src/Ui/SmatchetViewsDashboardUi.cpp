@@ -258,10 +258,14 @@ void SmatchetUI::drawViewsSidebar(ViewsDashboardDrawCtx& ctx) {
         ImGui::Spacing();
 
         // The shared matcher picks and orders the rows and marks the letters that matched (one-matcher plan).
+        // Both kept across frames, so the per-frame scoring and the listed rows allocate nothing once the buffers
+        // have grown (Ui AGENTS.md); only the query words are rebuilt while something is typed.
         static smatchet::textmatch::Scratch s_viewsSearchScratch; // UI thread only
-        const std::vector<smatchet::views::ListedView> listed = smatchet::views::ListViewsForSearch(
+        static smatchet::views::ViewListBuffers s_viewsListed;    // UI thread only
+        smatchet::views::ListViewsForSearch(
             store.Views.size(), [&store](std::size_t i) -> const std::string& { return store.Views[i].Name; },
-            d.viewsSidebarSearchBuf, s_viewsSearchScratch);
+            d.viewsSidebarSearchBuf, s_viewsSearchScratch, s_viewsListed);
+        const std::vector<smatchet::views::ListedView>& listed = s_viewsListed.Listed;
         if (searchEnter && !listed.empty() && !smatchet::textmatch::MakeQuery(d.viewsSidebarSearchBuf).Empty()) {
             const std::string firstId = store.Views[listed.front().Index].Id;
             ctx.requestActivate(firstId);
