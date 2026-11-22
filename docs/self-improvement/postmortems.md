@@ -34,6 +34,29 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-21 · PR #2468 (develop red on its merge commit), #2470 (the fix) · red check: `Bucket-E UI tests (Mesa headless GL)` on develop run 44917896468; override: `cr-out-of-band` on #2452, #2469, #2470
+
+### What escaped
+`develop` went red on the #2468 merge commit `859685b18`: Bucket-E failed on every attempt of run 44917896468 (job 136894582785) at 15:11Z, after a green run on `c7dd16e4e` at 13:31Z. Every open PR inherited the red, because the PR runs test the merge with develop. #2468's own head had passed Bucket-E (338/338 in 205 s) and every gate before the merge.
+
+Also merged under the user-approved `cr-out-of-band` waiver in this stretch: #2452 (the cloud session's catalog-scope fix, `a9dbeb971`, merged 19:50:51Z, `BACKFILLED`), #2470 (`018b66afd`, 18:08:36Z) and #2469 (`c486ef965`, 20:25:50Z). CodeRabbit is `skipped` on all three, the known shape from the entries below. #2471, the previous ledger PR, is added without an override.
+
+### Root cause
+The suite ran out of its wall-clock budget; it was not a #2468 regression and not merge skew (root cause from the 4.1 session, which read the develop run's logs). Every attempt of 44917896468 ended `{"code":"timeout"}` at about 233 s against `--timeout=230000`, killing whatever test was running (AiPrefs, then AiChat). The `SplitterDragAfterMinimizeKeepsDocking` `anyMoved` errors appear only on retries 2 and 3, which boot on the killed attempt's profile ([`infra/2026-11-18-bucket-e-retry-reuses-profile.md`](categories/infra/2026-11-18-bucket-e-retry-reuses-profile.md)). The suite was already at 206 to 224 s of 230 s before #2468 (333 tests; runs 44908939219 and 44909491355); #2468 added 5 tests and the develop push run landed on a slower runner that needs about 245 s. Between #2468's head and `859685b18`, develop changed only CI, scripts and docs.
+
+The gate hole: a green Bucket-E run reports pass or fail, not how close to the deadline it was, so the shrinking headroom was invisible until a slow runner crossed it. This is the third raise of the same setting (160, 230, then 300 s, in #2470), each after a red.
+
+Provenance: the failure evidence is quoted from the 4.1 session's investigation of the run logs, not re-read here; the merge metadata and labels were read from the GitHub API on 2026-11-21 after 20:25Z, and the rows' projections came from `safe-admin-merge.sh`'s `downgraded_red_checks` / `override_labels_csv` on a worktree based on `origin/develop`.
+
+### Preventing gate
+Warn when a green Bucket-E run used more than 85% of its `--timeout`, so a raise happens before the red rather than after it. This is item (a) of [`tooling/2026-11-17-bucket-e-lane-retry-and-headroom.md`](categories/tooling/2026-11-17-bucket-e-lane-retry-and-headroom.md), which #2470 already updated with this recurrence. The `cr-out-of-band` waivers on #2452, #2469 and #2470: none, each is a deliberate override the user approved in chat.
+
+### Eval case
+None. A suite sitting at its CI deadline is not something a code reviewer scores, so the miss is not agent-reviewable.
+
+### Filed as
+The headroom warning is item (a) of the existing tooling entry above; the retry/profile hazard is the infra entry above. No new category entry.
+
 ## 2026-11-21 · PR #2439, #2442, #2450, #2461, #2464, #2465, #2466, #2467, #2468 · override: `cr-out-of-band` on all nine (+ `plan-lock-out-of-band` on #2439); red check: `Perf PR-fast (windows-2022)` on #2450
 
 ### What escaped
