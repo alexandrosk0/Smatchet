@@ -14,7 +14,8 @@ shipped, so they were left out rather than overriding a plan-lock or racing an o
   whose title holds the letters in order, with no cue saying so. The cue belongs under the search box
   (`SmatchetGridHeaderUi.cpp` draws it; the tolerant-parsing PR #2441 has merged) with a flag on `GridPane.h`
   set by `ApplyGridFilterProjection` (`SmatchetActiveProjectGridTable.cpp`). `GridPane.h` and the only other per-pane
-  home, `SmatchetUiSession.h`, are both edited by open PR #2452, so the cue waits for it.
+  home, `SmatchetUiSession.h`, were both edited by PR #2452, which merged on 2026-11-22 (`a9dbeb971`), so the cue is unblocked. Wave 3's
+  `docs/plans/input-ux-w3-filter-without-jql.md` (S7) also builds it, on the line it adds under the box.
 - **Remap preview (#131).** `ApplyPathRemaps` now trims, folds slashes and drive-letter case, and fixes the
   join; the audit's "Preview" field and trim-on-commit in the Annotate preferences
   (`AnnotateAnalysisUi_Preferences.cpp`, changed by two open PRs) are not built.
@@ -36,4 +37,4 @@ trim-on-commit; move the matcher doctests to their own registered TU; re-bootstr
 Each gets bucket-E coverage next to the existing dropdown / grid search / palette cases.
 
 Status: open
-Last-reviewed: 2026-11-20
+Last-reviewed: 2026-11-22

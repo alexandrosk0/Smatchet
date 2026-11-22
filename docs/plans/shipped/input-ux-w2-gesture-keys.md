@@ -1,8 +1,9 @@
 # Plan — Input UX Wave 2, piece 4.6: keyboard equivalents for pointer gestures
+<!-- plan-date: 2026-11-20 -->
 
 > **Slug**: `input-ux-w2-gesture-keys` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — piece 4.6 of [`docs/audits/INPUT_UX_AUDIT.md`](../../audits/INPUT_UX_AUDIT.md) § 4.6, shipping in one PR. The deferred half (§ Out of scope) waits on #2432 and #2434.
+> **Status**: `shipped` — piece 4.6 of [`docs/audits/INPUT_UX_AUDIT.md`](../../audits/INPUT_UX_AUDIT.md) § 4.6, PR #2440 (squash `79baaa7a4`). The deferred half (§ Out of scope) is tracked in `docs/self-improvement/categories/debt/2026-11-22-gesture-keys-deferred.md`.
 >
 > **Usage**: authored with the `author-plan-doc` skill from `_plan-template.md`. The audit's § 3 keyboard contract gains the rule this plan enforces.
 
@@ -248,7 +249,7 @@ Single slice, orchestrator; Ui subsystem with Commands / Config / Tracker touch 
 
 **Deferral residue-sweep (keep this note)**: before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md` and `docs/self-improvement/categories/` for stray references to anything deferred here, and revise or delete them.
 
-Deferred to a follow-up plan, `input-ux-w2-gesture-keys-followup`, once #2432 and #2434 merge and release their locks:
+Deferred, now tracked in `docs/self-improvement/categories/debt/2026-11-22-gesture-keys-deferred.md` (#2432 and #2434 have merged, so the locks that held these are gone):
 
 - **#138 columns:** `grid.column.move_left` / `move_right` / `narrow` / `widen` on the focused pane's current column. These touch `SmatchetActiveProjectGridTable.cpp` and `SpreadsheetState.h`, which `bulk-edit-rows` holds.
 - **#71:** a filterable Add Sort Rule list, plus `ui.list.*` on the sort rules. These touch `SmatchetGridHeaderUi.cpp`, which `shared-dropdown-recents` holds. The list reuses `FilterDropdown`.
@@ -271,6 +272,7 @@ Deferred to a follow-up plan, `input-ux-w2-gesture-keys-followup`, once #2432 an
   - `scripts/dev/test-drag-keyboard-equivalent.sh` with its selftest and bats suite;
   - the rule in the audit's § 3 and the shortcuts guide, French strings, and the doctest and bucket-E tests.
   - `GlobalShortcutAllowedUnderModal` (`DialogKeysPure.h`, from #2437) now lets `ui.list.*` and `ui.splitter.*` through, so they work inside the dialogs they serve.
+- `79baaa7a4` · squash-merge of PR #2440 into `develop`.
 
 Findings: **#108** was already closed by Wave 1. **#18** is half closed (the Cancel button, #2430); the outside click is deferred. **#12, #44, #130, #122** and the panel half of **#138** are closed here. **#71, #119** and the column half of **#138** are deferred (below). **#29, #30** stay with Wave 3.
 
@@ -286,7 +288,7 @@ Findings: **#108** was already closed by Wave 1. **#18** is half closed (the Can
   - `PanelResize_KeysNudgeBottom`: the bottom panel never became visible. A second run, with the node's state logged, showed why: `DockBuilderGetNode(kBottomPanel)` is null in the headless lane (`bottom node=0`), and no side bar is open either. `reset_layout_docking.test.cpp` records the same property: Mesa-headless does not realise the canonical dock nodes even when healthy. The case now resizes whichever edge panel is visible, sees the nudge through the panel's drag state, and **skips with a logged reason when the headless software-GL lane realises no node** (it fails on a real-GL run). This is a coverage gap, not a pass: the key-to-nudge path is not exercised end to end in CI. The nudge's bounds moved into `SmatchetBottomPanelDragPure.h` (`NudgeTargetExtent`) and are covered by doctests; the missing infrastructure is filed as `docs/self-improvement/categories/tooling/2026-11-17-bucket-e-headless-lane-realises-no-edge-panel.md`.
   - The earlier theory, that a docked tab needed selecting, was wrong: an unselected docked tab keeps the node visible.
 - **Deferred, as planned:** grid column move / resize (`grid.column.*`), the sort-rule list (#71), the views-dashboard row-reorder rebind, the palette outside-click close, and the filter + list popups onto `FilterDropdown` (#119). The check script lists the three still-unmarked drag sources as WARN-only pending entries; `--strict` fails them and is for the follow-up to turn on. A backlog entry covers column resize on the read-only tables.
-- **The plan stays in `active/`**: the follow-up work above still lives here, so the status flip and `git mv` wait for it.
+- **The follow-up work moved to a debt entry** (`2026-11-22-gesture-keys-deferred.md`) instead of a second plan, so this plan could be archived.
 
 ## Verification (actual)
 
@@ -307,11 +309,3 @@ Findings: **#108** was already closed by Wave 1. **#18** is half closed (the Can
   - **Accepted low, carried, not fixed here:** `MigrateGestureKeybindingsV1` (like the quick-create, grid-search and action-keys seeds) only runs when the config JSON is non-empty, so on a fresh profile the flag is first saved as false. A gesture row the user clears with the quick-bind Clear button before the flag is ever set comes back on the next launch (most likely the bare `Delete` row for `ui.list.remove`). It is not new to this change, and one fix (set the seed flags to true when Load starts from `Defaults()` with no config file) covers all four seeds, so it belongs in its own change.
   - **Local checks on the merged tree:** `posix-core-check` build clean, `ninja-test-linux` 1331 of 1331, `test-drag-keyboard-equivalent.sh` pass with the same four pending sources.
 - **Manual residue:** one, the panel-resize keys (above). The other bucket-E cases are verified by the green CI run on code head `933b940`, recorded above.
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*

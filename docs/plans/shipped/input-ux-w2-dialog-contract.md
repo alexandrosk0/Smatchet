@@ -1,8 +1,9 @@
 # Plan — Input UX Wave 2: one dialog contract (audit § 4.1)
+<!-- plan-date: 2026-11-16 -->
 
 > **Slug**: `input-ux-w2-dialog-contract` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slices 1–4 and row 16 implemented; slice 3 shipped in PR #2468; slice 4 and row 16 ship in their own PR. Row 25 re-pointed the worklog only; the other four sites are recorded in § Deviations.
+> **Status**: `shipped` — PR #2437 (slices 1–2, squash `7c288e6e2`), PR #2468 (slice 3, squash `859685b18`), PR #2469 (slice 4 and row 16, squash `c486ef965`). Row 25 re-pointed the worklog only; the other four sites are recorded in § Deviations. Leftovers: `docs/self-improvement/categories/debt/2026-11-22-dialog-contract-deferred.md`.
 >
 > **Source**: `docs/audits/INPUT_UX_AUDIT.md` § 4.1 "A dialog contract" and § 3 "Proposed keyboard contract" (the audit lands with PR #2433; cite findings as `INPUT_UX_AUDIT.md #N`). Sibling Wave 2 plans: `input-ux-w2-text-field` (§ 4.2), `input-ux-w2-drafts-undo` (§ 4.3), `input-ux-w2-action-keys` (§ 4.4), `input-ux-w2-tolerant-parsing` (§ 4.5), `input-ux-w2-gesture-keys` (§ 4.6), `input-ux-w2-one-matcher` (§ 4.7).
 
@@ -230,10 +231,10 @@ Owner subsystem for every slice: `Source/Core/src/Ui/` (`Source/Core/src/Ui/AGEN
 
 - `112aa561e` · wip(plan): this plan.
 - `c1b6f43f1` · merge of `origin/claude/frictionless-user-input-ux-ea174b` (PR #2433, head `b12bdb424`) for `Ui/DialogKeysPure.h`.
-- Slice 1 + the slice 2 confirms + the icon picker (slice 3, row 17) · `SmatchetDialogScope` helper, `ConfirmFooter`, the modal shortcut mute, 11 confirm sites, tests and docs (PR #2437).
-- Slice 3 (rows 18–24) · form and info dialogs on the scope, focus return after a modal or the palette closes, tests and docs (the slice 3 PR's feature commit).
+- Slice 1 + the slice 2 confirms + the icon picker (slice 3, row 17) · `SmatchetDialogScope` helper, `ConfirmFooter`, the modal shortcut mute, 11 confirm sites, tests and docs (PR #2437, squash `7c288e6e2`).
+- Slice 3 (rows 18–24) · form and info dialogs on the scope, focus return after a modal or the palette closes, tests and docs (PR #2468, squash `859685b18`).
 - `15e012b13` · merge of `origin/develop` (#2439, #2440); toolbar editor dialog state per instance (`Ui/DialogScopeState.h`).
-- Slice 4 (row 25) + row 16 · the worklog dialog reads its keys through `DialogReadKeys`; the long-text and field-viewer discard confirms draw `ConfirmFooter(DestructiveFooter(...))` (the slice 4 PR's feature commit).
+- Slice 4 (row 25) + row 16 · the worklog dialog reads its keys through `DialogReadKeys`; the long-text and field-viewer discard confirms draw `ConfirmFooter(DestructiveFooter(...))` (PR #2469, squash `c486ef965`).
 
 ## Deviations from plan
 
@@ -272,7 +273,7 @@ Owner subsystem for every slice: `Source/Core/src/Ui/` (`Source/Core/src/Ui/AGEN
 - Row 23: "Save view as new" (`SmatchetActiveProjectGridUi.cpp`) — locked by `bulk-edit-rows`, and its only change is focus return (slice 3).
 - Row 24: palette focus return (`CommandPaletteUi.cpp`, #24) — locked by `input-ux-wave1-palette`, and #2435 changes `BuiltinCommands_Ui.cpp`. Slice 3, after #2433 and #2435 merge.
 - Row 25: Wave 1 re-point (slice 4) — after #2432 and #2435 merge (`TicketFieldEditor.cpp` is #2432's).
-- Dialogs in #2435's files (`SmatchetNewIssueDraftUi.cpp`, `SmatchetGridHeaderUi.cpp`, `SmatchetQuickCreateIssueUi.cpp`, `SmatchetMobileShellUi.cpp`, `SmatchetGridPaneWindows.cpp`) and #2432's (`FilterDropdown*`, `TicketFieldEditor.cpp`) — after those PRs merge.
+- Dialogs in #2435's files (`SmatchetNewIssueDraftUi.cpp`, `SmatchetGridHeaderUi.cpp`, `SmatchetQuickCreateIssueUi.cpp`, `SmatchetMobileShellUi.cpp`, `SmatchetGridPaneWindows.cpp`) and #2432's (`FilterDropdown*`, `TicketFieldEditor.cpp`) — resolved: once those PRs merged, none of these files draws a modal of its own any more (one comment-only `BeginPopupModal` mention in `TicketFieldEditor.cpp`).
 
 **Slice 3 (rows 18–24)**
 
@@ -321,11 +322,3 @@ Merge with develop and slice 4 (row 25 worklog + row 16):
 - **Bucket A**: `SmatchetTests.exe` 4391 / 4391.
 - **Bucket E**: merged tree, filter `DialogContract, CommandPalette, IconPicker, FuncSizeMainUi, Toolbar, Annotate, DateTime, Views, GestureKeys, Comments, FieldViewer, OfflineConflict` — all pass except the known `FuncSizeMainUi/BulkImportWindow_RendersAndShowsLoadFile`, once the toolbar state was made per instance (with the shared static, `GestureKeys/ToolbarList_KeysMoveAndRemove` failed every run). Slice 4 filter `OfflineFirst, DurationInlineEdit, TolerantParse, DialogContract, Comments, FieldViewer, LongText, Worklog, OfflineConflict, OfflineQueue, MobileViewsConfirmModal`: 85 / 85, including `LongText_EscWithTextAsksAndKeeps`, `LongText_CancelAsks_DiscardCloses` and `Worklog_OfflineQueues`. New `OfflineFirst/Comments_DiscardConfirmKeysKeep` covers the field-viewer confirm's keys: the opening Esc is not its answer, then Esc and Enter both keep; it fails with the field viewer put back to its old confirm (mutation check). The `OfflineFirst` cases skip unless the offline-first fixture is set, so they were run through `scripts/dev/test-ui-offline-first.sh` as well: that run caught `LongText_CancelAsks_DiscardCloses`, fixed by the `ConfirmFooter` Ctrl+Enter rule above.
 - **Lint / docs**: `test-lint-rules.sh --diff origin/develop` and `test-docs.sh` passed.
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*

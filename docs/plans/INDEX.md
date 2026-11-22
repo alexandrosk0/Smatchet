@@ -236,8 +236,14 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`touchscreen-support`](shipped/touchscreen-support.md) | 2026-10-31 | Plan — Touchscreen support (standalone + Unreal) |
 | [`background-traffic-idle-gating`](shipped/background-traffic-idle-gating.md) | 2026-11-02 | stop background tracker traffic when the app sits unfocused + idle — idle-gated connectivity probe, live-success probe push, outage backoff, Unreal focus feed, minimized frame throttle |
 | [`shared-dropdown-recents`](shipped/shared-dropdown-recents.md) | 2026-11-13 | Plan — Shared filter dropdown with recent picks |
+| [`input-ux-w2-dialog-contract`](shipped/input-ux-w2-dialog-contract.md) | 2026-11-16 | Plan — Input UX Wave 2: one dialog contract (audit § 4.1) |
+| [`input-ux-w2-text-field`](shipped/input-ux-w2-text-field.md) | 2026-11-16 | Plan — input UX Wave 2 piece 4.2: a shared text field |
 | [`pane-picker-jira-sites`](shipped/pane-picker-jira-sites.md) | 2026-11-16 | Plan — "+ ▾" new-pane caret with two Jira sites |
 | [`input-ux-w2-action-keys`](shipped/input-ux-w2-action-keys.md) | 2026-11-19 | Plan — Input UX Wave 2 piece 4.4: a key for every primary action |
+| [`input-ux-w2-one-matcher`](shipped/input-ux-w2-one-matcher.md) | 2026-11-19 | Plan — input UX Wave 2 piece 4.7: one matcher |
+| [`input-ux-w2-tolerant-parsing`](shipped/input-ux-w2-tolerant-parsing.md) | 2026-11-19 | input UX Wave 2 piece 4.5 — one parse-and-explain layer (durations, dates, issue URLs, site URLs, queries) with a shared inline error under the field, plus a toast on every remaining silent failure |
+| [`input-ux-w2-drafts-undo`](shipped/input-ux-w2-drafts-undo.md) | 2026-11-20 | Plan — Input UX Wave 2, piece 4.3: drafts and undo |
+| [`input-ux-w2-gesture-keys`](shipped/input-ux-w2-gesture-keys.md) | 2026-11-20 | Plan — Input UX Wave 2, piece 4.6: keyboard equivalents for pointer gestures |
 <!-- END auto-plan-index -->
 
 ### Notes

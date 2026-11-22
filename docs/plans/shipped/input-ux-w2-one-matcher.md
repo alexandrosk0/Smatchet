@@ -1,8 +1,9 @@
 # Plan — input UX Wave 2 piece 4.7: one matcher
+<!-- plan-date: 2026-11-19 -->
 
 > **Slug**: `input-ux-w2-one-matcher` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — driving the Wave 2 piece 4.7 PR against `develop`.
+> **Status**: `shipped` — Wave 2 piece 4.7, PR #2456 (squash `1dcf8dcf4`); the views list followed in PR #2463 (squash `81b0bc3ab`). Leftovers: `docs/self-improvement/categories/debt/2026-11-19-one-matcher-deferred.md`.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -113,7 +114,7 @@ void DrawText(ImDrawList* dl, const ImVec2& pos, ImU32 col, const char* text, co
 
 21. `docs/self-improvement/categories/debt/2026-11-19-one-matcher-deferred.md`: deferred surfaces and the test relocation.
 22. `Source/Core/src/Ui/AGENTS.md`: one Before-you-edit bullet: pickers and filters match through `TextMatchPure.h` and highlight through `SmatchetMatchHighlight`.
-23. `docs/plans/active/input-ux-w2-one-matcher.md`: this plan.
+23. `docs/plans/input-ux-w2-one-matcher.md`: this plan.
 
 ### File-level changes
 
@@ -209,7 +210,7 @@ None.
 - `93c8a5d` · clang-format of one include comment in the palette test.
 - `024b002` · CodeRabbit's 13 findings: UTF-8 character boundaries in the matcher, a blank wide-space dropdown filter, an unambiguous options cache key, cached row highlight ranges, the pressed-row guard, the toolbar exact-first rule, word matching in the project picker, the empty-ToPrefix rule documented.
 - `8d229c7` · the empty-ToPrefix wording in `CallstackParser.h`; this log.
-- (this commit) · CodeRabbit's head-`8d229c7` finding: field-name word starts split at the shared matcher's non-word characters (`textmatch::IsWordChar` on decoded code points), so "points" finds "Story—Points" and a no-break-space name; JQL case added.
+- last branch commit (in squash `1dcf8dcf4`, PR #2456) · CodeRabbit's head-`8d229c7` finding: field-name word starts split at the shared matcher's non-word characters (`textmatch::IsWordChar` on decoded code points), so "points" finds "Story—Points" and a no-break-space name; JQL case added.
 
 ## Deviations from plan
 - **Matcher doctests** live in `tests/Core/TextMatchPure.cases.h`, a header included once by `tests/Core/TicketGridFilterPure.test.cpp`, rather than inline in that TU: same rig (Linux subset and `SmatchetTests`), one file to move when `tests/CMakeLists.txt` unlocks (debt entry).
@@ -231,11 +232,3 @@ None.
 - **Perf**: a dropdown rebuild measured at -O2 (numbers in § UX Pillar callouts); rebuilds happen per change, not per frame.
 - **Gates**: `pre-ship.sh` lint delta, duplication, function size and `test-docs.sh` pass; the code-review agent reviewed every commit (6 findings in its first pass, all fixed, then clean); Cursor Bugbot (2) and CodeRabbit (13, then 1 on `8d229c7`) findings addressed on their threads.
 - **`grill-with-docs`**: run without an interviewer (autonomous session). No glossary in `Source/Core/src/Ui/` or the repo root defines a picker / filter / matcher term to conflict with, and the plan claims no storage shape. Nothing to change.
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index from the repository root: `bash agent-layer/agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*
