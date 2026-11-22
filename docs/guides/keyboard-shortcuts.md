@@ -292,6 +292,22 @@ window. Where a dialog's row in the tables above differs, the row describes what
 typed slash; `Ctrl+F` works from anywhere. In the search box, **Esc** clears the
 search and leaves the box.
 
+## Grid cell cursor
+
+The ticket grid keeps one **active cell**, drawn with a focus ring. Click a cell to make it the active one, or click a row's ID cell to select the row. With **Single-click to edit grid cells** on (the default) a click on an editable cell also opens its editor when you release over the same cell; with it off a double-click opens it. Dragging from one cell to another selects a range and opens no editor. With the grid focused and no text box in use:
+
+| Keys | Action |
+|---|---|
+| `Up` `Down` `Left` `Right` | Move the active cell one cell. The selection becomes that cell, so `Ctrl+C` copies it. |
+| `Home` / `End` | First / last cell of the row. |
+| `Ctrl+Home` / `Ctrl+End` | First / last cell of the grid. |
+| `PageUp` / `PageDown` | Move by a screenful of rows. |
+| `Shift` + any of the above | Grow a cell range from where it started. The active cell stays put. |
+| `Shift`+click, or drag between cells | Select a cell range. |
+| `Esc` | Clear the selection; the active cell stays. |
+
+The grid scrolls to keep the active cell in view, clear of the header row and the ID column. The active cell, a cell range and a row selection follow their issues: a sync or a re-sort does not drop them (only rows that left the view are dropped), and the active cell also follows its row through a search and comes back when the search is cleared. Typing in the search box still clears a range or row selection, as before. The arrow keys belong to the grid while it has the keyboard, so the generic focus cursor does not move with them. Keys that start and finish an edit from the grid (`F2`, `Enter`, typing, `Tab`, paste, fill-down, undo) are planned in the same plan, `docs/plans/active/input-ux-w3-grid-spreadsheet.md`.
+
 ## Keyboard versions of mouse gestures
 
 Every drag has a command you can bind, so none of these needs the mouse:

@@ -1,4 +1,5 @@
 #include "SmatchetUI.h"
+#include "SmatchetActiveProjectGridIds.h"
 #include "SmatchetActiveProjectGridUi_Internal.h"
 #include "SmatchetGridColumnInteraction_detail.h"
 #include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (HIGH-1) + ChoosePaneColumnsSource
@@ -253,6 +254,7 @@ static void ApplyGridFilterProjection(GridPane& pane, const std::vector<CachedTi
                                       const GridHierarchyOptions& hierarchy,
                                       const TrackerFieldCatalogIndex& catalogIndex) {
     pane.filteredIndices.clear();
+    ++pane.filteredRowsRevision;
     const std::string filter = GridSearchRowFilterText(pane);
     const bool filterActive = !filter.empty();
     // Split and lowercase the words once here, not once per ticket.
@@ -814,32 +816,6 @@ static void ApplyRowHoverHighlight(float rowHeight) {
     }
 }
 
-// The user selected something since the bulk edit kept its rows: the kept ids no longer describe the selection.
-void DropStaleBulkKeep(GridRectSelection& rectSel) {
-    if (rectSel.KeepStale()) {
-        rectSel.KeepIssueIds.clear();
-        rectSel.KeepRows.clear();
-    }
-}
-
-// Bulk edit keeps its rows selected by issue id (D5): after the re-sort cleared the sort-order selection, select
-// again the rows that show those issues in the new order. Runs only on a clear: once per landed bulk row while a
-// job runs, never on an idle frame.
-void RestoreBulkKeptRows(GridRectSelection& rectSel, bool selectionCleared, const std::vector<size_t>& indices,
-                         const std::vector<CachedTicket>& tickets, std::uint64_t gridSortSig) {
-    if (!selectionCleared || rectSel.KeepIssueIds.empty() || indices.empty()) {
-        return;
-    }
-    static const std::string kNoId;
-    rectSel.RestoreKeptRows(
-        static_cast<int>(indices.size()),
-        [&](int row) -> const std::string& {
-            const size_t ticketIdx = indices[static_cast<size_t>(row)];
-            return ticketIdx < tickets.size() ? tickets[ticketIdx].id : kNoId;
-        },
-        gridSortSig);
-}
-
 } // namespace
 
 // The TicketGrid BeginTable block: the five grid section helpers plus the post-layout inside-table
@@ -1121,7 +1097,11 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
     // "=") leaves the effective filter empty but must still rebuild the projection.
     bool filterChanged = (std::strcmp(lastFilter, pane.gridSearchBuf) != 0);
     if (filterChanged) {
+        // A search clears the row selection and the range, kept ids included (else the identity remap brings the rows
+        // back).
         pane.gridState.RectSel.ClearAll();
+        pane.gridState.RectSel.KeepIssueIds.clear();
+        pane.gridState.RectSel.KeepRows.clear();
     }
 
     // Treat sort+filter as one cached projection with a dirty flag and refresh it at a bounded interval (500ms)
@@ -1161,6 +1141,39 @@ static const std::string& RoutedCatalogProjectKey(const GridPane& pane, const st
     return pane.cachedPaneCatalogValid ? pane.cachedPaneCatalogProjectKey : sharedIndexProjectKey;
 }
 
+// The selection, the cell range and the active cell are drawn by sort-order row index and kept by identity
+// (SpreadsheetState: KeepIssueIds / RangeIssueIds / ActiveIssueId). A change of sort order, shown rows or row count
+// re-expresses them in the new order (Remap) instead of clearing them: a sync, a re-sort or a landed edit moves the
+// rows, and only a row that left the view drops out of the selection. A search changes the shown order without
+// changing the sort signature, hence the filtered-rows revision.
+static void RemapGridSelectionIdentity(GridPane& pane, const std::vector<CachedTicket>& tickets,
+                                       const std::vector<TicketGridColumn>& columns, std::uint64_t gridSortSig,
+                                       bool rowsShrunk) {
+    GridRectSelection& rectSel = pane.gridState.RectSel;
+    SpreadsheetState& gs = pane.gridState;
+    const bool shownRowsChanged = gs.ShownRowsRevision != pane.filteredRowsRevision;
+    const bool orderChanged = (rectSel.HasAnySelection() || !rectSel.KeepIssueIds.empty()) &&
+                              (rectSel.SortSignature != gridSortSig || shownRowsChanged);
+    const GridShownRowIds shownIds{pane.filteredIndices, tickets};
+    const GridDrawnColumnFieldIds columnIds{columns};
+    const int shownRowCount = static_cast<int>(pane.filteredIndices.size());
+    const int drawnColumnCount = static_cast<int>(columns.size());
+    if (orderChanged || rowsShrunk) {
+        rectSel.Remap(shownRowCount, shownIds, drawnColumnCount, columnIds, gridSortSig);
+    } else if (rectSel.SortSignature == gridSortSig) {
+        rectSel.SyncRows(shownRowCount, shownIds); // a gesture (or a menu) changed Rows: mirror it by identity
+    }
+    gs.ShownRowsRevision = pane.filteredRowsRevision;
+    gs.ResolveActive(shownRowCount, shownIds, drawnColumnCount, columnIds, gridSortSig);
+    if (gs.ScrollToRow >= shownRowCount) {
+        gs.ScrollToRow = gs.ScrollToCol = -1; // the row left the view: a pending scroll must not land elsewhere later
+    }
+    // PageUp / PageDown move one body of rows: the room left in the table, in rows.
+    const float bodyRowH = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+    const int bodyRows = bodyRowH > 0.0f ? static_cast<int>(ImGui::GetContentRegionAvail().y / bodyRowH) : 0;
+    gs.PageRows = bodyRows > 2 ? bodyRows - 1 : 1;
+}
+
 void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     AppController& app = ctx.app;
     GridPane& pane = ctx.pane;
@@ -1169,19 +1182,7 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     const bool readOnlyMode = ctx.readOnlyMode;
     std::uint64_t& gridSortSig = ctx.gridSortSig;
 
-    // Rectangular selection invalidation: anchor/extent are expressed in
-    // current sort-order row indices, so any change to sort order or ticket
-    // set must clear the selection to avoid nonsense highlights / copies.
     gridSortSig = ComputeGridSortSignature(pane.cachedSortFingerprint, pane.snapshotRevision, tickets.size());
-    GridRectSelection& rectSel = pane.gridState.RectSel;
-    DropStaleBulkKeep(rectSel);
-    bool selectionCleared = false;
-    if ((rectSel.HasAnySelection() || !rectSel.KeepIssueIds.empty()) && rectSel.SortSignature != gridSortSig) {
-        rectSel.ClearAll();
-        rectSel.KeepRows.clear(); // the cleared selection matches it again; a restore below re-stamps it
-        selectionCleared = true;
-    }
-
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.rows");
     // The pending-edit cue (offline queue) of this pane's rows: the index is rebuilt only when a queue snapshot changed
     // (no SQLite, no per-row work), and the pane's own cache namespace keys every row lookup below.
@@ -1195,14 +1196,9 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
     pane.filteredIndices.erase(std::remove_if(pane.filteredIndices.begin(), pane.filteredIndices.end(),
                                               [&](size_t idx) { return idx >= tickets.size(); }),
                                pane.filteredIndices.end());
-    if (pane.filteredIndices.size() != oldFilteredCount) {
-        rectSel.ClearAll();
-        rectSel.KeepRows.clear();
-        selectionCleared = true;
-    }
+    const bool rowsShrunk = pane.filteredIndices.size() != oldFilteredCount;
     const std::vector<size_t>& indicesToUse = pane.filteredIndices;
-
-    RestoreBulkKeptRows(rectSel, selectionCleared, indicesToUse, tickets, gridSortSig);
+    RemapGridSelectionIdentity(pane, tickets, columns, gridSortSig, rowsShrunk);
 
     // Per-frame cache: raw status string → highlight color. Avoids ToLowerAsciiCopy +
     // 4 find() per visible row — each unique status value is lowercased only once.
@@ -1244,6 +1240,11 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
 
     ImGuiListClipper clipper;
     clipper.Begin(static_cast<int>(indicesToUse.size()));
+    // Rows a keyboard move is heading for stay drawn (and so reachable by the scroll) wherever the clipper window
+    // sits: without this, a cell the arrows moved far off screen is never submitted and never scrolled to.
+    if (pane.gridState.ScrollToRow >= 0 && pane.gridState.ScrollToRow < static_cast<int>(indicesToUse.size())) {
+        clipper.IncludeItemByIndex(pane.gridState.ScrollToRow);
+    }
     while (clipper.Step()) {
         for (int clippedRow = clipper.DisplayStart; clippedRow < clipper.DisplayEnd; ++clippedRow) {
             const size_t r = static_cast<size_t>(clippedRow);

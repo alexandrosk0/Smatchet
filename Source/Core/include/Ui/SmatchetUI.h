@@ -613,6 +613,10 @@ class SmatchetUI {
     void drawActiveProjectGridNewIssue(ActiveProjectDrawCtx& ctx);
     void drawActiveProjectGridPost(ActiveProjectDrawCtx& ctx);
     void drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx);
+    // Keyboard cell cursor: arrows, Home / End, Ctrl+Home / End, PageUp / PageDown (Shift extends the range). Claims
+    // those keys from ImGui's generic nav while the grid is focused with no text input, so one press moves one cell.
+    // Defined in SmatchetActiveProjectGridKeys.cpp.
+    void drawActiveProjectGridCursorKeys(ActiveProjectDrawCtx& ctx);
     // View-switch + grid-context-change bookkeeping (resets unsaved-edit flags, recomputes
     // gridSortEnvironmentChanged). Split out of drawActiveProjectWindow under the function-size cap.
     void applyActiveProjectViewChange(ActiveProjectDrawCtx& ctx);

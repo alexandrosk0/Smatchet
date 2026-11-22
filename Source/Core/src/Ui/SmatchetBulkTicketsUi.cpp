@@ -669,7 +669,8 @@ std::string BuildBulkExportText(AppController& app, UiDrawSession& d) {
         std::set<int> allRows;
         if (sel.Active) {
             for (int r = sel.MinRow(); r <= sel.MaxRow(); ++r) {
-                if (r >= 0) {
+                // A re-sort can split a range: only its member rows export, not the rows now between them.
+                if (r >= 0 && sel.RectContains(r, sel.MinCol())) {
                     allRows.insert(r);
                 }
             }

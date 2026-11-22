@@ -188,6 +188,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/MainThreadDispatcherConcurrent.test.cpp
         # Grid CSV/TSV copy helpers + the spreadsheet formula guard (#2337). Header-only and ImGui-free.
         Core/GridCopyPure.test.cpp
+        # Grid cell-cursor math: moves at the edges, Tab wrap, skip-read-only sweep, range extend (input UX Wave 3). Header-only.
+        Core/GridCursorPure.test.cpp
         # Copy-on-write sink list behind the automation error / Lua log sinks (#2307); its concurrent
         # register-vs-invoke case is a TSan target. Header-only.
         Core/StringSinkList.test.cpp
@@ -997,6 +999,8 @@ add_executable(SmatchetTests
     # Key-cell "Copy N selected rows as CSV": row -> ticket-index mapping + RFC 4180 line join
     # (GridCopyPure.h) and CsvEscapeField (StringUtil.h). Header-only; no extra production .cpp.
     Core/GridCopyPure.test.cpp
+    # Grid cell-cursor math (Ui/GridCursorPure.h), header-only; no extra production .cpp.
+    Core/GridCursorPure.test.cpp
     # ViewDefinition::Columns — the ordered-column-list model replacing ColumnOrder +
     # ColumnWidths + an independently-mutable Fields (column-view-save-simplification).
     # Header-only pure helpers over ViewDefinition; no extra production .cpp to link.

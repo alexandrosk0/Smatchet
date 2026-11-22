@@ -272,7 +272,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
 
     // Google-Sheets-style selection: end drag on mouse release, clear on outside
     // click, and service Ctrl+C (copy as TSV) / Escape (clear) / Shift+Space (whole
-    // row) while focused. The helper early-returns when no grid was drawn this frame.
+    // row) while focused, then the cell-cursor keys. The helper early-returns when no grid was drawn this frame.
     drawActiveProjectGridRectSelKeys(ctx);
 
     // Long-text / ADF modal editor lives at top-level so it survives the originating cell scrolling out
