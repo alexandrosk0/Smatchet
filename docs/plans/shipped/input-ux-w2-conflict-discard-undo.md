@@ -1,8 +1,9 @@
 # Plan — Input UX Wave 2 leftover: Undo on the conflict resolver's "Discard my edit"
+<!-- plan-date: 2026-11-23 -->
 
 > **Slug**: `input-ux-w2-conflict-discard-undo` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -19,7 +20,7 @@ Intended outcome: "Discard my edit" closes the resolver and shows a "Edit discar
   - `commit` takes it out and calls `AppController::DeletePendingFieldEdits({id})`, which writes the audit entry as today (ADR-0016: dead letters stay failures-only).
   - The toast settles as a commit on its timeout, the live cap, `DismissAllLive` and at shutdown (`CommitPendingUndos`, which runs while the services exist).
 - **Hidden while held.** `BuildUnifiedOfflineRows` output is filtered by the held set, so the row cannot be opened, resolved, selected, copied or deleted from the panel during the window. A selection holding it is pruned by the existing `PruneOfflineSelectionToLiveRows`.
-- **Cache swap guard.** Row ids are global in the one local cache DB (`AUTOINCREMENT`). The commit captures a `std::weak_ptr` to `app.Cache` at the discard. If the cache was recreated in between ("Recreate local cache database"), the commit only logs and deletes nothing: the old row went with the old DB, and an id in the new DB is not the one discarded.
+- **Cache swap guard.** Row ids are global in the one local cache DB (`AUTOINCREMENT`). The commit captures a `std::weak_ptr` to the app's cache (`LookupCacheShared()`) at the discard. If the cache was recreated in between ("Recreate local cache database"), the commit only logs and deletes nothing: the old row went with the old DB, and an id in the new DB is not the one discarded.
 - **Commit failure.** If `DeletePendingFieldEdits` reports `Failed > 0`, the commit logs a warning and arms the panel status "The edit could not be discarded; it is still queued." (it stays a conflict row, so nothing replays it).
 - **Both buttons.** The unverified and unknown panes share one helper, `DiscardConflictEditWithUndo`, so they behave the same. The panel status line "Edit discarded." is dropped, because the toast says it.
 
@@ -32,15 +33,15 @@ N/A: no tracker, command, MCP, Lua or storage interface changes. `DeletePendingF
 ## Files to modify
 
 1. `Source/Core/src/Ui/SmatchetOfflineQueueUi.cpp`: `g_conflictDiscardHeld`, `DiscardConflictEditWithUndo`, the filter after `BuildUnifiedOfflineRows`, both "Discard my edit" call sites, and the test seam definitions.
-2. `Source/Core/include/Ui/SmatchetOfflineQueueActionsUi.h`: declarations of the test seams `SmatchetOfflineConflictDiscardHeldCountForTest()` and `SmatchetOfflineConflictDiscardHeldClearForTest()`, next to the existing `SmatchetOfflineConflictDraft*ForTest` seams.
+2. `Source/Core/include/Ui/SmatchetOfflineQueueActionsUi.h`: declarations of the test seams `SmatchetOfflineConflictDiscardHeldCountForTest()` and `SmatchetOfflineConflictDiscardHeldForTest(id)`, next to the existing `SmatchetOfflineConflictDraft*ForTest` seams.
 3. `tests/ui/offline_conflict_modal_panes.test.cpp`: one bucket-E case in its existing registration (no registry or CMake edit).
-4. `docs/plans/active/input-ux-w2-conflict-discard-undo.md`: this plan (moved to `shipped/` on ship), and `docs/plans/INDEX.md`.
+4. `docs/plans/shipped/input-ux-w2-conflict-discard-undo.md`: this plan (moved to `shipped/` on ship), and `docs/plans/INDEX.md`.
 5. `docs/self-improvement/categories/debt/2026-11-22-drafts-undo-deferred.md`: narrow the #116 bullet to the queue panel's own row Delete.
 
 ## Existing utilities reused
 
 - `SmatchetToastManager::PushUndoable` / `UndoNewest` / `LiveUndoableCount` / `HasLive` (`Ui/SmatchetToast.h`).
-- `AppController::DeletePendingFieldEdits` (audit entry included), `AppController::Cache` (atomic shared_ptr).
+- `AppController::DeletePendingFieldEdits` (audit entry included), `AppController::LookupCacheShared` (the cache identity).
 - `FinishConflictModal`, `ArmOfflineQueuePanelStatus`, `PruneOfflineSelectionToLiveRows`.
 - The test file's `EnterConflictHost` / `QueueConflictHostEdit` / `LeaveConflictHost` and `FakeNetworkSwitch`.
 
@@ -50,9 +51,9 @@ N/A: nothing is extracted. `SmatchetOfflineQueueUi.cpp` is over the 1,200-line `
 
 ## UX Pillar callouts
 
-- **Pillar 1**: one `std::set` lookup per offline row per frame, only while a discard is held (the filter is skipped when the set is empty).
+- **Pillar 1**: one hash lookup per offline row per frame, only while a discard is held (the filter is skipped when nothing is held).
 - **Pillar 2**: the delete is the same UI-thread SQLite delete as today, moved to the toast's settle (or shutdown).
-- **Pillar 3**: the commit captures `AppController*`. That is safe because `~AppController` settles pending undos (`SettleUserWorkBeforeShutdown`) before its members die. The cache is held as a `weak_ptr`, never as an owning pointer.
+- **Pillar 3**: the commit captures `AppController*`. That is safe because `~AppController` settles pending undos (`SettleUserWorkBeforeShutdown`) before its members die. The cache (`LookupCacheShared()`) is held as a `weak_ptr`, never as an owning pointer.
 - **Pillar 4**: Undo is reachable by Ctrl+Z as well as the button.
 - **Pillar 6**: the held row stays in the queue table, so a crash during the window keeps the edit queued (as a conflict). Nothing is cached as final, and the tracker is never called.
 
@@ -68,6 +69,7 @@ N/A: nothing is extracted. `SmatchetOfflineQueueUi.cpp` is over the 1,200-line `
 
 - **Risk: a held row replays.** It cannot. It is a conflict row, which replay skips, and the resolve that clears the mark is unreachable while the row is hidden. If a future path clears the mark without the panel, the row would replay and the commit would delete an id already gone (a no-op that logs).
 - **Risk: other surfaces still count the held row for up to 8 s** (status-bar offline count, grid pending markers). Accepted: the window is short and Undo is the point of it.
+- **Known Low: a recreate that fails after closing the database.** "Recreate local cache database" withdraws the cache while it runs. If it fails after the old file closed, it reopens the same, unwiped file as a new cache object. A discard that settles across that sees a different object and deletes nothing, so the edit comes back as a conflict row. No data is lost, and discarding it again works. Telling "same file reopened" apart from "new database" would need a cache generation id in `Persistence/`, which this UI-only slice does not add.
 - **Non-goal**: undo for the queue panel's row Delete and bulk delete (non-conflict rows replay), which keep their confirm.
 
 ## Implementation handoff
@@ -76,9 +78,9 @@ N/A: single slice in `Source/Core/src/Ui/` (offline queue UI; `offline-sync` sco
 
 ## Verification
 
-- **Bucket E** (`OfflineConflictModalPanes/ConflictModal_DiscardMyEditUndo`): queue an edit, open the resolver on it as `unverified` with the tracker held down, click "Discard my edit".
-  - The resolver closes, one undoable "Edit discarded" toast is live, the row is held (seam count 1) and still in `GetPendingFieldEdits`.
-  - `UndoNewest`: the row is no longer held and is still queued.
+- **Bucket E** (`OfflineConflictModalPanes/Unverified_DiscardMyEditUndo`): queue an edit, mark it a conflict, open the resolver on it as `unverified` with the tracker held down, click "Discard my edit".
+  - The resolver closes, one undoable "Edit discarded" toast is live, the row is held, gone from the panel, and still in `GetPendingFieldEdits`.
+  - `UndoNewest`: the row is no longer held, shows in the panel again and is still queued.
   - Discard again, then `DismissAllLive` (which commits): the row is gone from `GetPendingFieldEdits`.
 - **Mutation checks**: the case fails with the commit's delete removed, and with the held-set insert removed.
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`.
@@ -99,13 +101,23 @@ None.
 
 ## Implementation log
 
+- `SmatchetOfflineQueueUi.cpp`: the held set is a map from row id to `HeldConflictDiscard` (state + the `weak_ptr` cache taken at the discard). `SettleHeldConflictDiscard` runs from the toast's commit; `DropHeldConflictDiscards(app, d, rows)` runs after `BuildUnifiedOfflineRows` and retries waiting entries, forgets deleted ones, then hides the held rows. Both "Discard my edit" buttons call `DiscardConflictEditWithUndo`.
+- `SmatchetOfflineQueueActionsUi.h`: the two test seams.
+- `offline_conflict_modal_panes.test.cpp`: `CaseDiscardMyEditUndo`, registered as `Unverified_DiscardMyEditUndo`.
+
 ## Deviations from plan
+
+- **Review (code-review agent, 0 critical/high/medium, 3 low), all fixed:**
+  1. The commit released the hold before the published queue snapshot dropped the deleted row, so the row could flash back for a frame or two. The entry now stays in a `Deleted` state until the snapshot no longer has the row.
+  2. A toast that settled while a cache recreate had the cache withdrawn dropped the delete, and a recreate that failed then put the same cache back, so the edit came back. The entry now waits (`AwaitingCache`) and is retried on the next panel draw. The related failed-recreate case that reopens the same file as a new object is kept as a known Low (§ Risks).
+  3. The test's hidden/back checks used the wildcard row ref. They now pin the row by its ImGui ID, and the settle step also checks the row never shows between the delete and the snapshot.
+- **Review re-check (1 low), fixed:** a `Deleted` entry was forgotten only once the snapshot lost its id. After a successful recreate the new database numbers rows from 1 again, so an unrelated queued edit with the same id could stay hidden. A `Deleted` entry is now also forgotten when the cache is a different object than at the discard.
+- The held set is an `unordered_map` with a state, not the planned `unordered_set` (from fixes 1 and 2).
+- `DrawUnifiedOfflineQueuesPanel` now builds the rows and runs `DropHeldConflictDiscards` before its empty-queue early return. Otherwise a discard that deleted the last queued row was never forgotten (found by the new test).
 
 ## Verification (actual)
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index from the repository root: `bash agent-layer/agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*
+- **Bucket E**: `OfflineConflictModalPanes` with the Jira fixture and the local cache (`SMATCHET_UITEST_WITH_LOCAL_CACHE=1`, `test-ui-jira-deterministic-backend.sh`): 17/17, no skips, `Unverified_DiscardMyEditUndo` included. `OfflineConflictModalPanes,OfflineFirst` on the default driver: 55/55 (the conflict cases skip there without the fixture).
+- **Mutation checks**: each failed the new case (16/1): the commit's delete removed, the held-set insert removed (both on the first revision), and the `Deleted` state replaced by an immediate erase (the row flashes back).
+- **Build gate**: `ninja-iter-msvc` `SmatchetStandalone` + `SmatchetCore_DX12` clean.
+- **Not covered by a test**: the `AwaitingCache` retry (a toast settling mid-recreate). No test seam holds a recreate open; the path is reviewed only.
