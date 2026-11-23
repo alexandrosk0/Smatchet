@@ -25,6 +25,7 @@
 
 class ITrackerBackend;
 class TicketSyncService;
+struct TrackerConfig;
 struct ViewDefinition;
 
 /// Per-context in-memory field-catalog block (multi-grid Slice 3, plan item 17 +
@@ -227,6 +228,36 @@ struct GridLiveContext {
     /// pane's first sync resolves it. shared_ptr<const> so the type stays forward-declared
     /// here (full ViewDefinition is heavy — see ConfigManager.h).
     std::shared_ptr<const ViewDefinition> resolvedOwnView;
+
+    /// The pane's own field-catalog fetch (AppController::populatePaneCatalogAfterSync_), for the grid's cue and its
+    /// Retry. UI thread only: written by the launch and by the main-thread apply, read by the grid draw.
+    struct PaneCatalogFetchState {
+        /// The pane's latest catalog-fetch configuration: stored by every populate call (each sync kick, re-fetch
+        /// and Retry) unless the pane already has a live catalog, even while a fetch runs or when none could start, so
+        /// it can differ from the one the running fetch uses; the apply judges a result by the configuration captured
+        /// with that fetch, never by this. Retry and the apply's re-fetch run this one. Null until populate first runs
+        /// for the pane. shared_ptr<const> so TrackerConfig stays forward-declared here.
+        std::shared_ptr<const TrackerConfig> Config;
+        /// The project that latest request is scoped to ("" = unscoped), stored with Config.
+        std::string ProjectKey;
+        /// Names the fetch in flight (AppController::paneCatalogFetchSeq_, unique for the process). A result whose
+        /// token differs is from a superseded fetch, or from a context this pane id had before it was retired, and
+        /// touches nothing here.
+        std::uint64_t FetchToken = 0;
+        bool InFlight = false;
+        /// The scope (project, "" = unscoped), tracker site (cache key) and PaneCatalogFetchSeq of the fetch in
+        /// flight. A request for the same scope and site while that fetch is still the pane's latest is a duplicate
+        /// and waits for it; any other request supersedes it. Once a skip (the loaded catalog answers the view) or a
+        /// newer fetch has moved the sequence, the fetch in flight will be dropped, so it is no request's answer.
+        std::string InFlightProjectKey;
+        std::string InFlightSiteKey;
+        std::uint64_t InFlightSeq = 0;
+        /// The last fetch failed with no saved copy to fall back to, or its result was owed after a backend change.
+        /// Cleared when a fetch starts or a catalog lands.
+        bool Failed = false;
+        std::string LastError;
+    };
+    PaneCatalogFetchState paneCatalogFetch;
 
     // --- Ticket-change monitor anchors (ticket-change-monitor plan, S1c-2, item 8) --------
     // UI-thread-only bookkeeping for the per-pane change probe, same single-thread discipline

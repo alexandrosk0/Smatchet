@@ -1174,18 +1174,9 @@ bool AppController::ApplyStartupFieldCatalogSnapshot(GridContextFieldCatalog& ca
                                                      std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
                                                      const std::string& activeTrackerType,
                                                      const std::string& projectKey, bool snapshotFresh) {
-    const bool jira = activeTrackerType == "Jira";
-    if (jira) {
-        for (auto& field : snapFields) {
-            if (field.Id == "timespent" || field.Id == "aggregatetimeoriginalestimate" ||
-                field.Id == "aggregatetimeestimate" || field.Id == "aggregatetimespent") {
-                field.ReadOnly = true;
-            }
-        }
-        EraseCatalogLegacyCommentField(snapFields);
-        EnsureCatalogHistoryField(snapFields);
-        EnsureCatalogCommentsField(snapFields);
-    }
+    // The same corrections every other catalog path applies (the snapshot was saved before them): every tracker
+    // but Plane, not only Jira, as the live fetch of a GitHub or Linear catalog already gets them.
+    ApplyCatalogCorrections(snapFields, activeTrackerType);
     const std::size_t fieldCount = snapFields.size();
     std::shared_ptr<const std::vector<TrackerField>> published =
         std::make_shared<std::vector<TrackerField>>(std::move(snapFields));
@@ -1241,16 +1232,9 @@ const TrackerField* AppController::FindFieldById(const std::string& fieldId) con
     return it == fields.end() ? nullptr : &(*it);
 }
 
-void AppController::EnsureCatalogHistoryField(std::vector<TrackerField>& fields) { EnsureHistoryField(fields); }
-
-void AppController::EnsureCatalogCommentsField(std::vector<TrackerField>& fields) { EnsureCommentsField(fields); }
-
-void AppController::EraseCatalogLegacyCommentField(std::vector<TrackerField>& fields) {
-    EraseLegacyCommentField(fields);
-}
-
 void AppController::ApplyCatalogCorrections(std::vector<TrackerField>& fields, const std::string& trackerType) {
-    if (trackerType != "Plane") {
+    // Normalized like the focused apply's backend key: clients report their kind in their own case ("github").
+    if (ConfigManager::NormalizeViewsBackendKey(trackerType) != "Plane") {
         ApplyJiraCatalogCorrections(fields);
     }
 }

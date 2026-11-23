@@ -5,6 +5,7 @@
 
 #include <doctest/doctest.h>
 
+#include "../support/FakeNetworkSwitch.h"
 #include "../support/FakeTrackerClient.h"
 #include "../support/OfflineQueueTestEnv.h"
 
@@ -15,6 +16,9 @@
 #include "GridContextDepsAdapter.h"
 #include "GridContextFieldCatalogOps.h"
 #include "GridLiveContext.h"
+#include "ITrackerBackendFactory.h"
+#include "Logger.h"
+#include "Sync/TicketSyncService.h"
 #include "Tracker/FieldCatalogCache.h"
 #include "Tracker/JqlProjectScope.h"
 #include "Tracker/TrackerFieldSchema.h"
@@ -1359,6 +1363,36 @@ TEST_CASE("Pane catalog: switching back to the loaded view drops a fetch still o
     CHECK_FALSE(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_B"));
 }
 
+TEST_CASE("Pane catalog: returning to a view whose fetch was superseded fetches it again") {
+    // Catalog A is loaded; the view switches to B (fetch held), back to A (the skip supersedes B's fetch), then to B
+    // again while B's first fetch is still out. That fetch will be dropped, so the second request for B must not wait
+    // on it as a duplicate: it starts its own fetch, and B's catalog lands.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    auto backend = std::make_unique<HeldFirstFetchBackend>();
+    HeldFirstFetchBackend* const held = backend.get();
+    AddCatalogPane(app, std::move(backend));
+    ReleaseHeldFetchOnExit releaseOnExit{held};
+    SeedPaneCatalog(app, "A");
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, "project = B");
+    REQUIRE(PumpUntil(app, [held]() { return held->FirstStarted(); }));
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, "project = A"); // A is loaded: no fetch, B's is superseded
+    app.KickPaneCatalogFetchForTest(kCatalogPane, cfg, "project = B"); // B again, while its first fetch is out
+    REQUIRE(PumpUntil(app, [&app]() { return PaneCatalogScopedTo(app, kCatalogPane, "B"); }));
+    CHECK(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_B"));
+
+    held->Release();
+    REQUIRE(PumpUntil(app, [held]() { return held->FirstReturned(); }));
+    PumpFor(app,
+            std::chrono::milliseconds(300)); // the superseded first fetch's result is posted right after it returns
+    CHECK(PaneCatalogScopedTo(app, kCatalogPane, "B"));
+    CHECK(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_B"));
+}
+
 TEST_CASE("AppController::GetAvailableFields reads the snapshot and the project it was fetched for together") {
     // The grid's shared frame index keeps this key beside the snapshot it indexes, so a components cell compares its
     // row against the project of the catalog it actually reads, even after focus moves later in the frame.
@@ -1380,4 +1414,307 @@ TEST_CASE("AppController::GetAvailableFields reads the snapshot and the project 
     REQUIRE(fields);
     CHECK(project.empty());
     CHECK(HasField(*fields, "customfield_any"));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A grid pane's own field catalog (AppController::populatePaneCatalogAfterSync_), against the real headless controller.
+// The pane's first sync swaps its backend in on the UI thread (SetBackend bumps the context's backend generation), and
+// the catalog fetch kicked right after it must still land: it used to carry the generation captured before the swap,
+// so every new pane's catalog was dropped and the grid rendered every cell read-only with no banner. Also covered:
+// a live catalog that lands mid-fetch is never overwritten, and offline the pane restores its saved catalog or reports
+// the failure for the grid's Retry (Quality Pillar 6). Scoping the fetch to the pane's view project is covered by the
+// "Pane catalog:" cases above.
+// The test thread stands in for the frame loop: it drains the main-thread dispatcher.
+
+namespace {
+
+const char* const kPaneId = "pane-2";
+const char* const kPaneProject = "PANEPROJ";
+
+/// What every backend the factory builds shares with the test.
+struct PaneCatalogScript {
+    std::mutex Mutex;
+    std::string LastProject; ///< the project the last catalog fetch was scoped to (guarded by Mutex)
+    std::atomic<int> Fetches{0};
+    /// When set, a catalog fetch announces itself (Entered) and waits for Release, so the test can land another
+    /// catalog while the pane's fetch is in flight. Bounded wait: a test that never releases cannot hang the worker.
+    std::atomic<bool> Gate{false};
+    std::atomic<bool> Entered{false};
+    std::atomic<bool> Release{false};
+    /// When set, the catalog fetch fails (non-retryable) while the rest of the backend, the issue sync included, works.
+    std::atomic<bool> FailCatalog{false};
+};
+
+/// A fake backend whose catalog fetch reports the project it was scoped to and can be held mid-fetch.
+class PaneCatalogBackend : public smatchet_tests::FakeTrackerClient {
+  public:
+    PaneCatalogBackend(std::string trackerType, std::shared_ptr<PaneCatalogScript> script)
+        : FakeTrackerClient(std::move(trackerType)), script_(std::move(script)) {}
+
+    Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& cfg,
+                                                                      const std::string& projectKey) override {
+        {
+            std::lock_guard<std::mutex> lk(script_->Mutex);
+            script_->LastProject = projectKey;
+        }
+        script_->Fetches.fetch_add(1);
+        if (script_->Gate.load()) {
+            script_->Entered.store(true);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (!script_->Release.load() && std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        if (script_->FailCatalog.load()) {
+            return Result<TrackerFieldCatalogResult, TrackerError>::Err(
+                TrackerErrorInvalidRequest("the field catalog is unavailable"));
+        }
+        return FakeTrackerClient::FetchFieldCatalog(cfg, projectKey);
+    }
+
+  private:
+    std::shared_ptr<PaneCatalogScript> script_;
+};
+
+/// Builds a PaneCatalogBackend of the requested tracker type (so a later sync does not swap it again), answering the
+/// catalog fetch with one field and failing like a real outage while GlobalFakeNetwork() is down.
+class PaneCatalogBackendFactory : public ITrackerBackendFactory {
+  public:
+    explicit PaneCatalogBackendFactory(std::shared_ptr<PaneCatalogScript> script) : script_(std::move(script)) {}
+
+    std::unique_ptr<ITrackerBackend> Create(const std::string& trackerType, const TrackerConfig& /*cfg*/) override {
+        std::unique_ptr<PaneCatalogBackend> backend = std::make_unique<PaneCatalogBackend>(trackerType, script_);
+        TrackerFieldCatalogResult catalog;
+        TrackerField field;
+        field.Id = "customfield_pane";
+        field.Name = "Pane field";
+        catalog.Fields.push_back(field);
+        backend->SetFieldCatalogResult(catalog);
+        backend->AttachNetwork(&smatchet_tests::GlobalFakeNetwork());
+        return std::unique_ptr<ITrackerBackend>(std::move(backend));
+    }
+
+  private:
+    std::shared_ptr<PaneCatalogScript> script_;
+};
+
+/// The pane's configuration: a Jira pane on site A. Its query names kPaneProject, but the kick in these tests resolves
+/// no view, so the catalog fetch is unscoped.
+TrackerConfig PaneConfig() {
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.TrackerType = "Jira";
+    cfg.Domain = "https://site-a.example.atlassian.net";
+    cfg.JqlQuery = std::string("project = ") + kPaneProject + " ORDER BY updated DESC";
+    return cfg;
+}
+
+/// WARN entries in the logger's in-memory ring whose message contains `text`.
+int CountWarnings(const std::string& text) {
+    int count = 0;
+    for (const LogEntry& entry : Logger::Instance().GetEntriesSnapshot()) {
+        if (entry.level == LogLevel::Warn && entry.message.find(text) != std::string::npos) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+const char* const kSavedCatalogWarning = "live field catalog fetch failed; using the saved catalog";
+
+std::string LastProject(PaneCatalogScript& script) {
+    std::lock_guard<std::mutex> lk(script.Mutex);
+    return script.LastProject;
+}
+
+/// A controller with the scripted factory and one live, unsynced pane context.
+struct PaneRig {
+    std::shared_ptr<PaneCatalogScript> Script = std::make_shared<PaneCatalogScript>();
+    AppController App;
+    GridLiveContext* Pane = nullptr;
+    PaneRig() {
+        App.SetBackendFactory(std::make_unique<PaneCatalogBackendFactory>(Script));
+        Pane = App.EnsurePaneContextLive(kPaneId, "Jira");
+        REQUIRE(Pane != nullptr);
+    }
+    void StartPaneSync() { App.EnsurePaneLiveSyncStarted(kPaneId, PaneConfig(), std::string()); }
+};
+
+} // namespace
+
+TEST_CASE("A pane's own catalog lands after its first sync swaps its backend in") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    smatchet_tests::ScopedFakeNetworkReset net;
+    PaneRig rig;
+    CHECK_FALSE(rig.App.IsPaneFieldCatalogPopulated(kPaneId));
+
+    rig.StartPaneSync(); // the first sync creates the pane's backend (generation moves), then the catalog fetch runs
+    REQUIRE(PumpUntil(rig.App, [&]() { return rig.App.IsPaneFieldCatalogPopulated(kPaneId); }));
+
+    const std::shared_ptr<const std::vector<TrackerField>> fields = rig.App.GetPaneAvailableFields(kPaneId);
+    REQUIRE(fields != nullptr);
+    CHECK(HasField(*fields, "customfield_pane"));
+    // The catalog fixups every other path applies: a Jira catalog gets the synthetic History and Comments columns.
+    CHECK(HasField(*fields, "history"));
+    CHECK(HasField(*fields, "comments"));
+    // This kick resolved no view for the pane (empty view id), so the fetch takes the documented unscoped fallback:
+    // the config's query is the focused view's, another pane's scope. Scoping from a resolved view is covered by the
+    // "Pane catalog:" cases above.
+    CHECK(LastProject(*rig.Script).empty());
+    // Exactly one fetch: the one latched after the swap applied. A fetch latched before the swap (the original bug)
+    // is stale on arrival and needs a second fetch, so this count is what pins the latch's position. Nothing else
+    // fetches the catalog in this headless rig.
+    CHECK(rig.Script->Fetches.load() == 1);
+    const AppController::PaneCatalogFetchStatus status = rig.App.GetPaneCatalogFetchStatus(kPaneId);
+    CHECK_FALSE(status.InFlight);
+    CHECK_FALSE(status.Failed);
+    CHECK(status.OwnCatalogPopulated);
+}
+
+TEST_CASE("A pane's catalog fetch that lands after a live catalog does not overwrite it") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    smatchet_tests::ScopedFakeNetworkReset net;
+    PaneRig rig;
+    rig.App.SetFocusedPane(kPaneId);
+    rig.Script->Gate.store(true);
+
+    rig.StartPaneSync();
+    REQUIRE(PumpUntil(rig.App, [&]() { return rig.Script->Entered.load(); })); // the pane's fetch is in flight
+    CHECK(rig.App.GetPaneCatalogFetchStatus(kPaneId).InFlight);
+
+    // The focused grid's project-scoped fetch lands first, applied on the UI thread as production applies it.
+    TrackerField scoped;
+    scoped.Id = "customfield_scoped";
+    scoped.Name = "Scoped field";
+    REQUIRE(rig.App.ApplyGridFieldCatalogResult(rig.App.LatchGridCatalogFetch(), PaneConfig(), kPaneProject, {scoped},
+                                                {}, {}, std::string(), false));
+    rig.Script->Release.store(true);
+    REQUIRE(PumpUntil(rig.App, [&]() { return !rig.App.GetPaneCatalogFetchStatus(kPaneId).InFlight; }));
+
+    const std::shared_ptr<const std::vector<TrackerField>> fields = rig.App.GetPaneAvailableFields(kPaneId);
+    REQUIRE(fields != nullptr);
+    CHECK(HasField(*fields, "customfield_scoped"));
+    CHECK_FALSE(HasField(*fields, "customfield_pane"));
+    CHECK_FALSE(rig.App.GetPaneCatalogFetchStatus(kPaneId).Failed);
+    REQUIRE(rig.App.FlushFieldCatalogSnapshotIo()); // the grid apply queued a snapshot save into the temp dir
+}
+
+TEST_CASE("Offline with no saved catalog, the pane reports the failure and Retry loads it once the tracker is back") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    smatchet_tests::ScopedFakeNetworkReset net;
+    smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+    PaneRig rig;
+
+    rig.StartPaneSync();
+    REQUIRE(PumpUntil(rig.App, [&]() {
+        const AppController::PaneCatalogFetchStatus s = rig.App.GetPaneCatalogFetchStatus(kPaneId);
+        return s.Failed && !s.InFlight;
+    }));
+    AppController::PaneCatalogFetchStatus status = rig.App.GetPaneCatalogFetchStatus(kPaneId);
+    CHECK(status.CanRetry);
+    CHECK_FALSE(status.LastError.empty());
+    CHECK_FALSE(rig.App.IsPaneFieldCatalogPopulated(kPaneId)); // a failure is never recorded as loaded
+
+    smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
+    rig.App.RetryPaneFieldCatalog(kPaneId);
+    CHECK(rig.App.GetPaneCatalogFetchStatus(kPaneId).InFlight);
+    REQUIRE(PumpUntil(rig.App, [&]() { return rig.App.IsPaneFieldCatalogPopulated(kPaneId); }));
+    status = rig.App.GetPaneCatalogFetchStatus(kPaneId);
+    CHECK_FALSE(status.Failed);
+    CHECK(HasField(*rig.App.GetPaneAvailableFields(kPaneId), "customfield_pane"));
+}
+
+TEST_CASE("Offline with a saved catalog, the pane restores it with the fixups") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    smatchet_tests::ScopedFakeNetworkReset net;
+    // A snapshot an earlier live fetch saved for this pane's project (saved before the fixups, as production saves).
+    const TrackerConfig cfg = PaneConfig();
+    TrackerField saved;
+    saved.Id = "customfield_saved";
+    saved.Name = "Saved field";
+    const FieldCatalogCache::FieldCatalogIndexIdentity index = FieldCatalogCache::BuildFieldCatalogIndexIdentity(cfg);
+    std::string saveError;
+    // Unscoped: the kick resolves no view here, so the fetch and its snapshot fallback are unscoped.
+    REQUIRE(FieldCatalogCache::SaveFieldCatalogSnapshot(
+        FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, std::string()), index.backend, index.endpoint, std::string(),
+        0, {saved}, {}, {}, saveError));
+    smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+    PaneRig rig;
+    const int warningsBefore = CountWarnings(kSavedCatalogWarning);
+
+    rig.StartPaneSync();
+    REQUIRE(PumpUntil(rig.App, [&]() { return rig.App.IsPaneFieldCatalogPopulated(kPaneId); }));
+    const std::shared_ptr<const std::vector<TrackerField>> fields = rig.App.GetPaneAvailableFields(kPaneId);
+    REQUIRE(fields != nullptr);
+    CHECK(HasField(*fields, "customfield_saved"));
+    // The worker logs each failed attempt at INFO; landing on the saved copy is what reaches WARN, once.
+    CHECK(CountWarnings(kSavedCatalogWarning) == warningsBefore + 1);
+    CHECK(HasField(*fields, "history")); // the restored snapshot gets the fixups too
+    const AppController::PaneCatalogFetchStatus status = rig.App.GetPaneCatalogFetchStatus(kPaneId);
+    CHECK_FALSE(status.Failed);
+    CHECK_FALSE(status.InFlight);
+}
+
+namespace {
+
+/// Site A's catalog fetch fails with no saved copy (so the cue offers Retry), then the pane moves to site B. The pane's
+/// next sync would swap a site-B backend in and re-stamp the context's cache key (SwapBackendIfTrackerChanged); the key
+/// is what decides whose catalog may land, so the rig re-stamps it directly. (A sync session that succeeds cannot
+/// finish in this rig: its finalize warms the editmeta cache, which a never-Initialize()d controller does not have.)
+/// Afterwards a fetch would succeed, so any fetch with site A's stored configuration would land.
+void FailSiteAThenMoveToSiteB(PaneRig& rig) {
+    rig.Script->FailCatalog.store(true);
+    rig.StartPaneSync();
+    REQUIRE(PumpUntil(rig.App, [&]() {
+        const AppController::PaneCatalogFetchStatus s = rig.App.GetPaneCatalogFetchStatus(kPaneId);
+        return s.Failed && !s.InFlight;
+    }));
+    TrackerConfig siteB = PaneConfig();
+    siteB.Domain = "https://site-b.example.atlassian.net";
+    const std::string siteBKey = smatchet::cache_keys::TrackerCacheBackendKey(siteB);
+    REQUIRE(siteBKey != smatchet::cache_keys::TrackerCacheBackendKey(PaneConfig()));
+    rig.Pane->SetCacheBackendKey(siteBKey);
+    rig.Script->FailCatalog.store(false);
+}
+
+} // namespace
+
+TEST_CASE("Retry after a site change leaves the pane's running sync for the new site alone") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    smatchet_tests::ScopedFakeNetworkReset net;
+    PaneRig rig;
+    FailSiteAThenMoveToSiteB(rig);
+    // The pane's sync is still running: in this rig a session never finalizes (no TickStreamingApply), which stands
+    // in for the new site's sync streaming when the user clicks Retry.
+    REQUIRE(rig.Pane->ticketSync_->HasPendingWork());
+    REQUIRE(rig.App.IsPaneSyncLive(kPaneId));
+
+    const int fetchesBefore = rig.Script->Fetches.load();
+    rig.App.RetryPaneFieldCatalog(kPaneId); // the stored configuration still names site A
+    // Checked at once, so they do not depend on how fast a worker would run: no fetch started with site A's
+    // configuration, and the running sync was not re-armed (so the next frame does not cancel and restart it).
+    CHECK_FALSE(rig.App.GetPaneCatalogFetchStatus(kPaneId).InFlight);
+    CHECK(rig.App.IsPaneSyncLive(kPaneId));
+    CHECK(rig.Script->Fetches.load() == fetchesBefore);
+    CHECK_FALSE(rig.App.IsPaneFieldCatalogPopulated(kPaneId)); // site A's catalog never lands in site B's pane
+}
+
+TEST_CASE("Retry after a site change with no sync running re-arms the pane's sync instead of fetching") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    smatchet_tests::ScopedFakeNetworkReset net;
+    PaneRig rig;
+    FailSiteAThenMoveToSiteB(rig);
+    // No sync running: the session was stopped. Stopping it runs no session-end hook, so the pane's sync is still
+    // recorded as kicked, as it is after a session that ended normally.
+    rig.Pane->ticketSync_->CancelAndJoinActiveStreamingSync();
+    REQUIRE_FALSE(rig.Pane->ticketSync_->HasPendingWork());
+    REQUIRE(rig.App.IsPaneSyncLive(kPaneId));
+
+    const int fetchesBefore = rig.Script->Fetches.load();
+    rig.App.RetryPaneFieldCatalog(kPaneId);
+    // Re-armed, so the frame loop's next EnsurePaneLiveSyncStarted kicks the pane with its current (site-B)
+    // configuration, and that kick fetches the catalog. Nothing was fetched with site A's configuration.
+    CHECK_FALSE(rig.App.IsPaneSyncLive(kPaneId));
+    CHECK_FALSE(rig.App.GetPaneCatalogFetchStatus(kPaneId).InFlight);
+    CHECK(rig.Script->Fetches.load() == fetchesBefore);
+    CHECK_FALSE(rig.App.IsPaneFieldCatalogPopulated(kPaneId));
 }
