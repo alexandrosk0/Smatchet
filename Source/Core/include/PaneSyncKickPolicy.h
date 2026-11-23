@@ -47,17 +47,18 @@ inline bool PaneCatalogResultCurrent(std::uint64_t capturedGeneration, std::uint
 /// What AppController::applyPaneCatalogOnMainThread_ does with a catalog a worker fetched for a pane.
 enum class PaneCatalogApplyVerdict : std::uint8_t {
     Apply,         ///< current, fetched for the pane's site, and the pane has no live catalog: write it in
-    DropNotNeeded, ///< nothing is owed: the context is gone or already holds a live catalog for the result's scope
+    DropNotNeeded, ///< nothing is owed: the context is gone or already holds a live catalog for the request's scope
     DropRefetch,   ///< not usable and the pane has no catalog: fetch again with the pane's latest configuration
     DropOwed, ///< not usable, the pane has no catalog, and no re-fetch can run (another site, or the budget is spent)
 };
 
 /// Decides a pane-catalog apply (capture-then-check, issue #1081).
 /// - `resultCurrent`: PaneCatalogResultCurrent.
-/// - `liveCatalogCoversResult`: the context already holds a live catalog (fieldCatalogEverLoaded_) for the result's
-///   scope: fetched for the same project, or any live catalog when the result is unscoped. Another path (the focused
-///   grid fetch, a RefreshFieldCatalog, the same-backend seed, an earlier pane fetch) filled it while this fetch ran,
-///   and that catalog is never replaced by this one. A live catalog of another scope does not count: a project-scoped
+/// - `liveCatalogCoversResult`: the context already holds a live catalog (fieldCatalogEverLoaded_) for the scope the
+///   fetch was REQUESTED for (never the result's own, which a failed result does not carry): fetched for the same
+///   project, or any live catalog when the request is unscoped. Another path (the focused grid fetch, a
+///   RefreshFieldCatalog, the same-backend seed, an earlier pane fetch) filled it while this fetch ran, and that
+///   catalog is never replaced by this one. A live catalog of another scope does not count: a project-scoped
 ///   result replaces an unscoped seed.
 /// - `resultForPaneSite`: the configuration the fetch ran with names the site the context serves now (its cache key).
 ///   A result fetched for another site never lands, even when nothing else moved: it would put one tracker's catalog

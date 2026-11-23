@@ -516,11 +516,55 @@ void AppController::kickPaneCatalogFetch_(const std::string& paneId, const Track
     if (it == gridContexts_.end()) {
         return;
     }
+    GridLiveContext& ctx = *it->second;
+    GridLiveContext::PaneCatalogFetchState& state = ctx.paneCatalogFetch;
     // Read after the sync kick: SyncPaneWithBackend may have just created the backend.
-    const std::shared_ptr<ITrackerBackend> paneBackend = std::atomic_load(&it->second->Backend);
+    const std::shared_ptr<ITrackerBackend> paneBackend = std::atomic_load(&ctx.Backend);
+    if (!paneBackend) {
+        // The pane's first sync was held back (a cache recreate), so it has no backend yet: no fetch can start, and the
+        // view's project cannot be read with the backend's parser. Park the request instead of recording a failure
+        // nothing would retry: installing the backend resumes it (resumePaneCatalogFetch_).
+        state.Config = std::make_shared<const TrackerConfig>(cfg);
+        state.AwaitingBackend = true;
+        state.AwaitingViewQuery = ownViewQuery;
+        state.Failed = false;
+        state.LastError.clear();
+        LOG_INFO("AppController::kickPaneCatalogFetch_ pane='%s': no backend yet (its sync is held back); the catalog "
+                 "fetch starts once the backend is installed.",
+                 paneId.c_str());
+        return;
+    }
+    state.AwaitingBackend = false;
+    state.AwaitingViewQuery.clear();
     const std::string paneProjectKey =
-        smatchet::catalog::PaneCatalogProjectKey(paneBackend ? &paneBackend->Connectivity() : nullptr, ownViewQuery);
+        smatchet::catalog::PaneCatalogProjectKey(&paneBackend->Connectivity(), ownViewQuery);
     populatePaneCatalogAfterSync_(paneId, cfg, paneProjectKey, 0);
+}
+
+void AppController::notePaneBackendInstalled_(const std::string& paneId) {
+    // Any thread: only posts. A completion, so the dispatcher never drops it the way it drops ordinary posts. It runs
+    // after the sync start that installed the backend has returned, so the catalog it fetches latches the generation
+    // and epoch that start left (a tracker switch clears the catalog around the install).
+    mainThreadDispatcher.PostCompletionToMainThread([this, paneId]() { resumePaneCatalogFetch_(paneId); });
+}
+
+void AppController::resumePaneCatalogFetch_(const std::string& paneId) {
+    const std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
+    if (it == gridContexts_.end()) {
+        return; // retired meanwhile
+    }
+    GridLiveContext& ctx = *it->second;
+    const GridLiveContext::PaneCatalogFetchState& state = ctx.paneCatalogFetch;
+    if (!state.AwaitingBackend || state.Config == nullptr || !std::atomic_load(&ctx.Backend)) {
+        return; // nothing parked (the usual case: every backend install posts this), or still no backend
+    }
+    // Copies: the kick rewrites the state it reads them from.
+    const TrackerConfig cfg = *state.Config;
+    const std::string viewQuery = state.AwaitingViewQuery;
+    LOG_INFO("AppController::resumePaneCatalogFetch_ pane='%s': the backend is installed; starting the parked catalog "
+             "fetch.",
+             paneId.c_str());
+    kickPaneCatalogFetch_(paneId, cfg, viewQuery);
 }
 
 void AppController::KickPaneCatalogFetchForTest(const std::string& paneId, const TrackerConfig& cfg,
@@ -539,6 +583,11 @@ bool LiveCatalogCoversScopeLocked(const GridContextFieldCatalog& cat, const std:
            (projectKey.empty() || smatchet::components::CatalogIsRowProject(cat.currentCatalogProjectKey_, projectKey));
 }
 
+// True when two catalog scopes name the same project, or are both unscoped ("").
+bool SameCatalogScope(const std::string& a, const std::string& b) {
+    return a.empty() ? b.empty() : smatchet::components::CatalogIsRowProject(a, b);
+}
+
 } // namespace
 
 void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, const TrackerConfig& cfgCopy,
@@ -551,22 +600,26 @@ void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, con
         return;
     }
     GridLiveContext& ctx = *it->second;
+    GridLiveContext::PaneCatalogFetchState& state = ctx.paneCatalogFetch;
+    // The latest request, stored before anything returns, even while a fetch runs or when the loaded catalog already
+    // answers it: the apply re-fetches with it when the running fetch's result is unusable (another site, a stale
+    // backend), and Retry runs it again, so it must name the view the pane shows now (after A -> B -> A, A, not B).
+    state.Config = std::make_shared<const TrackerConfig>(cfgCopy);
+    state.ProjectKey = projectKey;
     {
         std::lock_guard<std::mutex> lk(ctx.fieldCatalog.availableFieldsMutex_);
         // Loaded for this scope already (same-backend seed or a prior fetch): nothing to do. A catalog of another
         // scope stays visible while the scoped fetch runs.
         if (LiveCatalogCoversScopeLocked(ctx.fieldCatalog, projectKey)) {
             // The loaded catalog answers the current view, so a fetch still in flight for an earlier view (the pane
-            // switched away and back) is superseded too: it must not land over this one.
+            // switched away and back) is superseded too: it must not land over this one. A failure recorded for that
+            // earlier view is not this view's.
             ctx.fieldCatalog.PaneCatalogFetchSeq.fetch_add(1);
+            state.Failed = false;
+            state.LastError.clear();
             return;
         }
     }
-    GridLiveContext::PaneCatalogFetchState& state = ctx.paneCatalogFetch;
-    // The latest request, stored even while a fetch runs: the apply re-fetches with it when the running fetch's
-    // result is unusable (another site, a stale backend), and Retry runs it again.
-    state.Config = std::make_shared<const TrackerConfig>(cfgCopy);
-    state.ProjectKey = projectKey;
     const std::string requestSite = smatchet::cache_keys::TrackerCacheBackendKey(cfgCopy);
     if (state.InFlight && state.InFlightSeq == ctx.fieldCatalog.PaneCatalogFetchSeq.load() &&
         state.InFlightProjectKey == projectKey && state.InFlightSiteKey == requestSite) {
@@ -586,7 +639,8 @@ void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, con
     // mid-fetch. atomic_load — the shared_ptr instance read cannot race SetBackend's exchange.
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&ctx.Backend);
     if (!backend || !backend->FieldCatalog()) {
-        // Backend not up yet (its sync is deferred), or one without a catalog endpoint (e.g. a fixture).
+        // No backend (kickPaneCatalogFetch_ parks that case until one is installed, so only a Retry or re-fetch gets
+        // here without one), or one without a catalog endpoint (e.g. a fixture).
         // Recorded as failed so the grid's cue offers Retry instead of waiting on a fetch that never runs.
         state.Failed = true;
         state.LastError =
@@ -721,6 +775,9 @@ void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std
         return;
     }
     state.InFlight = false;
+    // The scope this fetch was started for. Coverage is judged against it, never against the result's ProjectKey: a
+    // failed result carries none, and a restored unscoped stand-in carries "", which any live catalog would "cover".
+    const std::string requestedProject = state.InFlightProjectKey;
     if (ctx.fieldCatalog.PaneCatalogFetchSeq.load() != fetchSeq) {
         // A later request for the pane's current view superseded it (a newer fetch, or a skip because the loaded
         // catalog already answers the view): that request decides the catalog.
@@ -733,7 +790,7 @@ void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std
     bool covered = false;
     {
         std::lock_guard<std::mutex> lk(ctx.fieldCatalog.availableFieldsMutex_);
-        covered = LiveCatalogCoversScopeLocked(ctx.fieldCatalog, result.ProjectKey);
+        covered = LiveCatalogCoversScopeLocked(ctx.fieldCatalog, requestedProject);
     }
     const bool current = smatchet::PaneCatalogResultCurrent(capturedGeneration, ctx.backendGeneration_.load(),
                                                             capturedEpoch, ctx.fieldCatalog.CatalogEpoch.load());
@@ -783,15 +840,34 @@ void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std
         }
         return;
     }
+    landPaneCatalog_(paneId, ctx, requestedProject, std::move(result));
+}
+
+void AppController::landPaneCatalog_(const std::string& paneId, GridLiveContext& ctx,
+                                     const std::string& requestedProject, PaneCatalogFetchResult result) {
+    GridLiveContext::PaneCatalogFetchState& state = ctx.paneCatalogFetch;
     const bool restored = !result.RestoredWarning.empty();
     const std::size_t fieldCount = result.Fields.size();
     std::string previousWarning;
-    const char* const dropReason = writePaneCatalog_(ctx.fieldCatalog, result, previousWarning);
+    const PaneCatalogWriteOutcome outcome =
+        writePaneCatalog_(ctx.fieldCatalog, requestedProject, result, previousWarning);
+    if (outcome == PaneCatalogWriteOutcome::KeptExisting) {
+        // The live fetch failed and its saved copy does not replace the catalog the pane already shows (another
+        // scope's): that stays visible, but the request is still unanswered, so it stays failed and retryable.
+        const std::string detail = smatchet::catalogoffline::ExtractLastFetchFailedDetail(result.RestoredWarning);
+        state.Failed = true;
+        state.LastError = detail.empty() ? std::string("The field catalog fetch failed.") : detail;
+        LOG_INFO("AppController::applyPaneCatalogOnMainThread_ pane='%s' kept the catalog it shows: the fetch for "
+                 "project '%s' failed and a saved copy never replaces a loaded catalog (%s).",
+                 paneId.c_str(), requestedProject.c_str(), state.LastError.c_str());
+        return;
+    }
     state.Failed = false;
     state.LastError.clear();
-    if (dropReason != nullptr) {
-        LOG_INFO("AppController::applyPaneCatalogOnMainThread_ pane='%s' catalog result dropped: %s.", paneId.c_str(),
-                 dropReason);
+    if (outcome == PaneCatalogWriteOutcome::AlreadyAnswered) {
+        LOG_INFO("AppController::applyPaneCatalogOnMainThread_ pane='%s' catalog result dropped: the pane already has "
+                 "a catalog that answers it (a live one for its scope, or this same saved copy).",
+                 paneId.c_str());
         return;
     }
     // Bump AFTER the write is visible so a read-routing consumer that observes the new revision
@@ -811,15 +887,22 @@ void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std
         paneId.c_str(), fieldCount, result.ProjectKey.c_str(), restored ? ", from the saved snapshot" : "");
 }
 
-const char* AppController::writePaneCatalog_(GridContextFieldCatalog& cat, PaneCatalogFetchResult& result,
-                                             std::string& previousWarning) {
+AppController::PaneCatalogWriteOutcome AppController::writePaneCatalog_(GridContextFieldCatalog& cat,
+                                                                        const std::string& requestedProject,
+                                                                        PaneCatalogFetchResult& result,
+                                                                        std::string& previousWarning) {
     const bool restored = !result.RestoredWarning.empty();
     std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-    if (LiveCatalogCoversScopeLocked(cat, result.ProjectKey)) {
-        return "a live catalog for its scope landed while it loaded"; // a worker apply can land between the reads
+    if (LiveCatalogCoversScopeLocked(cat, requestedProject)) {
+        return PaneCatalogWriteOutcome::AlreadyAnswered; // a worker apply can land between the apply's check and here
+    }
+    // Offline, every sync kick re-runs the fetch and restores the same saved copy the pane already shows (a restored
+    // catalog is "not loaded", so it does not count as covered): that request is answered, not failed.
+    if (restored && cat.fieldCatalogRestored_ && SameCatalogScope(cat.currentCatalogProjectKey_, result.ProjectKey)) {
+        return PaneCatalogWriteOutcome::AlreadyAnswered;
     }
     if (restored && !cat.AvailableFields->empty()) {
-        return "a saved catalog never replaces the one the pane already has";
+        return PaneCatalogWriteOutcome::KeptExisting; // a saved catalog never replaces the one the pane already has
     }
     previousWarning = cat.LastTrackerFieldCatalogWarning;
     cat.AvailableFields = std::make_shared<std::vector<TrackerField>>(std::move(result.Fields));
@@ -835,7 +918,7 @@ const char* AppController::writePaneCatalog_(GridContextFieldCatalog& cat, PaneC
     cat.LastTrackerFieldCatalogError.clear();
     cat.LastTrackerFieldCatalogErrorTransient = false;
     cat.LastTrackerFieldCatalogWarning = result.RestoredWarning;
-    return nullptr;
+    return PaneCatalogWriteOutcome::Written;
 }
 
 AppController::PaneCatalogFetchStatus AppController::GetPaneCatalogFetchStatus(const std::string& paneId) const {
@@ -848,7 +931,8 @@ AppController::PaneCatalogFetchStatus AppController::GetPaneCatalogFetchStatus(c
     status.OwnCatalogPopulated = IsPaneFieldCatalogPopulated(paneId);
     status.InFlight = state.InFlight;
     status.Failed = state.Failed;
-    status.CanRetry = state.Config != nullptr;
+    status.AwaitingBackend = state.AwaitingBackend;
+    status.CanRetry = state.Config != nullptr && !state.AwaitingBackend; // a parked fetch resumes on its own
     status.LastError = state.LastError;
     return status;
 }
@@ -860,8 +944,8 @@ void AppController::RetryPaneFieldCatalog(const std::string& paneId) {
     }
     GridLiveContext& ctx = *it->second;
     const std::shared_ptr<const TrackerConfig> cfg = ctx.paneCatalogFetch.Config;
-    if (cfg == nullptr || ctx.paneCatalogFetch.InFlight) {
-        return;
+    if (cfg == nullptr || ctx.paneCatalogFetch.InFlight || ctx.paneCatalogFetch.AwaitingBackend) {
+        return; // nothing stored, a fetch is running, or one is parked until the backend is installed
     }
     if (smatchet::cache_keys::TrackerCacheBackendKey(*cfg) != ctx.CacheBackendKeyCopy()) {
         // The pane moved to another tracker site since that request was stored: fetching with it would load the old

@@ -233,10 +233,10 @@ struct GridLiveContext {
     /// Retry. UI thread only: written by the launch and by the main-thread apply, read by the grid draw.
     struct PaneCatalogFetchState {
         /// The pane's latest catalog-fetch configuration: stored by every populate call (each sync kick, re-fetch
-        /// and Retry) unless the pane already has a live catalog, even while a fetch runs or when none could start, so
-        /// it can differ from the one the running fetch uses; the apply judges a result by the configuration captured
-        /// with that fetch, never by this. Retry and the apply's re-fetch run this one. Null until populate first runs
-        /// for the pane. shared_ptr<const> so TrackerConfig stays forward-declared here.
+        /// and Retry), even when the pane's live catalog already answers it, while a fetch runs or when none could
+        /// start, so it can differ from the one the running fetch uses; the apply judges a result by the
+        /// configuration captured with that fetch, never by this. Retry and the apply's re-fetch run this one. Null
+        /// until populate first runs for the pane. shared_ptr<const> so TrackerConfig stays forward-declared here.
         std::shared_ptr<const TrackerConfig> Config;
         /// The project that latest request is scoped to ("" = unscoped), stored with Config.
         std::string ProjectKey;
@@ -253,9 +253,17 @@ struct GridLiveContext {
         std::string InFlightSiteKey;
         std::uint64_t InFlightSeq = 0;
         /// The last fetch failed with no saved copy to fall back to, or its result was owed after a backend change.
-        /// Cleared when a fetch starts or a catalog lands.
+        /// Also set when the fetch failed and its saved copy did not replace the catalog the pane shows. Cleared when
+        /// a fetch starts, a catalog lands, or the loaded catalog turns out to answer the pane's latest request.
         bool Failed = false;
         std::string LastError;
+        /// The pane's catalog step ran before its backend existed (its first sync was held back, as during a cache
+        /// recreate), so no fetch could start and the view's project could not be read with the backend's parser.
+        /// The request is parked, not failed: installing the backend (GridContextDepsAdapter::SetBackend) resumes it
+        /// (AppController::resumePaneCatalogFetch_), scoping it from AwaitingViewQuery, the query of the view the
+        /// parked kick resolved. Cleared by any kick that finds a backend.
+        bool AwaitingBackend = false;
+        std::string AwaitingViewQuery;
     };
     PaneCatalogFetchState paneCatalogFetch;
 

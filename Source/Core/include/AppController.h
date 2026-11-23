@@ -1633,17 +1633,21 @@ class AppController : public IAppThreading,
     struct PaneCatalogFetchStatus {
         bool OwnCatalogPopulated = false; ///< loaded or restored (IsPaneFieldCatalogPopulated)
         bool InFlight = false;            ///< the pane's own catalog fetch is running
-        bool Failed = false;              ///< the last fetch failed with no saved copy, or its result was owed
-        bool CanRetry = false;            ///< the pane has a stored catalog-fetch configuration for Retry
+        bool Failed = false;   ///< the last fetch failed with no saved copy the pane took, or its result was owed
+        bool CanRetry = false; ///< the pane has a stored catalog-fetch configuration for Retry, and none is parked
+        /// The fetch is parked until the pane's backend is installed (its first sync is held back); it starts on its
+        /// own then, so this is a wait, not a failure.
+        bool AwaitingBackend = false;
         std::string LastError;
     };
     /// UI thread. All false for a pane with no live context.
     PaneCatalogFetchStatus GetPaneCatalogFetchStatus(const std::string& paneId) const;
     /// UI thread. Fetches the pane's catalog again with its latest stored configuration (PaneCatalogFetchState::
-    /// Config); a no-op while a fetch runs, when no configuration was stored, or when the pane already has a live
-    /// catalog. When that configuration names another site than the pane serves now, nothing is fetched with it: a
-    /// sync already running brings the new site's catalog, otherwise the pane's sync kick is re-armed so the frame
-    /// loop kicks it with its current configuration. The fetch runs on a worker.
+    /// Config); a no-op while a fetch runs or is parked until the pane's backend is installed, when no configuration
+    /// was stored, or when the pane already has a live catalog. When that configuration names another site than the
+    /// pane serves now, nothing is fetched with it: a sync already running brings the new site's catalog, otherwise the
+    /// pane's sync kick is re-armed so the frame loop kicks it with its current configuration. The fetch runs on a
+    /// worker.
     void RetryPaneFieldCatalog(const std::string& paneId);
     /// Kick a sync on ONE pane's context with its own (config, views) pair — the per-pane
     /// twin of SyncWithBackend (which targets the focused context).
@@ -1749,7 +1753,16 @@ class AppController : public IAppThreading,
     /// `ownViewQuery` (the query of the view the kick resolved for the pane, "" for none) names, read
     /// with the pane's own backend parser, and hands it to populatePaneCatalogAfterSync_. UI thread,
     /// after the kick's SyncPaneWithBackend.
+    /// With no backend installed yet (the pane's first sync is held back), the request is parked instead
+    /// (PaneCatalogFetchState::AwaitingBackend) until resumePaneCatalogFetch_ runs it.
     void kickPaneCatalogFetch_(const std::string& paneId, const TrackerConfig& cfg, const std::string& ownViewQuery);
+    /// Called by GridContextDepsAdapter::SetBackend after it installs a context's backend. Any thread: posts
+    /// resumePaneCatalogFetch_ for `paneId` to the UI thread as a completion (never dropped).
+    void notePaneBackendInstalled_(const std::string& paneId);
+    /// UI thread: starts the catalog fetch parked for pane `paneId` while it had no backend, scoped with the installed
+    /// backend's parser (kickPaneCatalogFetch_). A no-op when nothing is parked, the context is gone, or there is still
+    /// no backend.
+    void resumePaneCatalogFetch_(const std::string& paneId);
     /// What a pane catalog fetch worker hands to the main thread.
     struct PaneCatalogFetchResult {
         std::vector<TrackerField> Fields; ///< catalog corrections already applied (ApplyCatalogCorrections)
@@ -1767,12 +1780,25 @@ class AppController : public IAppThreading,
     /// corrections. Never throws: a failure, a throw included, comes back as Failed so the apply clears InFlight.
     static PaneCatalogFetchResult fetchPaneCatalogOnWorker_(const std::string& paneId, ITrackerBackend& backend,
                                                             const TrackerConfig& cfg, const std::string& projectKey);
-    /// Writes a usable pane catalog `result` into `cat` under its mutex, pinning its project. Returns why it was not
-    /// written (a live catalog that covers the result's scope landed first, or a saved copy would replace the one the
-    /// pane has), or null when it was. `previousWarning` receives the catalog warning the write replaced. Does not
-    /// bump the catalog revision.
-    static const char* writePaneCatalog_(GridContextFieldCatalog& cat, PaneCatalogFetchResult& result,
-                                         std::string& previousWarning);
+    /// What writePaneCatalog_ did with a usable result.
+    enum class PaneCatalogWriteOutcome : std::uint8_t {
+        Written, ///< the result is the pane's catalog now
+        /// Not written, nothing owed: a live catalog covering the requested scope landed first, or the pane already
+        /// shows this same saved copy (offline, each sync kick restores it again).
+        AlreadyAnswered,
+        KeptExisting, ///< not written: a saved copy never replaces another scope's loaded catalog, so the request is
+                      ///< owed
+    };
+    /// Writes a usable pane catalog `result` into `cat` under its mutex, pinning the result's project. Coverage is
+    /// judged against `requestedProject`, the scope the fetch was started for. `previousWarning` receives the catalog
+    /// warning the write replaced. Does not bump the catalog revision.
+    static PaneCatalogWriteOutcome writePaneCatalog_(GridContextFieldCatalog& cat, const std::string& requestedProject,
+                                                     PaneCatalogFetchResult& result, std::string& previousWarning);
+    /// The tail of applyPaneCatalogOnMainThread_ for a usable result fetched for `requestedProject`: writes it
+    /// (writePaneCatalog_), settles the pane's fetch state (a saved copy the pane does not take leaves the request
+    /// failed and retryable), bumps the catalog revision after a write, and logs. UI thread.
+    void landPaneCatalog_(const std::string& paneId, GridLiveContext& ctx, const std::string& requestedProject,
+                          PaneCatalogFetchResult result);
     /// Main-thread apply of populatePaneCatalogAfterSync_'s off-thread fetch (smatchet::DecidePaneCatalogApply):
     /// writes the result into the pane's context when it is still the pane's latest fetch (`fetchSeq` against
     /// PaneCatalogFetchSeq, so an older view's fetch never lands last), its backend generation and catalog epoch are
