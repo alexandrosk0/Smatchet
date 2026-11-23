@@ -3,7 +3,7 @@
 - **Category**: test
 - **Priority**: P3
 - **Date**: 2026-11-18
-- **Observed on**: review of the tolerant-parsing branch (`docs/plans/active/input-ux-w2-tolerant-parsing.md`, § Deviations) after it merged the shared text field.
+- **Observed on**: review of the tolerant-parsing branch (`docs/plans/input-ux-w2-tolerant-parsing.md`, § Deviations) after it merged the shared text field.
 - **Status**: open
 
 ## What happened
