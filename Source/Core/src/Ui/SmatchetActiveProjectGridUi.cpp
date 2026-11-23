@@ -188,6 +188,22 @@ void DrawCatalogCueTooltip(GridCatalogCue cue, const GridCatalogCoverage& covera
     }
 }
 
+// Draws the cue's Retry button after the cue text whose right edge is `cueTextRight`. The cue text does not wrap, so
+// Retry stays beside it only when both fit the pane and otherwise goes on the next line: a narrow docked pane never
+// clips the one action that recovers the catalog.
+void DrawCatalogCueRetry(AppController& app, const std::string& paneId, float cueTextRight) {
+    const char* retryLabel = SmatchetLocalization::T("grid.catalog_retry", "Retry");
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float retryWidth = ImGui::CalcTextSize(retryLabel).x + style.FramePadding.x * 2.0f;
+    const float contentRight = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    if (cueTextRight + style.ItemSpacing.x + retryWidth <= contentRight) {
+        ImGui::SameLine();
+    }
+    if (ImGui::SmallButton(retryLabel)) {
+        app.RetryPaneFieldCatalog(paneId);
+    }
+}
+
 } // namespace
 
 // A pane whose column set resolved no field in its catalog renders every cell as plain text, with
@@ -233,6 +249,7 @@ void NoteAndCueCatalogReadOnly(AppController& app, const UiDrawSession& d, GridP
     }
     ImGui::PushID("catalogCue");
     ImGui::TextDisabled("%s", CatalogCueText(cue));
+    const float cueTextRight = ImGui::GetItemRectMax().x;
     if (ImGui::IsItemHovered()) {
         if (cue == GridCatalogCue::Unavailable && status.LastError.empty()) {
             status.LastError = app.GetPaneCatalogFetchStatus(pane.id).LastError; // only while the tooltip is open
@@ -242,10 +259,7 @@ void NoteAndCueCatalogReadOnly(AppController& app, const UiDrawSession& d, GridP
     const bool canRetry =
         (cue == GridCatalogCue::NotLoaded || cue == GridCatalogCue::Unavailable) && status.CanRetry && !loading;
     if (canRetry) {
-        ImGui::SameLine();
-        if (ImGui::SmallButton(SmatchetLocalization::T("grid.catalog_retry", "Retry"))) {
-            app.RetryPaneFieldCatalog(pane.id);
-        }
+        DrawCatalogCueRetry(app, pane.id, cueTextRight);
     }
     ImGui::PopID();
 }
