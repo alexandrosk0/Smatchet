@@ -93,4 +93,12 @@ struct ActiveProjectDrawCtx {
 // inside a cell's draw. Defined in SmatchetActiveProjectGridKeys.cpp.
 void ScrollGridCellIntoView(float minY, float maxY, int colIdx);
 
+// Logs each change of the pane's "every cell read-only because of the field catalog" state and, while it holds and
+// neither the Read-only preference nor the error banner explains it, draws the cue above the table. Defined in
+// SmatchetActiveProjectGridUi.cpp; drawn from drawActiveProjectTable once the welcome / loading / error states, which
+// replace the table, are ruled out. `focusedCatalogLoading`: the focused pane's catalog fetch through the session
+// pipeline is running.
+void NoteAndCueCatalogReadOnly(AppController& app, GridPane& pane, const std::vector<TicketGridColumn>& columns,
+                               bool readOnlyMode, bool focusedCatalogLoading);
+
 #endif // SMATCHET_UI_SMATCHET_ACTIVE_PROJECT_GRID_UI_INTERNAL_H

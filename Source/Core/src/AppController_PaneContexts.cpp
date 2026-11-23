@@ -921,7 +921,8 @@ AppController::PaneCatalogWriteOutcome AppController::writePaneCatalog_(GridCont
     return PaneCatalogWriteOutcome::Written;
 }
 
-AppController::PaneCatalogFetchStatus AppController::GetPaneCatalogFetchStatus(const std::string& paneId) const {
+AppController::PaneCatalogFetchStatus AppController::GetPaneCatalogFetchStatus(const std::string& paneId,
+                                                                               bool withLastError) const {
     PaneCatalogFetchStatus status;
     std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
     if (it == gridContexts_.end()) {
@@ -933,7 +934,9 @@ AppController::PaneCatalogFetchStatus AppController::GetPaneCatalogFetchStatus(c
     status.Failed = state.Failed;
     status.AwaitingBackend = state.AwaitingBackend;
     status.CanRetry = state.Config != nullptr && !state.AwaitingBackend; // a parked fetch resumes on its own
-    status.LastError = state.LastError;
+    if (withLastError) {
+        status.LastError = state.LastError;
+    }
     return status;
 }
 

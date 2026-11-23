@@ -1640,8 +1640,10 @@ class AppController : public IAppThreading,
         bool AwaitingBackend = false;
         std::string LastError;
     };
-    /// UI thread. All false for a pane with no live context.
-    PaneCatalogFetchStatus GetPaneCatalogFetchStatus(const std::string& paneId) const;
+    /// UI thread. All false for a pane with no live context. `withLastError` false leaves LastError empty, so a
+    /// caller that reads the status every frame (the grid's read-only cue) copies no string; it asks again with the
+    /// error when it needs the text.
+    PaneCatalogFetchStatus GetPaneCatalogFetchStatus(const std::string& paneId, bool withLastError = true) const;
     /// UI thread. Fetches the pane's catalog again with its latest stored configuration (PaneCatalogFetchState::
     /// Config); a no-op while a fetch runs or is parked until the pane's backend is installed, when no configuration
     /// was stored, or when the pane already has a live catalog. When that configuration names another site than the

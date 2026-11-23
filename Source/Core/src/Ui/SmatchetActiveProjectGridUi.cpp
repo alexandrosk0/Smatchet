@@ -97,7 +97,153 @@ void PrepareExtraPaneWindow(UiDrawSession& d, GridPane& pane, bool wantFocus) {
 // central node to come alive so the re-dock above can land. Normal off-screen / degenerate-rect
 // rescue resumes the frame the countdown expires.
 
+// One log line per change of a pane's catalog cue. Waiting on a fetch is the normal cold-start state and logs at
+// INFO. A failed fetch, or a catalog that knows none of the view's fields, needs the user and logs at WARN.
+void LogCatalogCueChange(GridPane& pane, GridCatalogCue cue, const GridCatalogCoverage& coverage,
+                         const AppController::PaneCatalogFetchStatus& status) {
+    const char* const id = pane.id.c_str();
+    switch (cue) {
+    case GridCatalogCue::None:
+        pane.catalogCueLoggedError.clear();
+        LOG_INFO("Grid pane='%s' field catalog resolves %zu of %zu field column(s); cells are editable again.", id,
+                 coverage.ResolvedFieldColumns, coverage.FieldColumns);
+        break;
+    case GridCatalogCue::Loading:
+        LOG_INFO("Grid pane='%s' cells are read-only for a catalog reason: waiting for its field catalog fetch "
+                 "(%zu field column(s), focused=%s).",
+                 id, coverage.FieldColumns, pane.focused ? "yes" : "no");
+        break;
+    case GridCatalogCue::AwaitingBackend:
+        LOG_INFO("Grid pane='%s' cells are read-only for a catalog reason: its field catalog fetch waits for the "
+                 "pane's tracker backend (%zu field column(s), focused=%s).",
+                 id, coverage.FieldColumns, pane.focused ? "yes" : "no");
+        break;
+    case GridCatalogCue::NotLoaded:
+        LOG_INFO("Grid pane='%s' cells are read-only for a catalog reason: no field catalog loaded yet and no fetch "
+                 "running (%zu field column(s), focused=%s).",
+                 id, coverage.FieldColumns, pane.focused ? "yes" : "no");
+        break;
+    case GridCatalogCue::Unavailable:
+        // Offline, every sync retry flips Loading -> Unavailable with the same error: WARN once per distinct error.
+        if (status.LastError == pane.catalogCueLoggedError) {
+            LOG_INFO("Grid pane='%s' field catalog still not available (%s).", id, status.LastError.c_str());
+        } else {
+            pane.catalogCueLoggedError = status.LastError;
+            LOG_WARN("Grid pane='%s' cells are read-only for a catalog reason: its field catalog could not be "
+                     "loaded (%s).",
+                     id, status.LastError.c_str());
+        }
+        break;
+    case GridCatalogCue::Unresolved:
+        LOG_WARN("Grid pane='%s' cells are read-only for a catalog reason: its field catalog has none of the view's "
+                 "%zu field column(s).",
+                 id, coverage.FieldColumns);
+        break;
+    }
+}
+
+const char* CatalogCueText(GridCatalogCue cue) {
+    switch (cue) {
+    case GridCatalogCue::Loading:
+        return SmatchetLocalization::T("grid.catalog_loading", "Loading the field catalog for this grid \xE2\x80\x94 "
+                                                               "cells are read-only until it loads.");
+    case GridCatalogCue::AwaitingBackend:
+        return SmatchetLocalization::T("grid.catalog_awaiting_backend", "Waiting for this grid's tracker connection "
+                                                                        "\xE2\x80\x94 cells are read-only until its "
+                                                                        "field catalog loads.");
+    case GridCatalogCue::NotLoaded:
+        return SmatchetLocalization::T("grid.catalog_read_only", "Field catalog not loaded for this grid yet "
+                                                                 "\xE2\x80\x94 cells are read-only until it loads.");
+    case GridCatalogCue::Unavailable:
+        return SmatchetLocalization::T("grid.catalog_unavailable", "Field catalog not available for this grid "
+                                                                   "\xE2\x80\x94 cells are read-only.");
+    case GridCatalogCue::Unresolved:
+        return SmatchetLocalization::T("grid.catalog_unresolved", "None of this view's fields are in this grid's "
+                                                                  "field catalog \xE2\x80\x94 cells are read-only.");
+    case GridCatalogCue::None:
+        break;
+    }
+    return "";
+}
+
+void DrawCatalogCueTooltip(GridCatalogCue cue, const GridCatalogCoverage& coverage,
+                           const AppController::PaneCatalogFetchStatus& status) {
+    const int columns = static_cast<int>(coverage.FieldColumns);
+    if (cue == GridCatalogCue::Unavailable) {
+        ImGui::SetTooltip("%s", SmatchetLocalization::Format("grid.catalog_unavailable_tip",
+                                                             "The field catalog could not be loaded, so no cell can "
+                                                             "be edited. Last error: %s",
+                                                             status.LastError.c_str()));
+    } else if (cue == GridCatalogCue::Unresolved) {
+        ImGui::SetTooltip("%s", SmatchetLocalization::Format("grid.catalog_unresolved_tip",
+                                                             "This grid's field catalog has none of this view's %d "
+                                                             "field column(s), so no cell can be edited.",
+                                                             columns));
+    } else {
+        ImGui::SetTooltip("%s", SmatchetLocalization::Format(
+                                    "grid.catalog_read_only_tip",
+                                    "None of this view's %d field column(s) is in the field catalog this grid "
+                                    "resolved, so no cell can be edited. Editing comes back once the catalog loads.",
+                                    columns));
+    }
+}
+
 } // namespace
+
+// A pane whose column set resolved no field in its catalog renders every cell as plain text, with
+// no edit affordance and no banner: the Read-only preference and the tracker error banner are both
+// off. Log each change of that state once and, while it holds, say why above the table and offer
+// Retry when the catalog fetch can run again (Pillar 6: never a silent degraded state, a failed read
+// offers Retry). Declared in SmatchetActiveProjectGridUi_Internal.h. Steady state (editable pane):
+// O(columns) per visible pane per frame and nothing else. While the pane is blocked, the fetch status
+// is read each frame without its error text, which is copied only when the cue changes or its tooltip
+// is open. `focusedCatalogLoading`: the focused pane's catalog is being fetched through the focused
+// pipeline (the session's grid fetch), a load the pane's own fetch state does not see.
+void NoteAndCueCatalogReadOnly(AppController& app, GridPane& pane, const std::vector<TicketGridColumn>& columns,
+                               bool readOnlyMode, bool focusedCatalogLoading) {
+    const GridCatalogCoverage coverage = MeasureGridCatalogCoverage(columns);
+    const bool blocked = GridCellsReadOnlyForCatalog(coverage);
+    if (!blocked && pane.catalogCue == GridCatalogCue::None) {
+        return;
+    }
+    AppController::PaneCatalogFetchStatus status;
+    bool loading = false;
+    if (blocked) {
+        status = app.GetPaneCatalogFetchStatus(pane.id, /*withLastError=*/false);
+        // The pane's catalog can also be on its way through the focused pipeline or a saved-catalog restore. Both are
+        // loads in flight: the cue says loading and offers no Retry of the pane's own fetch beside them.
+        loading = status.InFlight || focusedCatalogLoading || app.IsFieldCatalogRestoring(pane.id);
+    }
+    const GridCatalogCue cue =
+        ChooseGridCatalogCue(blocked, status.OwnCatalogPopulated, loading, status.AwaitingBackend, status.Failed);
+    if (cue != pane.catalogCue) {
+        pane.catalogCue = cue;
+        if (cue == GridCatalogCue::Unavailable) {
+            status.LastError = app.GetPaneCatalogFetchStatus(pane.id).LastError; // the log names it
+        }
+        LogCatalogCueChange(pane, cue, coverage, status);
+    }
+    if (cue == GridCatalogCue::None || readOnlyMode) {
+        return; // the Read-only preference / error banner already says why nothing is editable
+    }
+    ImGui::PushID("catalogCue");
+    ImGui::TextDisabled("%s", CatalogCueText(cue));
+    if (ImGui::IsItemHovered()) {
+        if (cue == GridCatalogCue::Unavailable && status.LastError.empty()) {
+            status.LastError = app.GetPaneCatalogFetchStatus(pane.id).LastError; // only while the tooltip is open
+        }
+        DrawCatalogCueTooltip(cue, coverage, status);
+    }
+    const bool canRetry =
+        (cue == GridCatalogCue::NotLoaded || cue == GridCatalogCue::Unavailable) && status.CanRetry && !loading;
+    if (canRetry) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton(SmatchetLocalization::T("grid.catalog_retry", "Retry"))) {
+            app.RetryPaneFieldCatalog(pane.id);
+        }
+    }
+    ImGui::PopID();
+}
 
 // Re-entrant per-pane grid window (multi-grid-tabs Slice 2, plan item 14). Called once
 // per visible GridPane per frame by drawGridPaneWindows (SmatchetGridPaneWindows.cpp),

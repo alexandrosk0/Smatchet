@@ -183,6 +183,11 @@ struct GridPane {
     /// True while cachedPaneCatalogIndex is the live route for this pane (used to detect a
     /// focus flip back to the shared index without tearing the cache down eagerly).
     bool cachedPaneCatalogValid = false;
+    /// The catalog cue this pane showed last frame (ChooseGridCatalogCue): None unless every cell is read-only
+    /// because of the field catalog. UI thread only; kept so the grid logs each change once instead of every frame.
+    GridCatalogCue catalogCue = GridCatalogCue::None;
+    /// The fetch error the last "not available" WARN named, so the same error repeating offline logs at INFO.
+    std::string catalogCueLoggedError;
 
     /// Table column a single-column auto-fit was requested for last frame (border double-click,
     /// "Size column to fit"), latched after layout: this frame's BeginTable applies the fit, and the

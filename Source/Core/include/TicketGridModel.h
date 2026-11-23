@@ -4,6 +4,7 @@
 #include "TicketGridSortPure.h" // CompareFieldValuesForSort / IsTrackerDateOrDateTimeField / IsAttachmentFieldId
 #include "TrackerFieldSchema.h"
 
+#include <cstddef>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -51,9 +52,70 @@ struct TicketGridColumn {
     bool IsDateLike = false;
     bool CatalogReadOnly = false;
     bool NeedsAllowEditsCheck = false;
+    /// The catalog the column was built from knows this field. An unresolved field column renders as plain text,
+    /// with no edit affordance, whatever the tracker allows.
+    bool CatalogResolved = false;
 };
 
 class TicketGridColumnsBuilder {
   public:
     static std::vector<TicketGridColumn> Build(const ViewDefinition& view, const TrackerFieldCatalogIndex& catalog);
 };
+
+/// How many field columns a column set has, and how many of them the catalog it was built from resolved.
+struct GridCatalogCoverage {
+    std::size_t FieldColumns = 0;
+    std::size_t ResolvedFieldColumns = 0;
+};
+
+/// Counts the field (non-id) columns and the catalog-resolved ones. O(columns), no allocation.
+inline GridCatalogCoverage MeasureGridCatalogCoverage(const std::vector<TicketGridColumn>& columns) {
+    GridCatalogCoverage coverage;
+    for (const TicketGridColumn& column : columns) {
+        if (column.ColumnKind != TicketGridColumn::Kind::FieldValue) {
+            continue;
+        }
+        ++coverage.FieldColumns;
+        if (column.CatalogResolved) {
+            ++coverage.ResolvedFieldColumns;
+        }
+    }
+    return coverage;
+}
+
+/// True when every cell of the grid is read-only because of the field catalog, not the tracker: the grid shows
+/// field columns and the catalog it was built from resolved none of them (empty, not loaded, or another tracker's).
+inline bool GridCellsReadOnlyForCatalog(const GridCatalogCoverage& coverage) {
+    return coverage.FieldColumns != 0 && coverage.ResolvedFieldColumns == 0;
+}
+
+/// What the grid says above the table while its cells are read-only for a catalog reason.
+enum class GridCatalogCue {
+    None,            ///< editable (or nothing to edit): no cue
+    Loading,         ///< the pane's catalog fetch is running
+    AwaitingBackend, ///< the fetch is parked until the pane's tracker backend is installed; it starts on its own
+    NotLoaded,       ///< no catalog yet and no fetch running (not started, or waiting on the pane's sync)
+    Unavailable,     ///< the last fetch failed and no saved copy exists, or the pane's backend changed under it
+    Unresolved,      ///< the pane has its own catalog, but it knows none of the view's fields
+};
+
+/// Picks the cue. `ownCatalogPopulated`: the pane's own catalog is loaded or restored. `fetchInFlight` /
+/// `fetchAwaitingBackend` / `fetchFailed`: the state of the pane's own catalog fetch
+/// (AppController::PaneCatalogFetchStatus). A running fetch wins over a parked one, and both are waits that win over an
+/// older failure.
+inline GridCatalogCue ChooseGridCatalogCue(bool cellsReadOnlyForCatalog, bool ownCatalogPopulated, bool fetchInFlight,
+                                           bool fetchAwaitingBackend, bool fetchFailed) {
+    if (!cellsReadOnlyForCatalog) {
+        return GridCatalogCue::None;
+    }
+    if (fetchInFlight) {
+        return GridCatalogCue::Loading;
+    }
+    if (fetchAwaitingBackend) {
+        return GridCatalogCue::AwaitingBackend;
+    }
+    if (fetchFailed) {
+        return GridCatalogCue::Unavailable;
+    }
+    return ownCatalogPopulated ? GridCatalogCue::Unresolved : GridCatalogCue::NotLoaded;
+}

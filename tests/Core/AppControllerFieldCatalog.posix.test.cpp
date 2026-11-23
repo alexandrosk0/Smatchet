@@ -1705,6 +1705,11 @@ TEST_CASE("Offline with no saved catalog, the pane reports the failure and Retry
     AppController::PaneCatalogFetchStatus status = rig.App.GetPaneCatalogFetchStatus(kPaneId);
     CHECK(status.CanRetry);
     CHECK_FALSE(status.LastError.empty());
+    // The grid reads the status every frame without the error text, and asks again with it only when it shows it.
+    const AppController::PaneCatalogFetchStatus quiet = rig.App.GetPaneCatalogFetchStatus(kPaneId, false);
+    CHECK(quiet.Failed);
+    CHECK(quiet.CanRetry);
+    CHECK(quiet.LastError.empty());
     CHECK_FALSE(rig.App.IsPaneFieldCatalogPopulated(kPaneId)); // a failure is never recorded as loaded
 
     smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
