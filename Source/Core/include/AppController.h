@@ -410,6 +410,13 @@ class AppController : public IAppThreading,
     /// caller pumps `mainThreadDispatcher` for the apply. No production caller.
     void KickPaneCatalogFetchForTest(const std::string& paneId, const TrackerConfig& cfg,
                                      const std::string& ownViewQuery);
+    /// TEST SEAM (headless AppController tests): starts the startup restore of the saved field catalog for the
+    /// focused pane exactly as InitFieldCatalog does (the latch, then the snapshot read on a worker), without the
+    /// rest of Initialize. The caller calls PollStartupCatalogRestore until IsStartupCatalogRestorePending clears,
+    /// which runs the production install. No production caller.
+    void LaunchStartupCatalogRestoreForTest(const TrackerConfig& cfg, const std::string& activeTrackerType) {
+        LaunchStartupCatalogRestore_(cfg, activeTrackerType);
+    }
     /// TEST SEAM: how long a cache recreate waits for other owners of the old cache to let go, and for its close to
     /// finish, before it gives up without deleting anything (default 5 s). Set before StartRecreateLocalCacheDatabase.
     void SetCacheRecreateHolderWaitForTest(std::chrono::milliseconds wait) {

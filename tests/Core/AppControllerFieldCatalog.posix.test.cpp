@@ -25,6 +25,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <functional>
@@ -1717,4 +1718,145 @@ TEST_CASE("Retry after a site change with no sync running re-arms the pane's syn
     CHECK_FALSE(rig.App.GetPaneCatalogFetchStatus(kPaneId).InFlight);
     CHECK(rig.Script->Fetches.load() == fetchesBefore);
     CHECK_FALSE(rig.App.IsPaneFieldCatalogPopulated(kPaneId));
+}
+
+// ---- The startup restore of the saved catalog gets the fixups every other catalog path applies ----
+
+namespace {
+
+TrackerField NamedField(const std::string& id, const std::string& name, const std::string& type = std::string()) {
+    TrackerField field;
+    field.Id = id;
+    field.Name = name;
+    field.Type = type;
+    return field;
+}
+
+std::size_t CountField(const std::vector<TrackerField>& fields, const std::string& id) {
+    std::size_t count = 0;
+    for (const TrackerField& f : fields) {
+        if (f.Id == id) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+/// Saves `saved` as `cfg`'s unscoped snapshot (uncorrected, as production saves it), then runs the startup restore
+/// for `activeTrackerType` as InitFieldCatalog does: the latch and the worker read, then the UI-thread install from
+/// PollStartupCatalogRestore. Returns the focused catalog once the restore has installed.
+std::shared_ptr<const std::vector<TrackerField>> RestoreAtStartup(AppController& app, const TrackerConfig& cfg,
+                                                                  const std::string& activeTrackerType,
+                                                                  const std::vector<TrackerField>& saved) {
+    const FieldCatalogCache::FieldCatalogIndexIdentity index = FieldCatalogCache::BuildFieldCatalogIndexIdentity(cfg);
+    std::string saveError;
+    REQUIRE(FieldCatalogCache::SaveFieldCatalogSnapshot(
+        FieldCatalogCache::BuildFieldCatalogCacheKey(cfg, std::string()), index.backend, index.endpoint, std::string(),
+        0, saved, {}, {}, saveError));
+    REQUIRE(app.GetAvailableFields()->empty()); // a catalog already in place would win over the restore
+
+    app.LaunchStartupCatalogRestoreForTest(cfg, activeTrackerType);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (app.IsStartupCatalogRestorePending() && std::chrono::steady_clock::now() < deadline) {
+        app.PollStartupCatalogRestore();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    REQUIRE_FALSE(app.IsStartupCatalogRestorePending());
+    const std::shared_ptr<const std::vector<TrackerField>> fields = app.GetAvailableFields();
+    REQUIRE(fields != nullptr);
+    REQUIRE(HasField(*fields, "customfield_saved")); // the snapshot did install
+    return fields;
+}
+
+} // namespace
+
+TEST_CASE("Startup restore: a Jira catalog gets the timetracking, legacy-comment, History and Comments fixups") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.TrackerType = "Jira";
+    cfg.Domain = "https://acme.atlassian.net";
+    AppController app;
+
+    const std::shared_ptr<const std::vector<TrackerField>> fields = RestoreAtStartup(
+        app, cfg, "Jira",
+        {NamedField("customfield_saved", "Saved field"), NamedField("comment", "Comment"),
+         NamedField("timespent", "Time spent"), NamedField("aggregatetimeoriginalestimate", "Total original"),
+         NamedField("aggregatetimeestimate", "Total remaining"), NamedField("aggregatetimespent", "Total spent"),
+         NamedField("timeoriginalestimate", "Original estimate")});
+
+    for (const char* id :
+         {"timespent", "aggregatetimeoriginalestimate", "aggregatetimeestimate", "aggregatetimespent"}) {
+        const TrackerField* field = FindField(*fields, id);
+        REQUIRE(field != nullptr);
+        CHECK(field->ReadOnly);
+    }
+    const TrackerField* editableEstimate = FindField(*fields, "timeoriginalestimate");
+    REQUIRE(editableEstimate != nullptr);
+    CHECK_FALSE(editableEstimate->ReadOnly); // only the listed timetracking ids are locked
+    CHECK_FALSE(HasField(*fields, "comment"));
+    CHECK(CountField(*fields, "history") == 1);
+    CHECK(CountField(*fields, "comments") == 1);
+}
+
+TEST_CASE("Startup restore: a GitHub catalog gets History and keeps its own Comments field, not a duplicate") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.TrackerType = "GitHub";
+    cfg.GitHubOwner = "acme";
+    cfg.GitHubRepo = "widgets";
+    AppController app;
+
+    // The tracker type in a client's own case: the restore normalizes it, as the live apply does.
+    const std::shared_ptr<const std::vector<TrackerField>> fields =
+        RestoreAtStartup(app, cfg, "github",
+                         {NamedField("customfield_saved", "Saved field"), NamedField("comment", "Legacy comment"),
+                          NamedField("comments", "GitHub comments", "number")});
+
+    CHECK(CountField(*fields, "history") == 1);
+    CHECK(CountField(*fields, "comments") == 1);
+    const TrackerField* comments = FindField(*fields, "comments");
+    REQUIRE(comments != nullptr);
+    CHECK(comments->Name == "GitHub comments"); // the catalog's own field, as GitHubClient publishes it
+    CHECK_FALSE(comments->ReadOnly);            // not replaced by the synthetic read-only column
+    CHECK_FALSE(HasField(*fields, "comment"));
+}
+
+TEST_CASE("Startup restore: a Linear catalog gets the History and Comments columns and loses a legacy comment") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.TrackerType = "Linear";
+    cfg.LinearTeamId = "team-1";
+    AppController app;
+
+    const std::shared_ptr<const std::vector<TrackerField>> fields = RestoreAtStartup(
+        app, cfg, "Linear", {NamedField("customfield_saved", "Saved field"), NamedField("comment", "Comment")});
+
+    CHECK(CountField(*fields, "history") == 1);
+    CHECK(CountField(*fields, "comments") == 1);
+    const TrackerField* comments = FindField(*fields, "comments");
+    REQUIRE(comments != nullptr);
+    CHECK(comments->ReadOnly); // the synthetic count column
+    CHECK_FALSE(HasField(*fields, "comment"));
+}
+
+TEST_CASE("Startup restore: a Plane catalog is installed as saved, with no fixups") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.TrackerType = "Plane";
+    cfg.PlaneUrl = "https://api.plane.so";
+    cfg.PlaneWorkspaceSlug = "ws";
+    AppController app;
+
+    const std::shared_ptr<const std::vector<TrackerField>> fields =
+        RestoreAtStartup(app, cfg, "Plane",
+                         {NamedField("customfield_saved", "Saved field"), NamedField("comment", "Comment"),
+                          NamedField("timespent", "Time spent")});
+
+    CHECK(fields->size() == 3);
+    CHECK(HasField(*fields, "comment"));
+    CHECK_FALSE(HasField(*fields, "history"));
+    CHECK_FALSE(HasField(*fields, "comments"));
+    const TrackerField* timespent = FindField(*fields, "timespent");
+    REQUIRE(timespent != nullptr);
+    CHECK_FALSE(timespent->ReadOnly);
 }
