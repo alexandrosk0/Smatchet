@@ -8,7 +8,60 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (2 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `input-ux-w2-view-delete-undo`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/input-ux-w2-view-delete-undo`
+- **Originating plan**: [`docs/plans/shipped/input-ux-w2-view-delete-undo.md`](../../../docs/plans/shipped/input-ux-w2-view-delete-undo.md)
+- **Started**: 2026-11-23T13:42:24Z
+- **Updated**: 2026-11-23T15:28:54Z
+- **Write set** (9 paths):
+  - `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp`
+  - `Source/Core/include/Ui/SmatchetUiSession.h`
+  - `tests/ui/views_editor_header.test.cpp`
+  - `docs/plans/active/input-ux-w2-view-delete-undo.md`
+  - `docs/plans/shipped/input-ux-w2-view-delete-undo.md`
+  - `docs/plans/INDEX.md`
+  - `Source/Core/src/Ui/SmatchetViewsDashboardUi_detail.h`
+  - `tests/Core/ViewsPendingCreate.test.cpp`
+  - `docs/self-improvement/categories/debt/2026-11-22-drafts-undo-deferred.md`
+- **Notes**: view-delete Undo; + drafts-undo debt bullet
+
+### `input-ux-w3-grid-s1`
+
+- **Owner**: `grid-engine`
+- **Branch**: `claude/w3-grid-spreadsheet-s1-619ea3`
+- **Originating plan**: [`docs/plans/active/input-ux-w3-grid-spreadsheet.md`](../../../docs/plans/active/input-ux-w3-grid-spreadsheet.md)
+- **Started**: 2026-11-22T20:30:38Z
+- **Updated**: 2026-11-22T21:13:44Z
+- **Write set** (26 paths):
+  - `Source/Core/include/Ui/GridCursorPure.h`
+  - `Source/Core/include/SpreadsheetState.h`
+  - `Source/Core/include/Ui/SmatchetUI.h`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridCells.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridKeys.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi_Internal.h`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridTable.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`
+  - `Source/Core/src/Ui/SmatchetBulkTicketsUi.cpp`
+  - `Source/Core/src/Ui/SmatchetGridUiSupport.cpp`
+  - `tests/Core/GridCursorPure.test.cpp`
+  - `tests/Core/BulkFieldEditPure.test.cpp`
+  - `tests/CMakeLists.txt`
+  - `tests/ui/grid_spreadsheet_keys.test.cpp`
+  - `tests/ui/CMakeLists.txt`
+  - `tests/ui/ui_tests_registry.cpp`
+  - `tests/ui/bulk_field_edit.test.cpp`
+  - `scripts/dev/test-ui-grid-spreadsheet.sh`
+  - `.github/workflows/build-and-test.yml`
+  - `docs/guides/keyboard-shortcuts.md`
+  - `Source/Core/src/Ui/AGENTS.md`
+  - `docs/plans/active/input-ux-w3-grid-spreadsheet.md`
+  - `docs/audits/INPUT_UX_AUDIT.md`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridIds.h`
+  - `tests/fixtures/jira_backend/grid-spreadsheet.json`
+  - `tests/ui/duration_inline_edit_commit.test.cpp`
+- **Notes**: Input UX W3 grid spreadsheet S1
+
