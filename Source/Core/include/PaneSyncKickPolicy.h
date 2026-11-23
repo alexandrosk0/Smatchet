@@ -31,6 +31,55 @@ inline bool PaneSyncKickStillCurrent(bool contextAlive, std::uint64_t capturedGe
     return contextAlive && capturedGeneration == currentGeneration;
 }
 
+/// Re-fetches a pane catalog may make after a dropped apply before the pane is left to its next sync kick.
+/// Each one needs a real backend swap or context revival between kick and apply, so the cap only bounds a
+/// pane whose backend keeps being recreated.
+constexpr unsigned kMaxPaneCatalogRefetches = 2;
+
+/// True when a pane catalog fetched against (`capturedGeneration`, `capturedEpoch`) may still land: the pane's backend
+/// was not swapped (GridLiveContext::backendGeneration_) and its catalog was not explicitly cleared, as a tracker
+/// switch does first (GridContextFieldCatalog::CatalogEpoch), while the fetch ran.
+inline bool PaneCatalogResultCurrent(std::uint64_t capturedGeneration, std::uint64_t currentGeneration,
+                                     std::uint64_t capturedEpoch, std::uint64_t currentEpoch) {
+    return capturedGeneration == currentGeneration && capturedEpoch == currentEpoch;
+}
+
+/// What AppController::applyPaneCatalogOnMainThread_ does with a catalog a worker fetched for a pane.
+enum class PaneCatalogApplyVerdict : std::uint8_t {
+    Apply,         ///< current, fetched for the pane's site, and the pane has no live catalog: write it in
+    DropNotNeeded, ///< nothing is owed: the context is gone or already holds a live catalog for the request's scope
+    DropRefetch,   ///< not usable and the pane has no catalog: fetch again with the pane's latest configuration
+    DropOwed, ///< not usable, the pane has no catalog, and no re-fetch can run (another site, or the budget is spent)
+};
+
+/// Decides a pane-catalog apply (capture-then-check, issue #1081).
+/// - `resultCurrent`: PaneCatalogResultCurrent.
+/// - `liveCatalogCoversResult`: the context already holds a live catalog (fieldCatalogEverLoaded_) for the scope the
+///   fetch was REQUESTED for (never the result's own, which a failed result does not carry): fetched for the same
+///   project, or any live catalog when the request is unscoped. Another path (the focused grid fetch, a
+///   RefreshFieldCatalog, the same-backend seed, an earlier pane fetch) filled it while this fetch ran, and that
+///   catalog is never replaced by this one. A live catalog of another scope does not count: a project-scoped
+///   result replaces an unscoped seed.
+/// - `resultForPaneSite`: the configuration the fetch ran with names the site the context serves now (its cache key).
+///   A result fetched for another site never lands, even when nothing else moved: it would put one tracker's catalog
+///   into another's pane.
+/// - `latestConfigForPaneSite`: the pane's latest configuration (the last sync kick's) names that site, so a re-fetch
+///   with it cannot reach another tracker.
+inline PaneCatalogApplyVerdict DecidePaneCatalogApply(bool contextAlive, bool resultCurrent,
+                                                      bool liveCatalogCoversResult, bool resultForPaneSite,
+                                                      bool latestConfigForPaneSite, unsigned refetchesSoFar) {
+    if (!contextAlive || liveCatalogCoversResult) {
+        return PaneCatalogApplyVerdict::DropNotNeeded;
+    }
+    if (resultCurrent && resultForPaneSite) {
+        return PaneCatalogApplyVerdict::Apply;
+    }
+    if (!latestConfigForPaneSite || refetchesSoFar >= kMaxPaneCatalogRefetches) {
+        return PaneCatalogApplyVerdict::DropOwed;
+    }
+    return PaneCatalogApplyVerdict::DropRefetch;
+}
+
 /// True when AppController::TickChangeMonitors should dispatch a change-probe for a pane
 /// (ticket-change-monitor plan, § Approach #1). Every gate independently blocks: the feature
 /// must be enabled, the backend reachable, the app window focused, the pane recently visible

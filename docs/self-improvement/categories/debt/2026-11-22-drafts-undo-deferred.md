@@ -1,4 +1,4 @@
-- 2026-11-22 · input-ux-w2-drafts-undo · [debt] · P2 — Drafts and Undo leftovers: grid edit undo, view-delete Undo, conflict-discard undo and three draft surfaces
+- 2026-11-22 · input-ux-w2-drafts-undo · [debt] · P2 — Drafts and Undo leftovers: grid edit undo, conflict-discard undo and three draft surfaces
 
 Details:
 `docs/plans/input-ux-w2-drafts-undo.md` (Wave 2 piece 4.3, PR #2439) added the draft store and the toast Undo
@@ -8,11 +8,9 @@ locks have since been released:
 - **Grid cell edit undo (#28 single cell, #33 blur commit) and keeping a rejected value (#31).** Files:
   `SmatchetGridFieldEditPipeline.cpp`, `TicketFieldEditor.cpp` and the grid cell TUs. The toast API is what it
   plugs into. Wave 3's `docs/plans/input-ux-w3-grid-spreadsheet.md` also lists #28, #31 and #33 as closed by its
-  design (with paste and ranges); whichever lands first, the other drops them.
-- **View-delete Undo (#90).** One function plus a call in `SmatchetViewsDashboardUi.cpp`: re-create the captured
-  definition through the create latch, refuse if the tracker changed, bring it back last and active, and sync the
-  grid to the restored view (Bugbot's note on the dropped version). The dropped version is in #2439's branch
-  history as `PushViewDeletedUndoToast`.
+  design (with paste and ranges); whichever lands first, the other drops them. Now owned by that plan's slice S3.
+- **Keyboard guide line for view-delete Undo.** `docs/guides/keyboard-shortcuts.md` ("A confirmed action can be
+  taken back...") gains "deleting a view" once the `input-ux-w3-grid-s1` plan-lock on that file is released.
 - **Conflict "Discard my edit" undo (#116)** and undo for discarding queued offline rows. A row held for undo could
   replay during the window, so this needs a queue-service entry point in `Sync/` (archive to dead letters, restore
   by original id).
@@ -29,9 +27,9 @@ locks have since been released:
 - Related open Issues: #2458 (dictation reload drain) and #2459.
 
 Concrete next action:
-Ship view-delete Undo first (smallest), then grid cell edit undo, then the `Sync/` archive/restore entry point for
-#116, then the new-issue and Time-remaining drafts, each in its own PR with a bucket-E case beside the existing
+View-delete Undo shipped (`docs/plans/shipped/input-ux-w2-view-delete-undo.md`). Next: the `Sync/`
+archive/restore entry point for #116, then the new-issue and Time-remaining drafts, each in its own PR with a bucket-E case beside the existing
 `OfflineFirst/*` and toast Undo cases. Delete each bullet as it lands.
 
 Status: open
-Last-reviewed: 2026-11-22
+Last-reviewed: 2026-11-23

@@ -123,7 +123,7 @@ TEST_CASE("AppendCachedTicketFromJiraSearchIssue — watchers absent yields empt
 TEST_CASE("AppendCachedTicketFromJiraSearchIssue — comment mapped even when NOT a selected field "
           "(the production shape) [regression]") {
     // REGRESSION PIN: production selectedFields never contains "comment" — the legacy field is
-    // erased from the picker (EraseCatalogLegacyCommentField), so no view can select it. The wire
+    // erased from the picker (AppController::ApplyCatalogCorrections), so no view can select it. The wire
     // request still always asks for it (BuildFetchFieldListsFromView hard-codes it into
     // outFieldsList). Keying the mapping off selectedFields silently discarded the payload every
     // sync, leaving BOTH the Comments-cell hover tooltip (fieldValues["comment"]) and its numeric

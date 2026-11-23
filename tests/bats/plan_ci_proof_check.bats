@@ -200,6 +200,44 @@ run_sut() {
     [[ "$output" == *'live check skipped'* ]]
 }
 
+@test "every proof on one line is checked, not only the last" {
+    mkdir -p "$SANDBOX/$FIXTURE_PLAN_DIR"
+    printf '%s\n' '# Plan' '## Verification' \
+        '- CI: "Sanitizer (UBSan via Clang)" green on this PR; CI: "Agentic self-tests (bats)" green on this PR.' \
+        > "$SANDBOX/$FIXTURE_PLAN_DIR/lane-change.md"
+    commit_all
+    commit_path Source/Standalone/Main.cpp
+    STUB="$STUB_BIN" run_sut develop
+    [ "$status" -eq 1 ]
+    [[ "$output" == *'"Sanitizer (UBSan via Clang)" green on this PR'* ]]
+}
+
+@test "a fenced code block neither ends the section nor counts as a proof" {
+    mkdir -p "$SANDBOX/$FIXTURE_PLAN_DIR"
+    printf '%s\n' '# Plan' '## Verification' '```' '## not a heading' \
+        '- CI: "Windows + MSVC" green on this PR.' '```' \
+        '- CI: "Sanitizer (UBSan via Clang)" green on this PR.' '- CI: "<check>" green on this PR.' \
+        > "$SANDBOX/$FIXTURE_PLAN_DIR/lane-change.md"
+    commit_all
+    commit_path Source/Standalone/Main.cpp
+    STUB="$STUB_BIN" run_sut develop
+    [ "$status" -eq 1 ]
+    [[ "$output" == *'"Sanitizer (UBSan via Clang)"'* ]]
+    [[ "$output" != *'Windows + MSVC'* ]]
+    [[ "$output" != *'<check>'* ]]
+}
+
+@test "a fence that never closes is ignored, so it hides no proof" {
+    mkdir -p "$SANDBOX/$FIXTURE_PLAN_DIR"
+    printf '%s\n' '# Plan' '## Verification' '  ```bash' \
+        '- CI: "Sanitizer (UBSan via Clang)" green on this PR.' \
+        > "$SANDBOX/$FIXTURE_PLAN_DIR/lane-change.md"
+    commit_all
+    commit_path Source/Standalone/Main.cpp
+    STUB="$STUB_BIN" run_sut develop
+    [ "$status" -eq 1 ]
+}
+
 @test "unknown option is a usage error" {
     STUB="$STUB_BIN" run_sut --bogus
     [ "$status" -eq 2 ]
