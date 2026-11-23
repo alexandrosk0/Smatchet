@@ -197,10 +197,9 @@ void DrawCatalogCueTooltip(GridCatalogCue cue, const GridCatalogCoverage& covera
 // offers Retry). Declared in SmatchetActiveProjectGridUi_Internal.h. Steady state (editable pane):
 // O(columns) per visible pane per frame and nothing else. While the pane is blocked, the fetch status
 // is read each frame without its error text, which is copied only when the cue changes or its tooltip
-// is open. `focusedCatalogLoading`: the focused pane's catalog is being fetched through the focused
-// pipeline (the session's grid fetch), a load the pane's own fetch state does not see.
-void NoteAndCueCatalogReadOnly(AppController& app, GridPane& pane, const std::vector<TicketGridColumn>& columns,
-                               bool readOnlyMode, bool focusedCatalogLoading) {
+// is open.
+void NoteAndCueCatalogReadOnly(AppController& app, const UiDrawSession& d, GridPane& pane,
+                               const std::vector<TicketGridColumn>& columns, bool readOnlyMode) {
     const GridCatalogCoverage coverage = MeasureGridCatalogCoverage(columns);
     const bool blocked = GridCellsReadOnlyForCatalog(coverage);
     if (!blocked && pane.catalogCue == GridCatalogCue::None) {
@@ -210,9 +209,15 @@ void NoteAndCueCatalogReadOnly(AppController& app, GridPane& pane, const std::ve
     bool loading = false;
     if (blocked) {
         status = app.GetPaneCatalogFetchStatus(pane.id, /*withLastError=*/false);
-        // The pane's catalog can also be on its way through the focused pipeline or a saved-catalog restore. Both are
-        // loads in flight: the cue says loading and offers no Retry of the pane's own fetch beside them.
-        loading = status.InFlight || focusedCatalogLoading || app.IsFieldCatalogRestoring(pane.id);
+        // The pane's catalog can also be on its way through the session's grid fetch (keyed on the pane it was latched
+        // for, which keeps its loading cue after focus moves on), a refetch queued for the focused pane that starts
+        // next frame, or a saved-catalog restore. All are loads in flight: the cue says loading and offers no Retry of
+        // the pane's own fetch beside them.
+        const bool sessionFetchForPane =
+            d.fieldCatalogLoading && app.IsGridCatalogFetchForPane(d.fieldCatalogFetchLatch, pane.id);
+        const bool refetchQueuedForPane = d.triggerCatalogRefetch && pane.focused;
+        loading =
+            status.InFlight || sessionFetchForPane || refetchQueuedForPane || app.IsFieldCatalogRestoring(pane.id);
     }
     const GridCatalogCue cue =
         ChooseGridCatalogCue(blocked, status.OwnCatalogPopulated, loading, status.AwaitingBackend, status.Failed);

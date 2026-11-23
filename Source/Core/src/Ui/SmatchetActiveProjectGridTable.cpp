@@ -871,7 +871,7 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
         DrawGridZeroResultsStrip(ctx, /*viewIsEmpty=*/false);
     }
     // Only over a table that is drawn: the welcome / loading / error states above replace it and say why already.
-    NoteAndCueCatalogReadOnly(ctx.app, ctx.pane, columns, ctx.readOnlyMode, ctx.pane.focused && d.fieldCatalogLoading);
+    NoteAndCueCatalogReadOnly(ctx.app, d, ctx.pane, columns, ctx.readOnlyMode);
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 1.0f));
     if (!columns.empty() && ImGui::BeginTable("TicketGrid", static_cast<int>(columns.size()), tableFlags)) {

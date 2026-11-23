@@ -944,6 +944,9 @@ class AppController : public IAppThreading,
     GridCatalogFetchLatch LatchGridCatalogFetch();
     /// True when `latch` was taken for the pane that is focused now (UI thread).
     bool IsGridCatalogFetchForFocusedPane(const GridCatalogFetchLatch& latch) const;
+    /// True when `latch` was taken for pane `paneId`'s live context, focused or not (UI thread): the grid fetch it
+    /// names is that pane's catalog load, even after focus has moved to another pane.
+    bool IsGridCatalogFetchForPane(const GridCatalogFetchLatch& latch, const std::string& paneId) const;
     /// UI thread: applies the grid's field-catalog fetch result to the pane `latch` names, the way RefreshFieldCatalog
     /// applies its own: the snapshot is keyed by `fetchCfg` and `projectKey` (the configuration and project the fetch
     /// ran with, not whatever is configured when it lands), the Jira-vs-Plane fixups follow `fetchCfg`'s tracker, and

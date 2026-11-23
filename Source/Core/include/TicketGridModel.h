@@ -95,8 +95,8 @@ enum class GridCatalogCue {
     Loading,         ///< the pane's catalog fetch is running
     AwaitingBackend, ///< the fetch is parked until the pane's tracker backend is installed; it starts on its own
     NotLoaded,       ///< no catalog yet and no fetch running (not started, or waiting on the pane's sync)
-    Unavailable,     ///< the last fetch failed and no saved copy exists, or the pane's backend changed under it
-    Unresolved,      ///< the pane has its own catalog, but it knows none of the view's fields
+    Unavailable, ///< the pane's last catalog fetch failed (PaneCatalogFetchStatus::LastError) or its backend changed
+    Unresolved,  ///< the pane has its own catalog, but it knows none of the view's fields
 };
 
 /// Picks the cue. `ownCatalogPopulated`: the pane's own catalog is loaded or restored. `fetchInFlight` /
