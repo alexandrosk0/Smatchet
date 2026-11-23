@@ -559,8 +559,7 @@ void GridSelectAllRows(GridPane& pane, const std::vector<CachedTicket>& tickets)
     }
     if (rowCount > 0) {
         sel.PrimaryRow = 0;
-        sel.SortSignature =
-            ComputeGridSortSignature(pane.cachedSortFingerprint, pane.cachedSortTicketsRevision, tickets.size());
+        sel.SortSignature = ComputeGridSortSignature(pane.cachedSortFingerprint, pane.snapshotRevision, tickets.size());
         const size_t firstTicketIndex = !pane.filteredIndices.empty() ? pane.filteredIndices.front() : 0;
         if (firstTicketIndex < tickets.size()) {
             pane.gridState.ActiveIssueId = tickets[firstTicketIndex].id;

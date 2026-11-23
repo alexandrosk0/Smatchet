@@ -738,10 +738,18 @@ void LuaConsolePlugin::DrawRunButtonRow(DrawCtx& ctx, const std::string& curName
                 }
                 // Lua scripts run on the FOCUSED pane's selection (ADR-0018 focused-pane semantics).
                 const GridPane& focusedPane = g_ui.focusedPane();
+                // A range that a re-sort split is not its bounding box: only the member rows count (RectContains).
+                const GridRectSelection& rectSel = focusedPane.gridState.RectSel;
+                std::set<int> selectedRows = rectSel.Rows;
+                if (rectSel.Active) {
+                    for (int r = rectSel.MinRow(); r <= rectSel.MaxRow(); ++r) {
+                        if (rectSel.RectContains(r, rectSel.MinCol())) {
+                            selectedRows.insert(r);
+                        }
+                    }
+                }
                 const std::vector<std::string> selectedIds = lua_console_detail::CollectSelectedTicketIds(
-                    focusedPane.gridState.RectSel.Rows, focusedPane.gridState.RectSel.Active,
-                    focusedPane.gridState.RectSel.MinRow(), focusedPane.gridState.RectSel.MaxRow(),
-                    focusedPane.cachedSortedIndices, ticketIds);
+                    selectedRows, false, 0, -1, focusedPane.cachedSortedIndices, ticketIds);
                 LOG_TRACE("LuaConsole: Run %s on %zu selected issue(s)", curName.c_str(), selectedIds.size());
                 app.RunAutoScript(curName, selectedIds);
                 ClearErrorMarkers();
