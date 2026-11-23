@@ -951,6 +951,20 @@ struct UiDrawSession {
     /// (the active view). Lets deletion hit the right-clicked view regardless of which view is
     /// active or whether the active view's editor is dirty. Empty falls back to the active view.
     std::string viewsPendingDeleteId;
+    /// Undo of a view delete (the "View deleted" toast; docs/plans/input-ux-w2-view-delete-undo.md). The
+    /// toast's undo callback only latches the deleted definition here; SmatchetUI::applyPendingViewDelete
+    /// re-creates it at the top of the next frame, before the delete latch, for the same reason as the
+    /// create latch above. Consume-once, single-slot. All of it is captured at delete time: whether the
+    /// deleted view was the active one, the views bucket it lived in (NormalizeViewsBackendKey; the
+    /// restore is refused if the bucket changed), the ids of the grid panes that showed it, the view
+    /// active right after the delete (where those panes fell back to) and the pane focused at the delete.
+    bool viewsPendingRestore = false;
+    ViewDefinition viewsPendingRestorePayload;
+    bool viewsPendingRestoreWasActive = false;
+    std::string viewsPendingRestoreBackendKey;
+    std::vector<std::string> viewsPendingRestorePaneIds;
+    std::string viewsPendingRestoreFallbackId;
+    std::string viewsPendingRestoreFocusedPaneId;
 
     // ---- Grid panes (multi-grid-tabs Slice 2, ADR-0018) ----
     // The per-pane grid runtime that used to live here as singleton fields
