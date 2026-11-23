@@ -79,10 +79,35 @@ gate_output_for() {
 # whose number is in <added-lines> (space-separated; "all" keeps every line).
 # shellcheck disable=SC2016  # awk / sed programs; the backticks are literal
 verification_checks() {
-    awk -v added=" $2 " '
+    # Every proof on a line counts, not only the last (grep -o, not a greedy sed).
+    # Lines inside a fenced code block are neither headings nor proofs, and a
+    # `<placeholder>` name is a template. Kept in step with the layer's merge-time
+    # gate, agent-layer/agents/scripts/core/merge-gates.d/30-plan-proof.sh.
+    # A fence closes only on its own marker (same character, at least as long);
+    # one that never closes is ignored, so it cannot hide the proofs after it.
+    local fences=1
+    awk '
+        match($0, /^[[:space:]]*(```+|~~~+)/) {
+            m = substr($0, RSTART, RLENGTH); sub(/^[[:space:]]*/, "", m)
+            if (open == "") open = m
+            else if (substr(m, 1, 1) == substr(open, 1, 1) && length(m) >= length(open)) open = ""
+        }
+        END { exit open == "" ? 0 : 1 }
+    ' "$1" || fences=0
+    awk -v added=" $2 " -v fences="$fences" '
+        fences && match($0, /^[[:space:]]*(```+|~~~+)/) {
+            m = substr($0, RSTART, RLENGTH); sub(/^[[:space:]]*/, "", m)
+            if (open == "") open = m
+            else if (substr(m, 1, 1) == substr(open, 1, 1) && length(m) >= length(open)) open = ""
+            next
+        }
+        open != "" { next }
         /^## / { in_v = ($0 ~ /^## Verification[[:space:]]*$/); next }
         in_v && (added == " all " || index(added, " " NR " ")) { print }
-    ' "$1" | sed -nE 's/.*CI:[[:space:]]*["`]([^"`]+)["`][[:space:]]+green on (this|the) PR.*/\1/p'
+    ' "$1" \
+        | grep -oE 'CI:[[:space:]]*["`][^"`]+["`][[:space:]]+green on (this|the) PR' \
+        | sed -E 's/^CI:[[:space:]]*["`]([^"`]+)["`].*/\1/' \
+        | grep -vE '^<[^>]*>$' || true
 }
 
 # added_lines <plan-file> — the head-side line numbers this branch adds to <plan-file>

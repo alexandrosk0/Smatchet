@@ -88,4 +88,9 @@ struct ActiveProjectDrawCtx {
     GridKeyCellMenuCtx cellMenu{};
 };
 
+// Scrolls the grid's table so the cell in drawn column `colIdx` on the row spanning screen y `minY`..`maxY` is fully
+// visible, clear of the frozen header row and the frozen key column. The column may be scrolled out of view. Call from
+// inside a cell's draw. Defined in SmatchetActiveProjectGridKeys.cpp.
+void ScrollGridCellIntoView(float minY, float maxY, int colIdx);
+
 #endif // SMATCHET_UI_SMATCHET_ACTIVE_PROJECT_GRID_UI_INTERNAL_H

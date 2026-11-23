@@ -11,6 +11,8 @@
 #include "DataFreshnessCue.h"
 #include "JiraBackendInstancesPure.h"
 #include "SmatchetUiSession.h"
+#include "GridPane.h"
+#include "Ui/SmatchetGridPaneWindows.h"
 #include "SmatchetWindowExpand.h"
 #include "SmatchetToast.h"
 #include "SmatchetLocalization.h"
@@ -1439,12 +1441,135 @@ void SmatchetUI::applyPendingViewCreate(UiDrawSession& d) {
     SmatchetToastManager::Instance().Push(toastTitle, nowActive->Name, ToastType::Success, toastMs);
 }
 
+// Re-home the Views editor, the query config and the grid onto the active view, after a store change made
+// another view active (a delete of the active view, or its Undo).
+static void RehomeOnActiveView(AppController& app, UiDrawSession& d, Views& views) {
+    const ViewDefinition* nowActive = views.GetActiveView();
+    if (!nowActive) {
+        return;
+    }
+    LoadBuffersFromView(d, *nowActive);
+    d.cfg.JqlQuery = nowActive->Jql;
+    d.cfg.SelectedFields = nowActive->Fields;
+    SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, views.GetStore(), true);
+}
+
+static void PushViewRestoreRefusedToast() {
+    SmatchetToastManager::Instance().Push(
+        SmatchetLocalization::T("toast.view_restore_refused", "View not restored"),
+        SmatchetLocalization::T("toast.view_restore_refused_body", "The tracker changed since the view was deleted."),
+        ToastType::Warning);
+}
+
+// The toast of a deleted view, with Undo (docs/plans/input-ux-w2-view-delete-undo.md; INPUT_UX_AUDIT.md #90).
+// Undo only latches what the delete captured (UiDrawSession::viewsPendingRestore): the store is resized at the
+// top of the next frame, never from the toast's click handler. `paneIds` are the grid panes that showed the
+// view; in the next frame they fall back to `fallbackId`, the view active after the delete (resolvePaneView),
+// so the restore binds them to it again.
+static void PushViewDeletedUndoToast(UiDrawSession& d, const std::string& name, const ViewDefinition& removed,
+                                     bool wasActive, const std::vector<std::string>& paneIds,
+                                     const std::string& fallbackId) {
+    if (removed.Id.empty()) {
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_deleted", "View deleted"), name,
+                                              ToastType::Info, 1800);
+        return;
+    }
+    UiDrawSession* const dp = &d;
+    const std::string backendKey = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
+    const std::string focusedPaneId = d.focusedPaneId;
+    SmatchetToastManager::Instance().PushUndoable(
+        SmatchetLocalization::T("toast.view_deleted", "View deleted"), name, 8000,
+        [dp, removed, wasActive, backendKey, paneIds, fallbackId, focusedPaneId]() {
+            // Checked again when the latch is consumed; this one answers the click at once.
+            if (ConfigManager::NormalizeViewsBackendKey(dp->cfg.TrackerType) != backendKey) {
+                LOG_INFO("views: undo of the '%s' delete refused, the tracker changed", removed.Id.c_str());
+                PushViewRestoreRefusedToast();
+                return;
+            }
+            dp->viewsPendingRestore = true;
+            dp->viewsPendingRestorePayload = removed;
+            dp->viewsPendingRestoreWasActive = wasActive;
+            dp->viewsPendingRestoreBackendKey = backendKey;
+            dp->viewsPendingRestorePaneIds = paneIds;
+            dp->viewsPendingRestoreFallbackId = fallbackId;
+            dp->viewsPendingRestoreFocusedPaneId = focusedPaneId;
+        },
+        nullptr);
+}
+
+// Consume the view-delete Undo latch (UiDrawSession::viewsPendingRestore) at the top-of-Draw latch point. The
+// restored view keeps its id unless a newer view took it. It becomes the active view again only when the pane
+// focused now showed it (RestoredViewTakesFocus) and the Views editor holds no unapplied edits of the view now
+// active; otherwise the user stays where they are.
+static void ApplyPendingViewRestore(AppController& app, UiDrawSession& d, Views& views) {
+    if (!d.viewsPendingRestore) {
+        return;
+    }
+    d.viewsPendingRestore = false;
+    const ViewDefinition payload = std::move(d.viewsPendingRestorePayload);
+    d.viewsPendingRestorePayload = ViewDefinition();
+    const bool wasActive = d.viewsPendingRestoreWasActive;
+    d.viewsPendingRestoreWasActive = false;
+    const std::string backendKey = std::move(d.viewsPendingRestoreBackendKey);
+    d.viewsPendingRestoreBackendKey.clear();
+    SmatchetViewsDashboardUiDetail::PaneRestoreTarget target;
+    target.PaneIds = std::move(d.viewsPendingRestorePaneIds);
+    d.viewsPendingRestorePaneIds.clear();
+    target.FallbackId = std::move(d.viewsPendingRestoreFallbackId);
+    d.viewsPendingRestoreFallbackId.clear();
+    const std::string focusedAtDelete = std::move(d.viewsPendingRestoreFocusedPaneId);
+    d.viewsPendingRestoreFocusedPaneId.clear();
+    if (ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType) != backendKey) {
+        LOG_INFO("views: undo of the '%s' delete refused, the tracker changed", payload.Id.c_str());
+        PushViewRestoreRefusedToast();
+        return;
+    }
+    // Read before Create: it appends to the store, which invalidates every ViewDefinition*.
+    std::string keepActiveId;
+    if (const ViewDefinition* activeBefore = views.GetActiveView()) {
+        bool keep = !SmatchetViewsDashboardUiDetail::RestoredViewTakesFocus(d.gridPanes, d.focusedPaneId,
+                                                                            focusedAtDelete, target.PaneIds, wasActive);
+        if (!keep) {
+            SyncViewsEditorDraft(d, *activeBefore);
+            keep = ViewDraftHasUnsavedEdits(d.viewDraft, *activeBefore);
+        }
+        if (keep) {
+            keepActiveId = activeBefore->Id;
+        }
+    }
+    if (!views.Create(payload)) {
+        LOG_WARN("views: undo could not re-create view '%s'", payload.Id.c_str());
+        return;
+    }
+    const ViewDefinition* const restored = views.GetActiveView();
+    const std::string restoredId = restored ? restored->Id : payload.Id;
+    const std::string restoredName = restored ? restored->Name : payload.Name;
+    target.BackendKey = backendKey;
+    target.DeletedId = payload.Id;
+    target.RestoredId = restoredId;
+    if (SmatchetViewsDashboardUiDetail::RebindPanesToRestoredView(d.gridPanes, d.focusedPaneId, target)) {
+        SmatchetGridPaneWindows::MarkPanesDirty(d);
+    }
+    if (!keepActiveId.empty() && views.Find(keepActiveId) != nullptr) {
+        // Create made the restored view active; stay on the view the user is on. The editor and the grid
+        // already show it.
+        views.Activate(keepActiveId);
+    } else {
+        RehomeOnActiveView(app, d, views);
+    }
+    LOG_INFO("views: undo restored view '%s' (active: '%s')", restoredId.c_str(),
+             keepActiveId.empty() ? restoredId.c_str() : keepActiveId.c_str());
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_restored", "View restored"), restoredName,
+                                          ToastType::Success, 1800);
+}
+
 // Consume the one-frame deferred view-DELETE latch (see
 // UiDrawSession::viewsPendingDeleteActive). Runs immediately after the create
 // latch at the top of SmatchetUI::Draw — same rationale: Views::DeleteActive
 // erases from store.Views, so it must never run while frame-resolved
-// ViewDefinition* are live.
+// ViewDefinition* are live. The view-delete Undo latch is consumed here first.
 void SmatchetUI::applyPendingViewDelete(AppController& app, UiDrawSession& d) {
+    ApplyPendingViewRestore(app, d, ViewState);
     if (!d.viewsPendingDeleteActive) {
         return;
     }
@@ -1460,21 +1585,21 @@ void SmatchetUI::applyPendingViewDelete(AppController& app, UiDrawSession& d) {
     const ViewDefinition* activeBefore = ViewState.GetActiveView();
     const std::string activeIdBefore = activeBefore ? activeBefore->Id : std::string();
     const bool deletingActive = targetId.empty() || targetId == activeIdBefore;
+    // Taken before the erase: Undo puts this definition back, and the panes that showed it.
+    const ViewDefinition* const doomed = ViewState.Find(deletingActive ? activeIdBefore : targetId);
+    const ViewDefinition removedView = doomed ? *doomed : ViewDefinition();
+    const std::vector<std::string> paneIds =
+        SmatchetViewsDashboardUiDetail::PaneIdsShowingView(d.gridPanes, removedView.Id);
     const bool ok = deletingActive ? ViewState.DeleteActive() : ViewState.Delete(targetId);
     if (!ok) {
         return;
     }
     if (deletingActive) {
-        const ViewDefinition* nowActive = ViewState.GetActiveView();
-        if (nowActive) {
-            LoadBuffersFromView(d, *nowActive);
-            d.cfg.JqlQuery = nowActive->Jql;
-            d.cfg.SelectedFields = nowActive->Fields;
-            SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
-        }
+        RehomeOnActiveView(app, d, ViewState);
     }
-    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_deleted", "View deleted"), deletedName,
-                                          ToastType::Info, 1800);
+    const ViewDefinition* const fallback = ViewState.GetActiveView();
+    PushViewDeletedUndoToast(d, deletedName, removedView, deletingActive, paneIds,
+                             fallback ? fallback->Id : std::string());
 }
 
 // Window-level keyboard shortcuts: Ctrl+Enter = Apply, Ctrl+N = New. Split out of

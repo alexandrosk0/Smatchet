@@ -7,6 +7,7 @@
 
 #include <doctest/doctest.h>
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -308,4 +309,205 @@ TEST_CASE("GridRectSelection drops the kept ids when none of them is shown any m
     CHECK(n == 0);
     CHECK(sel.KeepIssueIds.empty());
     CHECK(sel.PrimaryRow == -1);
+}
+
+// ---- Selection by identity (input UX Wave 3, grid S1): rows, the cell range and the active cell follow their ids ----
+
+namespace {
+using IdList = std::vector<std::string>;
+const std::string& IdIn(const IdList& list, int index) { return list[static_cast<size_t>(index)]; }
+} // namespace
+
+TEST_CASE("GridRectSelection::SyncRows mirrors a changed Rows by id, and only a changed one") {
+    GridRectSelection sel;
+    const IdList order = {"A-1", "A-2", "A-3", "A-4"};
+    auto idAt = [&order](int row) -> const std::string& { return IdIn(order, row); };
+    sel.Rows = {1, 3};
+    sel.SyncRows(4, idAt);
+    CHECK(sel.KeepIssueIds == std::set<std::string>{"A-2", "A-4"});
+    CHECK(sel.KeepRows == sel.Rows);
+    CHECK_FALSE(sel.KeepStale());
+    // The user picks something else: the mirror follows instead of dropping.
+    sel.Rows = {0};
+    sel.SyncRows(4, idAt);
+    CHECK(sel.KeepIssueIds == std::set<std::string>{"A-1"});
+    // A cleared selection clears the mirror.
+    sel.Rows.clear();
+    sel.SyncRows(4, idAt);
+    CHECK(sel.KeepIssueIds.empty());
+}
+
+TEST_CASE("GridRectSelection::Remap re-expresses rows in a new order and drops the rows that left") {
+    GridRectSelection sel;
+    IdList order = {"A-1", "A-2", "A-3", "A-4"};
+    auto idAt = [&order](int row) -> const std::string& { return IdIn(order, row); };
+    IdList cols = {"id", "summary"};
+    auto fieldAt = [&cols](int col) -> const std::string& { return IdIn(cols, col); };
+    sel.Rows = {0, 2};
+    sel.SyncRows(4, idAt);
+    order = {"A-3", "A-9", "A-1"}; // re-sorted, A-2 and A-4 left, A-9 arrived
+    sel.Remap(3, idAt, 2, fieldAt, 42);
+    CHECK(sel.Rows == std::set<int>{0, 2});
+    CHECK(sel.SortSignature == 42);
+}
+
+TEST_CASE("GridRectSelection::SetRange snapshots the identities of a range") {
+    GridRectSelection sel;
+    const IdList order = {"A-1", "A-2", "A-3", "A-4"};
+    auto idAt = [&order](int row) -> const std::string& { return IdIn(order, row); };
+    const IdList cols = {"id", "summary", "priority"};
+    auto fieldAt = [&cols](int col) -> const std::string& { return IdIn(cols, col); };
+    sel.SetRange(2, 2, 1, 1, 4, idAt, 3, fieldAt);
+    CHECK(sel.Active);
+    CHECK(sel.RangeMulti);
+    CHECK(sel.RangeIssueIds == std::set<std::string>{"A-2", "A-3"});
+    CHECK(sel.RangeFieldIds == std::set<std::string>{"summary", "priority"});
+    CHECK(sel.AnchorIssueId == "A-3");
+    CHECK(sel.ExtentIssueId == "A-2");
+    CHECK(sel.RectContains(1, 1));
+    CHECK(sel.RectContains(2, 2));
+    CHECK_FALSE(sel.RectContains(0, 1));
+    CHECK_FALSE(sel.RectContains(1, 0));
+    // One cell is a range but not a multi-cell one (it shows the focus ring, not a fill).
+    sel.SetRange(1, 1, 1, 1, 4, idAt, 3, fieldAt);
+    CHECK(sel.Active);
+    CHECK_FALSE(sel.RangeMulti);
+    // Selecting B after A leaves no byte of A set.
+    sel.SetRange(3, 2, 3, 2, 4, idAt, 3, fieldAt);
+    CHECK_FALSE(sel.RectContains(1, 1));
+    CHECK(sel.RectContains(3, 2));
+    // A corner outside the grid clears instead of writing out of bounds.
+    sel.SetRange(0, 0, 9, 0, 4, idAt, 3, fieldAt);
+    CHECK_FALSE(sel.Active);
+}
+
+TEST_CASE("GridRectSelection::Remap keeps a range that a re-sort split: a row between the members never joins") {
+    GridRectSelection sel;
+    IdList order = {"A", "B", "C", "D"};
+    auto idAt = [&order](int row) -> const std::string& { return IdIn(order, row); };
+    IdList cols = {"id", "summary"};
+    auto fieldAt = [&cols](int col) -> const std::string& { return IdIn(cols, col); };
+    sel.SetRange(0, 1, 1, 1, 4, idAt, 2, fieldAt); // rows A, B of column "summary"
+    sel.SortSignature = 1;
+    order = {"A", "C", "B", "D"}; // C sorted between A and B: corners 0 and 2 would include it
+    sel.Remap(4, idAt, 2, fieldAt, 2);
+    CHECK(sel.Active);
+    CHECK(sel.RectContains(0, 1));       // A
+    CHECK_FALSE(sel.RectContains(1, 1)); // C is not a member
+    CHECK(sel.RectContains(2, 1));       // B
+    CHECK_FALSE(sel.RectContains(3, 1));
+    CHECK(sel.MinRow() == 0);
+    CHECK(sel.MaxRow() == 2);
+    CHECK(sel.RangeMulti);
+}
+
+TEST_CASE("GridRectSelection::Remap drops the rows of a range that left the view, and clears when none is left") {
+    GridRectSelection sel;
+    IdList order = {"A", "B", "C"};
+    auto idAt = [&order](int row) -> const std::string& { return IdIn(order, row); };
+    IdList cols = {"id", "summary"};
+    auto fieldAt = [&cols](int col) -> const std::string& { return IdIn(cols, col); };
+    sel.SetRange(0, 1, 2, 1, 3, idAt, 2, fieldAt);
+    order = {"C", "X"}; // A and B left the view
+    sel.Remap(2, idAt, 2, fieldAt, 7);
+    CHECK(sel.Active);
+    CHECK(sel.RectContains(0, 1));
+    CHECK_FALSE(sel.RectContains(1, 1));
+    CHECK_FALSE(sel.RangeMulti);
+    order = {"X", "Y"}; // the last member left too
+    sel.Remap(2, idAt, 2, fieldAt, 8);
+    CHECK_FALSE(sel.Active);
+    CHECK(sel.RangeIssueIds.empty());
+}
+
+TEST_CASE("GridRectSelection::Remap puts the anchor and extent where their ids now sit") {
+    GridRectSelection sel;
+    IdList order = {"A", "B", "C"};
+    auto idAt = [&order](int row) -> const std::string& { return IdIn(order, row); };
+    IdList cols = {"id", "summary"};
+    auto fieldAt = [&cols](int col) -> const std::string& { return IdIn(cols, col); };
+    sel.SetRange(0, 1, 1, 1, 3, idAt, 2, fieldAt); // anchor A, extent B
+    order = {"B", "C", "A"};
+    sel.Remap(3, idAt, 2, fieldAt, 3);
+    CHECK(sel.AnchorRow == 2); // A
+    CHECK(sel.ExtentRow == 0); // B
+}
+
+TEST_CASE("SpreadsheetState::ResolveActive finds the active cell by identity once per change") {
+    SpreadsheetState state;
+    IdList order = {"A-1", "A-2", "A-3"};
+    auto idAt = [&order](int row) -> const std::string& { return IdIn(order, row); };
+    IdList cols = {"id", "summary", "priority"};
+    auto fieldAt = [&cols](int col) -> const std::string& { return IdIn(cols, col); };
+    state.ActiveIssueId = "A-3";
+    state.ActiveFieldId = "priority";
+    state.ResolveActive(3, idAt, 3, fieldAt, 10);
+    CHECK(state.ActiveRow == 2);
+    CHECK(state.ActiveCol == 2);
+    // A re-sort moves the row; the cell follows by id.
+    order = {"A-3", "A-1", "A-2"};
+    state.ResolveActive(3, idAt, 3, fieldAt, 11);
+    CHECK(state.ActiveRow == 0);
+    CHECK(state.ActiveCol == 2);
+    // A search that narrows the rows moves them without a new signature: the revision is what triggers the search.
+    order = {"A-2", "A-3", "A-1"};
+    state.ResolveActive(3, idAt, 3, fieldAt, 11);
+    CHECK(state.ActiveRow == 0); // same sig, same revision: the stale index stands
+    state.ShownRowsRevision = 1;
+    state.ResolveActive(3, idAt, 3, fieldAt, 11);
+    CHECK(state.ActiveRow == 1);
+    order = {"A-3", "A-1", "A-2"};
+    state.ShownRowsRevision = 2;
+    state.ResolveActive(3, idAt, 3, fieldAt, 11);
+    CHECK(state.ActiveRow == 0);
+    // The row left the view: no active cell is drawn, the identity is kept.
+    order = {"A-1", "A-2"};
+    state.ResolveActive(2, idAt, 3, fieldAt, 12);
+    CHECK(state.ActiveRow == -1);
+    CHECK(state.ActiveIssueId == "A-3");
+    // It comes back.
+    order = {"A-1", "A-3"};
+    state.ResolveActive(2, idAt, 3, fieldAt, 13);
+    CHECK(state.ActiveRow == 1);
+    // No field yet: the first column.
+    state.ActiveFieldId.clear();
+    state.ResolveActive(2, idAt, 3, fieldAt, 13);
+    CHECK(state.ActiveCol == 0);
+}
+
+TEST_CASE("SpreadsheetState::SetActiveCell marks the indices resolved, ClearActiveCell forgets the cell") {
+    SpreadsheetState state;
+    state.SetActiveCell("A-2", "summary", 1, 1, 5);
+    IdList order = {"A-1", "A-2"};
+    int lookups = 0;
+    auto idAt = [&order, &lookups](int row) -> const std::string& {
+        ++lookups;
+        return IdIn(order, row);
+    };
+    IdList cols = {"id", "summary"};
+    auto fieldAt = [&cols](int col) -> const std::string& { return IdIn(cols, col); };
+    state.ResolveActive(2, idAt, 2, fieldAt, 5);
+    CHECK(lookups == 0); // nothing changed: no search
+    CHECK(state.ActiveRow == 1);
+    state.ClearActiveCell();
+    CHECK(state.ActiveIssueId.empty());
+    CHECK(state.ActiveRow == -1);
+    CHECK(state.ActiveCol == -1);
+}
+
+TEST_CASE("GridRectSelection::Remap keeps the Shift anchor row on its issue") {
+    GridRectSelection sel;
+    IdList order = {"A", "B", "C", "D"};
+    auto idAt = [&order](int row) -> const std::string& { return IdIn(order, row); };
+    IdList cols = {"id", "summary"};
+    auto fieldAt = [&cols](int col) -> const std::string& { return IdIn(cols, col); };
+    sel.Rows = {1, 2}; // B, C: the user anchored on C
+    sel.PrimaryRow = 2;
+    sel.SyncRows(4, idAt);
+    order = {"B", "A", "C", "D"};
+    sel.Remap(4, idAt, 2, fieldAt, 9);
+    CHECK(sel.Rows == std::set<int>{0, 2});
+    CHECK(sel.PrimaryRow == 2); // C, not the lowest selected row
+    sel.ClearAll();
+    CHECK(sel.PrimaryIssueId.empty());
 }

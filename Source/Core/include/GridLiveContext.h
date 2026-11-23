@@ -25,6 +25,7 @@
 
 class ITrackerBackend;
 class TicketSyncService;
+struct TrackerConfig;
 struct ViewDefinition;
 
 /// Per-context in-memory field-catalog block (multi-grid Slice 3, plan item 17 +
@@ -227,6 +228,44 @@ struct GridLiveContext {
     /// pane's first sync resolves it. shared_ptr<const> so the type stays forward-declared
     /// here (full ViewDefinition is heavy — see ConfigManager.h).
     std::shared_ptr<const ViewDefinition> resolvedOwnView;
+
+    /// The pane's own field-catalog fetch (AppController::populatePaneCatalogAfterSync_), for the grid's cue and its
+    /// Retry. UI thread only: written by the launch and by the main-thread apply, read by the grid draw.
+    struct PaneCatalogFetchState {
+        /// The pane's latest catalog-fetch configuration: stored by every populate call (each sync kick, re-fetch
+        /// and Retry), even when the pane's live catalog already answers it, while a fetch runs or when none could
+        /// start, so it can differ from the one the running fetch uses; the apply judges a result by the
+        /// configuration captured with that fetch, never by this. Retry and the apply's re-fetch run this one. Null
+        /// until populate first runs for the pane. shared_ptr<const> so TrackerConfig stays forward-declared here.
+        std::shared_ptr<const TrackerConfig> Config;
+        /// The project that latest request is scoped to ("" = unscoped), stored with Config.
+        std::string ProjectKey;
+        /// Names the fetch in flight (AppController::paneCatalogFetchSeq_, unique for the process). A result whose
+        /// token differs is from a superseded fetch, or from a context this pane id had before it was retired, and
+        /// touches nothing here.
+        std::uint64_t FetchToken = 0;
+        bool InFlight = false;
+        /// The scope (project, "" = unscoped), tracker site (cache key) and PaneCatalogFetchSeq of the fetch in
+        /// flight. A request for the same scope and site while that fetch is still the pane's latest is a duplicate
+        /// and waits for it; any other request supersedes it. Once a skip (the loaded catalog answers the view) or a
+        /// newer fetch has moved the sequence, the fetch in flight will be dropped, so it is no request's answer.
+        std::string InFlightProjectKey;
+        std::string InFlightSiteKey;
+        std::uint64_t InFlightSeq = 0;
+        /// The last fetch failed with no saved copy to fall back to, or its result was owed after a backend change.
+        /// Also set when the fetch failed and its saved copy did not replace the catalog the pane shows. Cleared when
+        /// a fetch starts, a catalog lands, or the loaded catalog turns out to answer the pane's latest request.
+        bool Failed = false;
+        std::string LastError;
+        /// The pane's catalog step ran before its backend existed (its first sync was held back, as during a cache
+        /// recreate), so no fetch could start and the view's project could not be read with the backend's parser.
+        /// The request is parked, not failed: installing the backend (GridContextDepsAdapter::SetBackend) resumes it
+        /// (AppController::resumePaneCatalogFetch_), scoping it from AwaitingViewQuery, the query of the view the
+        /// parked kick resolved. Cleared by any kick that finds a backend.
+        bool AwaitingBackend = false;
+        std::string AwaitingViewQuery;
+    };
+    PaneCatalogFetchState paneCatalogFetch;
 
     // --- Ticket-change monitor anchors (ticket-change-monitor plan, S1c-2, item 8) --------
     // UI-thread-only bookkeeping for the per-pane change probe, same single-thread discipline
