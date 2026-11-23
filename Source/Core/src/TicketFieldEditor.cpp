@@ -33,6 +33,7 @@
 #include "Ui/SmatchetToast.h"
 #include "Tracker/TrackerFieldValueParseExplain.h"
 #include "TouchCellEditGesture.h"
+#include "Ui/SmatchetGridUiSupport.h"
 #include "Types/ProjectComponentsTypes.h"
 #include "TextEditor.h"
 #include "Logger.h"
@@ -106,6 +107,15 @@ static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* d
     }
     SpreadsheetState* st = u->state;
     if (data->EventFlag != ImGuiInputTextFlags_CallbackAlways) {
+        return 0;
+    }
+    if (st->PendingGridInputTextSelectAll) {
+        // Enter opened the editor: the value is selected, so typing replaces it. Only once ImGui reports the field
+        // activated (before that its own activation would reset the selection).
+        if (data->EventActivated) {
+            data->SelectAll();
+            st->PendingGridInputTextSelectAll = false;
+        }
         return 0;
     }
     if (!st->PendingGridInputTextDeselect) {
@@ -446,6 +456,28 @@ void DrawClippedPreviewTooltip(bool tooltipsEnabled, const char* previewCStr, fl
     ImGui::EndTooltip();
 }
 
+// Where the active cell goes after an inline editor ended on a key: Enter down, Shift+Enter up, Tab right, Shift+Tab
+// left. Ctrl+Enter is the apply-to-selection chord (a later slice), so it moves nothing.
+GridEditExit EditExitForKey(bool tabPressed) {
+    const bool shift = ImGuiEffectiveKeyShift();
+    if (tabPressed) {
+        return shift ? GridEditExit::Left : GridEditExit::Right;
+    }
+    if (ImGuiEffectiveKeyCtrl()) {
+        return GridEditExit::None;
+    }
+    return shift ? GridEditExit::Up : GridEditExit::Down;
+}
+
+// Tab in the active single-line editor ends the edit like Enter does (the cell moves right, Shift+Tab left). The
+// editor claims Tab while it is the active item, so ImGui's own nav does not tab focus out of the cell first. Call it
+// right after the editor's item.
+bool InlineEditTabPressed(bool editJustStarted) {
+    const bool pressed = !editJustStarted && ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Tab, false);
+    ImGui::SetItemKeyOwner(ImGuiKey_Tab);
+    return pressed;
+}
+
 // Draws the active inline single-line text editor for a non-ADF text cell and commits / cancels
 // the edit. Extracted from RenderTextEditor's editing branch; behaviour byte-identical (duration
 // fields route through the suggestion widget, plain fields through InputText). Caller has already
@@ -456,6 +488,7 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
     const bool isDuration = IsTimeDurationField(field.Id);
     bool explicitSubmit = false;
     bool deactivated = false;
+    bool tabPressed = false;
 
     // The duration field's own rectangle: the widget ends in a "▼" button, so the error is placed from this.
     ImVec2 durationRectMin(0.0f, 0.0f);
@@ -492,7 +525,10 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
         // value was not modified, so clicking another cell after merely refocusing closes the
         // editor. The dirty check below ensures an unchanged value still never PUTs.
         deactivated = !editJustStarted && ImGui::IsItemDeactivated();
+        tabPressed = InlineEditTabPressed(editJustStarted);
+        explicitSubmit = explicitSubmit || tabPressed;
     }
+    const GridEditExit exitAfter = explicitSubmit ? EditExitForKey(tabPressed) : GridEditExit::None;
 
     const bool escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
     // A typed duration is read the tolerant way ("1.5h", "90 m", "1:30"); one that does not read is explained
@@ -555,8 +591,10 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
                ShouldCommitInlineFieldEdit(explicitSubmit, deactivated, kMobileInlineEditBuild, valueChanged)) {
         QueueEdit(ticket.id, field, {state.EditBuffer}, pendingEdits, originalValue);
         state.ClearEditing();
+        state.PendingEditExit = exitAfter;
     } else if (ShouldEndInlineEdit(escapePressed, explicitSubmit, deactivated)) {
-        state.ClearEditing(); // ended without a PUT (unchanged value, or mobile focus-loss)
+        state.ClearEditing(); // ended without a PUT (unchanged value, a too-long value, or mobile focus-loss)
+        state.PendingEditExit = exitAfter;
     } else if (editJustStarted) {
         state.EditJustStarted = false;
     }
@@ -1062,6 +1100,50 @@ struct CellIdScope {
     CellIdScope& operator=(const CellIdScope&) = delete;
 };
 
+// Opens the editor of this cell when a key asked for it (F2, Enter, a typed character on the active cell: the grid's
+// cursor keys leave the request on `state` and the cell consumes it on its next draw). Each editor kind opens through
+// the code that already owns it, so a keyboard open and a click open reach the same state:
+// Text cells start the inline editor: F2 puts the caret at the end, Enter selects the value, and a typed character
+// replaces it. Dropdown cells (single / multi select, cascading, labels) arm the popup, which opens on its next draw,
+// and a typed character is queued again so the dropdown's filter takes it. Date cells open their picker.
+// A request for another cell stays for it; the caller drops what no cell took.
+void StartEditFromKey(const CachedTicket& ticket, const TicketGridColumn& column, const TrackerField& field,
+                      const std::string& currentValue, SpreadsheetState& state) {
+    if (state.KeyEditIssueId != ticket.id || state.KeyEditFieldId != column.FieldId) {
+        return;
+    }
+    const GridEditStart kind = state.KeyEditKind;
+    const std::string seed = state.KeyEditSeed;
+    state.ClearKeyEdit();
+    switch (column.Plan) {
+    case TicketGridColumn::RenderPlan::TextEditor:
+        if (kind == GridEditStart::Typed && !TrackerFieldPayload::FieldUsesAdfDocument(field)) {
+            state.StartEditingFieldWithText(ticket.id, field.Id, currentValue, seed);
+        } else {
+            state.StartEditingField(ticket.id, field.Id, currentValue);
+            // StartEditingField puts the caret at the end (F2); Enter keeps ImGui's select-all instead.
+            state.PendingGridInputTextDeselect = kind != GridEditStart::SelectAll;
+            state.PendingGridInputTextSelectAll = kind == GridEditStart::SelectAll;
+        }
+        break;
+    case TicketGridColumn::RenderPlan::DateTimeEditor:
+        state.StartEditingField(ticket.id, field.Id, currentValue);
+        break;
+    case TicketGridColumn::RenderPlan::SingleSelect:
+    case TicketGridColumn::RenderPlan::MultiSelect:
+    case TicketGridColumn::RenderPlan::Cascading:
+    case TicketGridColumn::RenderPlan::Labels:
+        state.EditArmedKey = ticket.id + "::" + field.Id;
+        state.EditArmedJustOpened = true;
+        if (kind == GridEditStart::Typed && !seed.empty()) {
+            ImGui::GetIO().AddInputCharactersUTF8(seed.c_str());
+        }
+        break;
+    default:
+        break;
+    }
+}
+
 // Dispatches the "special" column render plans (attachments, watchers, votes, worklog, progress,
 // issue-restriction) to their grid-field-display renderers. Returns true when the cell was drawn.
 // A false result means the plan's guard did not match, so the caller falls through to its original
@@ -1189,6 +1271,10 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
     if (TryRenderSpecialColumnPlan(app, ticket, column, field, currentValue, availWidth, tooltipsEnabled,
                                    trackerGridAsync)) {
         return;
+    }
+
+    if (state.KeyEditKind != GridEditStart::None && allowEdits && field != nullptr) {
+        StartEditFromKey(ticket, column, *field, currentValue, state);
     }
 
     if (DispatchEditorByPlan(app, ticket, column, field, currentValue, availWidth, tooltipsEnabled, allowEdits, state,

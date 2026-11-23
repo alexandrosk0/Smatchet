@@ -93,4 +93,9 @@ struct ActiveProjectDrawCtx {
 // inside a cell's draw. Defined in SmatchetActiveProjectGridKeys.cpp.
 void ScrollGridCellIntoView(float minY, float maxY, int colIdx);
 
+// Whether the cell at (shown row, drawn column) opens an editor for this user: the same test the cell draw makes. Used
+// by the keys that start an edit and by commit-and-move, which skips cells that fail it. Defined in
+// SmatchetActiveProjectGridCells.cpp (it needs the tracker permission check).
+bool GridCellEditable(ActiveProjectDrawCtx& ctx, int row, int col);
+
 #endif // SMATCHET_UI_SMATCHET_ACTIVE_PROJECT_GRID_UI_INTERNAL_H
