@@ -227,6 +227,17 @@ run_sut() {
     [[ "$output" != *'<check>'* ]]
 }
 
+@test "a fence that never closes is ignored, so it hides no proof" {
+    mkdir -p "$SANDBOX/$FIXTURE_PLAN_DIR"
+    printf '%s\n' '# Plan' '## Verification' '  ```bash' \
+        '- CI: "Sanitizer (UBSan via Clang)" green on this PR.' \
+        > "$SANDBOX/$FIXTURE_PLAN_DIR/lane-change.md"
+    commit_all
+    commit_path Source/Standalone/Main.cpp
+    STUB="$STUB_BIN" run_sut develop
+    [ "$status" -eq 1 ]
+}
+
 @test "unknown option is a usage error" {
     STUB="$STUB_BIN" run_sut --bogus
     [ "$status" -eq 2 ]

@@ -83,9 +83,25 @@ verification_checks() {
     # Lines inside a fenced code block are neither headings nor proofs, and a
     # `<placeholder>` name is a template. Kept in step with the layer's merge-time
     # gate, agent-layer/agents/scripts/core/merge-gates.d/30-plan-proof.sh.
-    awk -v added=" $2 " '
-        /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
-        fence { next }
+    # A fence closes only on its own marker (same character, at least as long);
+    # one that never closes is ignored, so it cannot hide the proofs after it.
+    local fences=1
+    awk '
+        match($0, /^[[:space:]]*(```+|~~~+)/) {
+            m = substr($0, RSTART, RLENGTH); sub(/^[[:space:]]*/, "", m)
+            if (open == "") open = m
+            else if (substr(m, 1, 1) == substr(open, 1, 1) && length(m) >= length(open)) open = ""
+        }
+        END { exit open == "" ? 0 : 1 }
+    ' "$1" || fences=0
+    awk -v added=" $2 " -v fences="$fences" '
+        fences && match($0, /^[[:space:]]*(```+|~~~+)/) {
+            m = substr($0, RSTART, RLENGTH); sub(/^[[:space:]]*/, "", m)
+            if (open == "") open = m
+            else if (substr(m, 1, 1) == substr(open, 1, 1) && length(m) >= length(open)) open = ""
+            next
+        }
+        open != "" { next }
         /^## / { in_v = ($0 ~ /^## Verification[[:space:]]*$/); next }
         in_v && (added == " all " || index(added, " " NR " ")) { print }
     ' "$1" \
