@@ -1806,7 +1806,7 @@ TEST_CASE("Startup restore: a GitHub catalog gets History and keeps its own Comm
     cfg.GitHubRepo = "widgets";
     AppController app;
 
-    // The tracker type in a client's own case: the restore normalizes it, as the live apply does.
+    // The tracker type as GitHubClient reports it ("github"), not as the configuration spells it.
     const std::shared_ptr<const std::vector<TrackerField>> fields =
         RestoreAtStartup(app, cfg, "github",
                          {NamedField("customfield_saved", "Saved field"), NamedField("comment", "Legacy comment"),
