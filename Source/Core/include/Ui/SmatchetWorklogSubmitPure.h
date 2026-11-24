@@ -131,5 +131,12 @@ inline bool StalePostBackReleasesDialogSubmit(bool dialogInitialized, const std:
     return dialogInitialized && !postBackIssueId.empty() && dialogIssueId == postBackIssueId;
 }
 
+/// The Time remaining text the Log work draft keeps: what the user typed, and only while they edited the
+/// field themselves. The value derived from the spent time is recomputed at every open, so keeping it would
+/// pin an estimate that is stale by then. Empty means keep nothing (the draft store erases on empty text).
+inline std::string WorklogRemainingDraftText(bool manuallyEdited, const std::string& timeRemaining) {
+    return manuallyEdited ? timeRemaining : std::string();
+}
+
 } // namespace worklog
 } // namespace smatchet
