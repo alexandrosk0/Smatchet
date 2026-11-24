@@ -1166,6 +1166,33 @@ static void RegisterLabelsEnterNothingTicked(ImGuiTestEngine* engine) {
     };
 }
 
+// BulkFieldEdit/GridSearchFocusRequestKeepsDialogOpen: grid.search.focus (Ctrl+F or /) asks the grid header to take the
+// caret. While a popup is open the request is dropped: focusing the grid window would close the bulk dialog.
+static void RegisterGridSearchFocusKeepsModal(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "BulkFieldEdit", "GridSearchFocusRequestKeepsDialogOpen");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        Env env;
+        if (!Setup(ctx, &env)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        const std::set<int> rows = EditableRows(3);
+        SelectRows(rows);
+
+        BULK_REQUIRE(OpenBulkPopup(ctx, "Labels", 3, *rows.begin(), kLabelsKey));
+        g_ui.focusedPane().gridSearchFocusFramesLeft = 3; // what grid.search.focus sets
+        ctx->Yield(4);
+        IM_CHECK_NO_RET(g_ui.bulkEditPopupRequest.Active);
+        IM_CHECK_NO_RET(PopupItemExists(ctx, PickApplyRef())); // the dialog is still drawn
+
+        ctx->ItemClick(PickCancelRef().c_str());
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(!g_ui.bulkEditPopupRequest.Active);
+        SelectRows({});
+    };
+}
+
 extern "C" void SmatchetRegisterBulkFieldEditTests(ImGuiTestEngine* engine) {
     RegisterCommandPath(engine);
     RegisterMenuItemVisibility(engine);
@@ -1177,6 +1204,7 @@ extern "C" void SmatchetRegisterBulkFieldEditTests(ImGuiTestEngine* engine) {
     RegisterLabelsRemoveMode(engine);
     RegisterLabelsEnterKeepsModal(engine);
     RegisterLabelsEnterNothingTicked(engine);
+    RegisterGridSearchFocusKeepsModal(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
