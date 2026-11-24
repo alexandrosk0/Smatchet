@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+using smatchet::statuscombo::IntersectStatusOptions;
+using smatchet::statuscombo::LessLiveSource;
 using smatchet::statuscombo::PickStatusComboOptions;
 using smatchet::statuscombo::StatusComboPick;
 using smatchet::statuscombo::StatusOptionsSource;
@@ -124,4 +126,60 @@ TEST_CASE("StatusComboOptionsPure — a target named like the current status is 
     REQUIRE(pick.Options.size() == 2);
     CHECK(pick.Options[0].Id == "2");
     CHECK(pick.Options[1].Id == "21");
+}
+
+// The bulk-edit status picker offers what every selected row can move to: each row's own list (its current status
+// stays in it), intersected.
+TEST_CASE("StatusComboOptionsPure — intersect keeps the statuses every row offers, in the first row's order") {
+    const std::vector<std::vector<TrackerFieldOption>> lists = {
+        {Option("1", "To Do"), Option("2", "In Progress"), Option("3", "Done")},
+        {Option("2", "In Progress"), Option("3", "Done"), Option("4", "Blocked")},
+        {Option("3", "Done"), Option("2", "In Progress")}};
+    const std::vector<TrackerFieldOption> common = IntersectStatusOptions(lists);
+    REQUIRE(common.size() == 2);
+    CHECK(common[0].Id == "2");
+    CHECK(common[1].Id == "3");
+}
+
+TEST_CASE("StatusComboOptionsPure — intersect is empty when no status is shared, or there are no rows") {
+    CHECK(IntersectStatusOptions({}).empty());
+    CHECK(IntersectStatusOptions({{Option("1", "To Do")}, {Option("2", "Done")}}).empty());
+}
+
+TEST_CASE("StatusComboOptionsPure — intersect of one row is that row's list") {
+    const std::vector<TrackerFieldOption> only = {Option("1", "To Do"), Option("2", "Done")};
+    CHECK(IntersectStatusOptions({only}).size() == 2);
+}
+
+TEST_CASE("StatusComboOptionsPure — intersect matches by name when the ids differ between workflows") {
+    // One status name carries a different id in each project's workflow.
+    const std::vector<TrackerFieldOption> common =
+        IntersectStatusOptions({{Option("11", "Done")}, {Option("21", "Done")}, {Option("", "done")}});
+    REQUIRE(common.size() == 1);
+    CHECK(common[0].Id == "11"); // the first row's option
+}
+
+TEST_CASE("StatusComboOptionsPure — a row already at a status does not rule it out") {
+    // Row A is at To Do and may move to Done; row B is at Done (its own list keeps Done as the current status).
+    const StatusComboPick rowA = PickStatusComboOptions({Option("3", "Done")}, true, Catalog(), Option("1", "To Do"));
+    const StatusComboPick rowB = PickStatusComboOptions({Option("1", "To Do")}, true, Catalog(), Option("3", "Done"));
+    const std::vector<TrackerFieldOption> common = IntersectStatusOptions({rowA.Options, rowB.Options});
+    // Done is common (A moves to it, B is there); To Do is common too (A is there, B moves to it).
+    REQUIRE(common.size() == 2);
+}
+
+TEST_CASE("StatusComboOptionsPure — the staler freshness wins") {
+    using smatchet::offline::DataFreshness;
+    using smatchet::statuscombo::LeastFresh;
+    CHECK(LeastFresh(DataFreshness::Fresh, DataFreshness::Refreshing) == DataFreshness::Refreshing);
+    CHECK(LeastFresh(DataFreshness::CachedStale, DataFreshness::CachedOffline) == DataFreshness::CachedStale);
+    CHECK(LeastFresh(DataFreshness::LoadingNoCache, DataFreshness::UnavailableNoCache) ==
+          DataFreshness::UnavailableNoCache);
+    CHECK(LeastFresh(DataFreshness::Fresh, DataFreshness::Fresh) == DataFreshness::Fresh);
+}
+
+TEST_CASE("StatusComboOptionsPure — the less live source wins") {
+    CHECK(LessLiveSource(StatusOptionsSource::Live, StatusOptionsSource::Learned) == StatusOptionsSource::Learned);
+    CHECK(LessLiveSource(StatusOptionsSource::Catalog, StatusOptionsSource::Live) == StatusOptionsSource::Catalog);
+    CHECK(LessLiveSource(StatusOptionsSource::Live, StatusOptionsSource::Live) == StatusOptionsSource::Live);
 }

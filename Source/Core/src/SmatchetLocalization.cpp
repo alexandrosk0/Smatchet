@@ -1298,6 +1298,8 @@ const TranslationEntry kEntries[] = {
     {"grid.bulk.confirm_value", "Set %s to: %s", u8"Définir %s sur : %s"},
     {"grid.bulk.skip_summary", "%d rows will be skipped", u8"%d lignes seront ignorées"},
     {"grid.bulk.skip_more", "+ %d more", u8"+ %d de plus"},
+    {"grid.bulk.no_common_status", "(no status that every selected row can move to)",
+     u8"(aucun statut accessible à toutes les lignes sélectionnées)"},
     {"grid.bulk.skip_gone", "no longer in this view", u8"n'est plus dans cette vue"},
     {"grid.bulk.skip_not_editable", "not editable on this issue", u8"non modifiable sur ce ticket"},
     {"grid.bulk.skip_unchanged", "already has this value", u8"a déjà cette valeur"},
