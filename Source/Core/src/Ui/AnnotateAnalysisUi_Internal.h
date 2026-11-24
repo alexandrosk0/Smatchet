@@ -88,6 +88,9 @@ struct AnnotateAnalysisUi::AnnotateState {
     int maxFramesVal = 64;
     int clCacheVal = 512;
     std::vector<RemapEditBuf> remapBufs;
+    // The remap editor's Preview: a sample path (not saved) and what the rules make of it, as last drawn.
+    std::string remapPreviewSample;
+    std::string remapPreviewShown;
     // Settings-form text, edited through the shared text field (Ui/SmatchetInput.h). std::string so a
     // long path, template or URL is kept whole instead of clipped at a fixed buffer size (#132).
     std::string p4Exe;

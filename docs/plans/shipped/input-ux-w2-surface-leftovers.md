@@ -3,7 +3,7 @@
 
 > **Slug**: `input-ux-w2-surface-leftovers` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -49,7 +49,7 @@ Intended outcome:
 N/A: no tracker, command, MCP, Lua or storage change. This adds:
 
 - UI-internal pure helpers in `SmatchetToolbarUi_detail.h`.
-- Three `extern "C"` test hooks in `AnnotateAnalysisUi_Preferences.cpp`, beside the existing remap hooks.
+- Two `extern "C"` test hooks in `AnnotateAnalysisUi_Preferences.cpp` (`SmatchetUiTestAnnotateRemapTo`, `SmatchetUiTestAnnotateRemapPreview`), beside the existing remap hooks.
 
 ## Files to modify
 
@@ -129,13 +129,28 @@ None.
 
 ## Implementation log
 
+- `SmatchetToolbarUi_detail.h`: `CommandNameMatchRanges` (trims the query, runs `textmatch::MatchFields` fuzzy over the ranked haystack, keeps the ranges inside the name) and `IconNameMatchesNoIcon`.
+- `SmatchetToolbarUi.h` / `.cpp`: a per-row range cache (`cmdRanges_`) and one `textmatch::Scratch` (`cmdScratch_`), refilled only when the filter changes. A row with marks draws its `Selectable` label transparent and `SmatchetMatchHighlight::DrawText` draws the name with the marks at the same position. The "No such icon" line sits under the icon row.
+- `AnnotateAnalysisUi_Preferences.cpp` / `_Internal.h`: from/to use `SettingFieldOptions(true)`; `DrawAnnotateRemapPreview` draws the Preview field and its result line at the end of the remap editor. The sample and the shown text live in the editor state, and the test restore clears the sample.
+- Tests: doctests in `ToolbarEditorPure.test.cpp`; the mark check in `FuncSizeMainUi/ToolbarEditor_CommandFilterIsFuzzy`; the trim and Preview steps in `GestureKeys/PathRemaps_AddFocusesAndEnterAddsNext`.
+- Debt entries: the #3, #4, #125, toolbar-marks and remap bullets are removed; both entries are re-reviewed 2026-11-24.
+- Code review (code-review agent, 4 low findings, all fixed):
+  - `CommandNameMatchRanges` matches the name alone first. Before, a word that a later name segment contains could score higher in the title (the word-end bonus) and so mark nothing in the name, e.g. `comment` against `issue.comments` / "Comment on issue". The haystack is used only when the name alone does not match.
+  - The Preview trims the sample before applying the rules, so a path pasted with leading spaces is not reported as unchanged.
+  - The bucket-E mark probe also requires the toolbar editor's window id, because the command palette has a `##cmdlist` child too.
+  - The new debt entry for the `left-view-history-grid` step name is worded as depending on PR #2486 merging, and has its `Status:` line.
+- Backlog: `debt/2026-11-24-left-view-history-stale-ci-step-name.md`. PR #2486 renames a CI step that `docs/plans/active/left-view-history-grid.md` quotes; that plan is under another lock.
+
 ## Deviations from plan
+
+- **No bucket-E step for the "No such icon" line.** The decision is the pure `IconNameMatchesNoIcon`, covered by the doctests; the line itself is one `TextDisabled` call behind it. Typing into the icon field in the editor test would add a step for a single static string.
+- **Two new test hooks, not three.** `SmatchetUiTestAnnotateRemapFrom` already existed (`Source/Core/src/Ui/AnnotateAnalysisUi_Preferences.cpp:401`).
+- **New strings fall back to their English defaults.** `SmatchetLocalization.cpp` is held by the `bulk-status-allowed-transitions` lock, so the keys `toolbar.editor.no_such_icon`, `annotate.remap.preview` and `annotate.remap.preview_no_change` have no catalogue rows yet; `T()` returns the default.
 
 ## Verification (actual)
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index from the repository root: `bash agent-layer/agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*
+- **Build**: `ninja-iter-msvc` (`SmatchetStandalone` + `SmatchetCore_DX12`), `ninja-ui-test-msvc` and `ninja-test-msvc` build clean.
+- **Bucket A**: the `ToolbarEditorPure` doctests, 10 cases, 36 assertions, all pass. Mutant: matching the whole haystack only (the pre-review `CommandNameMatchRanges`) fails the `issue.comments` check.
+- **Bucket E**: `GestureKeys` 8/8, with the trim, Preview and indented-sample steps. `FuncSizeMainUi` 6/7: `ToolbarEditor_CommandFilterIsFuzzy` passes with the mark checks (0 marks before the filter, 24 mark vertices for `VIEW.LIST`, 0 after clearing). The one failure, `BulkImportWindow_RendersAndShowsLoadFile`, fails in every local run since 2026-11-14 because it waits for an old window title; it is skipped on CI and already backlogged in `debt/2026-11-22-dialog-contract-deferred.md`.
+- **Doc validation**: `scripts/dev/test-docs.sh` (see the PR).
+- **Manual residue**: none.

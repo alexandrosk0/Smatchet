@@ -175,6 +175,43 @@ inline std::vector<int> RankCommandMatches(const std::vector<std::string>& names
     return out;
 }
 
+// The matched letters to mark in a listed command's name. The name alone is matched first, so a word the name
+// contains is marked there even when the title scores it higher. When the name alone does not match, the
+// ranges come from the haystack RankCommandMatches ranks with (the name, a space, the title), kept where they
+// fall inside the name; a word that matched only in the title marks nothing. A blank query marks nothing.
+inline void CommandNameMatchRanges(const std::string& haystack, std::size_t nameLen, const std::string& rawQuery,
+                                   textmatch::Scratch& scratch, std::vector<textmatch::ByteRange>& out) {
+    out.clear();
+    const std::string query = TrimAscii(rawQuery);
+    if (query.empty()) {
+        return;
+    }
+    const textmatch::Query parsed = textmatch::MakeQuery(query);
+    std::vector<textmatch::ByteRange> ranges[1];
+    textmatch::Field field;
+    field.Text = haystack.data();
+    field.Len = (std::min)(nameLen, haystack.size());
+    if (!textmatch::MatchFields(parsed, &field, 1, textmatch::Mode::Fuzzy, scratch, ranges).Matched()) {
+        field.Len = haystack.size();
+        if (!textmatch::MatchFields(parsed, &field, 1, textmatch::Mode::Fuzzy, scratch, ranges).Matched()) {
+            return;
+        }
+    }
+    for (const textmatch::ByteRange& r : ranges[0]) {
+        if (r.Begin >= nameLen) {
+            continue;
+        }
+        textmatch::ByteRange kept = r;
+        kept.End = (std::min)(kept.End, nameLen);
+        out.push_back(kept);
+    }
+}
+
+// The editor's icon-name line says "No such icon" when a name is typed that resolves to no glyph (audit #125).
+inline bool IconNameMatchesNoIcon(const std::string& iconName, const std::string& glyph) {
+    return !TrimAscii(iconName).empty() && glyph.empty();
+}
+
 } // namespace toolbar_editor
 } // namespace smatchet
 
