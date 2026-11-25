@@ -8,24 +8,7 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## In-flight locks (2 active)
-
-### `input-ux-w2-conflict-discard-undo`
-
-- **Owner**: `orchestrator`
-- **Branch**: `claude/input-ux-w2-conflict-discard-undo`
-- **Originating plan**: [`docs/plans/active/input-ux-w2-conflict-discard-undo.md`](../../../docs/plans/active/input-ux-w2-conflict-discard-undo.md)
-- **Started**: 2026-11-23T17:28:53Z
-- **Write set** (7 paths):
-  - `Source/Core/src/Ui/SmatchetOfflineQueueUi.cpp`
-  - `Source/Core/include/Ui/SmatchetOfflineQueueActionsUi.h`
-  - `tests/ui/offline_conflict_modal_panes.test.cpp`
-  - `docs/plans/active/input-ux-w2-conflict-discard-undo.md`
-  - `docs/plans/shipped/input-ux-w2-conflict-discard-undo.md`
-  - `docs/plans/INDEX.md`
-  - `docs/self-improvement/categories/debt/2026-11-22-drafts-undo-deferred.md`
-- **Notes**: #116 conflict Discard my edit undo
-## In-flight locks (5 active)
+## In-flight locks (4 active)
 
 ### `bulk-status-allowed-transitions`
 
@@ -55,34 +38,36 @@
   - `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp`
   - `tests/ui/bulk_field_edit.test.cpp`
 
-### `input-ux-w2-create-drafts`
+### `input-ux-w2-dictation-drain`
 
 - **Owner**: `orchestrator`
-- **Branch**: `claude/input-ux-w2-create-drafts`
-- **Started**: 2026-11-24T12:33:37Z
-- **Updated**: 2026-11-24T14:22:19Z
-- **Write set** (15 paths):
-  - `Source/Core/src/Ui/SmatchetQuickCreateIssueUi.cpp`
-  - `Source/Core/src/Ui/SmatchetNewIssueDraftUi.cpp`
-  - `Source/Core/src/TicketFieldEditor_Worklog.cpp`
-  - `Source/Core/src/TicketFieldEditor_Worklog.h`
-  - `Source/Core/include/Ui/SmatchetWorklogSubmitPure.h`
-  - `tests/Core/SmatchetWorklogSubmitPure.test.cpp`
-  - `tests/ui/data_dependent_windows_smoke.test.cpp`
-  - `docs/plans/active/input-ux-w2-create-drafts.md`
-  - `docs/plans/shipped/input-ux-w2-create-drafts.md`
-  - `docs/plans/INDEX.md`
+- **Branch**: `claude/input-ux-w2-dictation-drain`
+- **Originating plan**: `docs/plans/active/input-ux-w2-dictation-drain.md` (not on this branch yet)
+- **Started**: 2026-11-25T14:35:32Z
+- **Write set** (17 paths):
+  - `Source/Core/include/DictationInsertionRouter.h`
+  - `Source/Core/src/DictationInsertionRouter_Whisper.cpp`
+  - `Source/Core/src/DictationInsertionRouter_Stubs.cpp`
+  - `Source/Core/include/SmatchetLocalizedImGui.h`
+  - `Source/Core/src/SmatchetDictationHook.cpp`
+  - `Source/Core/src/Ui/SmatchetUI.cpp`
+  - `Source/Core/src/Ui/SmatchetAiAssistantUi.cpp`
+  - `Source/Core/src/Ui/SmatchetCommentsModalUi.cpp`
+  - `Source/Core/src/Commands/Scenarios/WhisperAiAssistantAutosendScenario.cpp`
+  - `Source/Core/include/Ui/SmatchetCommentsModalGenPure.h`
+  - `tests/Core/DictationInsertionRouter.test.cpp`
+  - `tests/Core/SmatchetCommentsModalGenPure.test.cpp`
+  - `tests/support/FakeTrackerClient.h`
+  - `tests/ui/field_viewer_modal.test.cpp`
+  - `docs/plans/active/input-ux-w2-dictation-drain.md`
+  - `docs/plans/shipped/input-ux-w2-dictation-drain.md`
   - `docs/self-improvement/categories/debt/2026-11-22-drafts-undo-deferred.md`
-  - `Source/Core/src/Ui/SmatchetGridUiSupport.cpp`
-  - `Source/Core/include/Ui/SmatchetGridUiSupport.h`
-  - `docs/self-improvement/categories/test/2026-11-24-fixture-gated-ui-tests-not-in-ci.md`
-  - `.github/workflows/build-and-test.yml`
 
 ### `input-ux-w2-surface-leftovers`
 
 - **Owner**: `orchestrator`
 - **Branch**: `claude/input-ux-w2-text-field-leftovers`
-- **Originating plan**: [`docs/plans/shipped/input-ux-w2-surface-leftovers.md`](../../../docs/plans/shipped/input-ux-w2-surface-leftovers.md)
+- **Originating plan**: `docs/plans/shipped/input-ux-w2-surface-leftovers.md` (not on this branch yet)
 - **Started**: 2026-11-24T20:56:13Z
 - **Updated**: 2026-11-24T21:25:11Z
 - **Write set** (14 paths):
@@ -100,27 +85,4 @@
   - `docs/self-improvement/categories/debt/2026-11-16-text-field-migration-blocked-surfaces.md`
   - `docs/self-improvement/categories/debt/2026-11-19-one-matcher-deferred.md`
   - `docs/self-improvement/categories/debt/2026-11-24-left-view-history-stale-ci-step-name.md`
-
-### `input-ux-w3-grid-s2`
-
-- **Owner**: `orchestrator`
-- **Branch**: `claude/w3-grid-spreadsheet-s2-619ea3`
-- **Started**: 2026-11-23T17:31:23Z
-- **Updated**: 2026-11-23T17:52:22Z
-- **Write set** (15 paths):
-  - `Source/Core/include/SpreadsheetState.h`
-  - `Source/Core/include/TicketFieldEditor.h`
-  - `Source/Core/src/TicketFieldEditor.cpp`
-  - `Source/Core/src/Ui/SmatchetActiveProjectGridKeys.cpp`
-  - `Source/Core/src/Ui/SmatchetActiveProjectGridCells.cpp`
-  - `tests/ui/grid_spreadsheet_keys.test.cpp`
-  - `tests/ui/duration_inline_edit_commit.test.cpp`
-  - `tests/ui/ui_tests_registry.cpp`
-  - `tests/ui/CMakeLists.txt`
-  - `docs/guides/keyboard-shortcuts.md`
-  - `docs/plans/active/input-ux-w3-grid-spreadsheet.md`
-  - `docs/audits/INPUT_UX_AUDIT.md`
-  - `Source/Core/src/Ui/AGENTS.md`
-  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi_Internal.h`
-  - `tests/CMakeLists.txt`
 
