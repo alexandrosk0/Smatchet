@@ -12,7 +12,7 @@
 #include "IssueTransitionsCacheService.h"
 #include "LearnedWorkflowPure.h"
 #include "OfflineFirstPure.h"
-#include "Tracker/TrackerError.h"
+#include "TrackerError.h"
 #include "Tracker/TrackerFieldSchema.h"
 #include "Types/TransitionsTypes.h"
 

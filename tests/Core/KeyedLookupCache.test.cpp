@@ -1,7 +1,7 @@
 #include "KeyedLookupCache.h"
 #include "SmatchetResult.h"
 #include "StoreLoadLatch.h"
-#include "Tracker/TrackerError.h"
+#include "TrackerError.h"
 
 #include <doctest/doctest.h>
 

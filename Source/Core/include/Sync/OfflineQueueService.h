@@ -53,7 +53,7 @@ class IOfflineQueueDeps;
 class ISyncCache;
 class ITrackerIssueReader;
 class ITrackerIssueMutations;
-struct TrackerError; // by-const-ref only (HandleFieldEditUpdateFailure); full def in Tracker/TrackerError.h
+struct TrackerError; // by-const-ref only (HandleFieldEditUpdateFailure); full def in TrackerError.h
 namespace TextMerge {
 struct MergeResult;
 }

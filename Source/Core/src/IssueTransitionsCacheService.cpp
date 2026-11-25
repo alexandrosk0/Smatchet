@@ -9,7 +9,7 @@
 #include "Logger.h"
 #include "OfflineFirstPure.h"
 #include "StringUtil.h"
-#include "Tracker/TrackerError.h"
+#include "TrackerError.h"
 
 #include <exception>
 #include <functional>

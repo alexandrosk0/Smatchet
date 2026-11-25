@@ -2,7 +2,7 @@
 #define SMATCHET_TRACKER_HTTP_PURE_H
 
 #include "SmatchetResult.h"
-#include "Tracker/TrackerError.h"
+#include "TrackerError.h"
 
 #include <string>
 
