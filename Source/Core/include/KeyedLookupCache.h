@@ -10,7 +10,7 @@
 
 #include "OfflineFirstPure.h"
 #include "ScopeExit.h"
-#include "Tracker/TrackerError.h"
+#include "TrackerError.h"
 
 #include <cstdint>
 #include <mutex>

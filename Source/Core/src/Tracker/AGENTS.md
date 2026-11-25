@@ -1,6 +1,6 @@
 # Tracker subsystem — agent rules
 
-Scoped rules for `Source/Core/src/Tracker/` (+ the `ITracker*` interface headers in `Source/Core/include/` and the per-backend headers in `Source/Core/include/Tracker/`). Global rules (C++14, dual-target, RAII, logging, perf) stay in the root [`AGENTS.md`](../../../../AGENTS.md). Domain glossary: [`CONTEXT.md`](CONTEXT.md). Orientation / request flow: [`README.md`](README.md).
+Scoped rules for `Source/Core/src/Tracker/` (+ the `ITracker*` interface headers and `TrackerError.h` in `Source/Core/include/`, and the per-backend headers in `Source/Core/include/Tracker/`). Global rules (C++14, dual-target, RAII, logging, perf) stay in the root [`AGENTS.md`](../../../../AGENTS.md). Domain glossary: [`CONTEXT.md`](CONTEXT.md). Orientation / request flow: [`README.md`](README.md).
 
 This is a **strict lint zone** (`agent-layer/docs/agent-rules/cpp-rules.md` § Tiered enforcement) — every new violation fails CI on a delta basis.
 

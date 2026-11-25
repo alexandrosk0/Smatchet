@@ -25,9 +25,8 @@ void Views::EnsureLoaded(const TrackerConfig& cfg) {
 }
 
 const ViewDefinition* Views::GetActiveView() const {
-    const auto it =
-        std::find_if(Slice_.Views.begin(), Slice_.Views.end(),
-                     [&](const ViewDefinition& view) { return view.Id == Slice_.ActiveViewId; });
+    const auto it = std::find_if(Slice_.Views.begin(), Slice_.Views.end(),
+                                 [&](const ViewDefinition& view) { return view.Id == Slice_.ActiveViewId; });
     return it != Slice_.Views.end() ? &*it : nullptr;
 }
 
@@ -44,8 +43,8 @@ const ViewDefinition* Views::Find(const std::string& id) const {
 }
 
 bool Views::Activate(const std::string& viewId) {
-    auto it = std::find_if(Slice_.Views.begin(), Slice_.Views.end(),
-                           [&](const ViewDefinition& v) { return v.Id == viewId; });
+    auto it =
+        std::find_if(Slice_.Views.begin(), Slice_.Views.end(), [&](const ViewDefinition& v) { return v.Id == viewId; });
     if (it == Slice_.Views.end()) {
         return false;
     }
@@ -80,9 +79,7 @@ bool Views::Create(const ViewDefinition& prototype) {
     return true;
 }
 
-bool Views::UpdateActive(const ViewDefinition& updated) {
-    return Update(Slice_.ActiveViewId, updated);
-}
+bool Views::UpdateActive(const ViewDefinition& updated) { return Update(Slice_.ActiveViewId, updated); }
 
 bool Views::Update(const std::string& id, const ViewDefinition& updated) {
     const auto it =
@@ -102,16 +99,14 @@ bool Views::Update(const std::string& id, const ViewDefinition& updated) {
     return true;
 }
 
-bool Views::DeleteActive() {
-    return Delete(Slice_.ActiveViewId);
-}
+bool Views::DeleteActive() { return Delete(Slice_.ActiveViewId); }
 
 bool Views::Delete(const std::string& id) {
     if (Slice_.Views.size() <= 1) {
         return false;
     }
-    const auto it = std::find_if(Slice_.Views.begin(), Slice_.Views.end(),
-                                 [&](const ViewDefinition& v) { return v.Id == id; });
+    const auto it =
+        std::find_if(Slice_.Views.begin(), Slice_.Views.end(), [&](const ViewDefinition& v) { return v.Id == id; });
     if (it == Slice_.Views.end()) {
         return false;
     }

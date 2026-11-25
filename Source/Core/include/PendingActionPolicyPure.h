@@ -7,7 +7,7 @@
 
 #include "ITrackerCollaboration.h" // TrackerIssueComment
 #include "PendingActionTypes.h"
-#include "Tracker/TrackerError.h"
+#include "TrackerError.h"
 
 #include <cstdint>
 #include <string>

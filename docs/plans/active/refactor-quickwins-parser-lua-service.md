@@ -25,7 +25,7 @@ Trade-off named once: the Lua slice is scoped to the sol-free cluster only — e
 ### Commit 1 — `refactor(dedup)`: dup-baseline burn-down
 
 Replace re-inlined helper copies with calls to the canonical header helper (baseline entries at `docs/high-integrity/dup-baseline.md:16-18,41-59`):
-- `Source/Core/include/Tracker/TrackerError.h:123-129` helpers re-inlined at `Command.cpp:9`, `CodeColorView.cpp:563`, `AiEndpointSanitize.cpp:190-192`, `HotkeyParse.cpp:158` — delete the local copy, include the header, call it. Guard: if the include would violate the DAG-ified include-graph gates (#1282), leave that site (grandfathered) and note why in the commit message.
+- `Source/Core/include/TrackerError.h:123-129` helpers re-inlined at `Command.cpp:9`, `CodeColorView.cpp:563`, `AiEndpointSanitize.cpp:190-192`, `HotkeyParse.cpp:158` — delete the local copy, include the header, call it. Guard: if the include would violate the DAG-ified include-graph gates (#1282), leave that site (grandfathered) and note why in the commit message.
 - `Source/Core/include/StringUtil.h:8-9` helpers re-inlined at `IssueDraft.cpp:291`, `TicketGridModel.cpp:97`, `TrackerFieldValueParser.cpp:979` — same treatment.
 - `Source/Core/src/Ui/SmatchetTheme.cpp:541-547` ↔ `Source/Core/include/Ui/SmatchetTheme.h:78-82` — theme-token list declared and defined in parallel (~8 clone pairs). Drive both from one X-macro list (`SMATCHET_THEME_TOKENS(X)`); token order/values byte-identical so rendered output cannot change.
 

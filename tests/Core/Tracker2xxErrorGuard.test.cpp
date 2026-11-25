@@ -13,7 +13,7 @@
 // TrackerErrorFromHttpStatus can't quietly reintroduce the swallow. It also pins
 // DescribeRejectedHttpStatus, the failure text every client builds for a rejected response.
 
-#include "Tracker/TrackerError.h"
+#include "TrackerError.h"
 
 #include <doctest/doctest.h>
 

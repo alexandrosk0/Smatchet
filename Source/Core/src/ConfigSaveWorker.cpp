@@ -5,7 +5,7 @@
 #include "Logger.h"
 // Pure `MergePersistentViewsToolbarAppend` (no ImGui, no UI state) — the views read-modify-write
 // this worker took over from `Views::Save` must keep folding in out-of-band ToolbarAppend writes.
-#include "Ui/Views.h"
+#include "Views.h"
 
 #include <nlohmann/json.hpp>
 

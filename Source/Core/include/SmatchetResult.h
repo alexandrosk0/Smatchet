@@ -3,7 +3,7 @@
 // Project-local Optional<T> + Result<T, E> value types. C++14 hard (Unreal compat)
 // bans std::optional / std::variant, so these provide the same "engaged-or-empty" and
 // "ok-or-error" shapes over manual aligned-storage with explicit placement-new / dtor.
-// Lives in the global namespace to match the sibling Tracker/TrackerError.h precedent
+// Lives in the global namespace to match the sibling TrackerError.h precedent
 // (also global, no namespace). Header-only — no .cpp.
 // Pillar 3 (never crash): value() / error() on the wrong state assert() in debug then
 // throw std::logic_error in release. Never silent undefined behaviour.

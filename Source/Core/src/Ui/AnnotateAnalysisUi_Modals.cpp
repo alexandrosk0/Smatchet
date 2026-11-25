@@ -6,7 +6,7 @@
 #include "OfflineFirstPure.h"
 #include "SmatchetLocalization.h"
 #include "StringUtil.h"
-#include "Tracker/TrackerError.h"
+#include "TrackerError.h"
 #include "TrackerFieldSchema.h"
 #include "Ui/AnnotateAnalysisUi_Modals_detail.h"
 #include "Ui/P4ClPreview.h"
