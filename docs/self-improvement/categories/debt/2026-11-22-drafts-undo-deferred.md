@@ -15,24 +15,33 @@ locks have since been released:
   could replay during the window, so this needs a queue-service entry point in `Sync/` (archive to dead letters,
   restore by original id). The conflict resolver's "Discard my edit" (#116) shipped without one, because conflict
   rows never replay (`docs/plans/shipped/input-ux-w2-conflict-discard-undo.md`).
-- **New-issue row and Quick Create drafts (#51's other half):** `SmatchetNewIssueDraftUi.cpp`,
-  `SmatchetQuickCreateIssueUi.cpp`.
-- **Worklog Time remaining** is not kept in the Log work draft (only the spent time and comment are).
+- **Worklog Time remaining restore has no bucket-E case.** `docs/plans/shipped/input-ux-w2-create-drafts.md`
+  keeps it (unit-tested through `WorklogRemainingDraftText`). The case belongs in
+  `tests/ui/duration_inline_edit_commit.test.cpp`, held by the `input-ux-w3-grid-s2` plan-lock: type a Time
+  remaining, close Log work, reopen, and check it comes back with the restored line and Clear puts the estimate back.
+- **The queue's "Open as draft" drops a finished row create without settling the kept draft.**
+  `OpenDeadLetterRowAsNewIssueDraft` and `OpenPendingCreateRowAsNewIssueDraft` (`SmatchetOfflineQueueUi.cpp`) take
+  a ready `newIssueCreateFuture` with `.get()` and never call the draft row's settle step, so a create that landed
+  in that one frame leaves its kept entry, which the next "+ New Issue" restores. Expose the settle step from
+  `SmatchetNewIssueDraftUi.cpp` and call it there (the conflict-discard lock held that file while the create
+  drafts shipped).
 - **`DraftStore` worker tests** live in bucket E (`DraftStore_PersistsWithoutStopAndReloads`) because
   `DraftStore.cpp` is not in `SmatchetTests`' source list; add it and move the worker cases back into
   `tests/Core/IssueDraft.test.cpp`.
 - **Dictation into the long-text editor** changes the buffer without a text-changed event, so it is not stored
   until the next typed edit.
-- **fr-FR rows** for the new draft and undo strings (they render the English fallback), and the unused old
+- **fr-FR rows** for the new draft and undo strings (they render the English fallback, including the create
+  drafts' `newissue.draft_restored*`, `quickcreate.draft_*` and `draft.kept_on_view_change`), and the unused old
   `offline.conflict` "kept until Smatchet closes" row.
 - Related open Issues: #2458 (dictation reload drain) and #2459.
 
 Concrete next action:
-View-delete Undo and the conflict "Discard my edit" Undo (#116) shipped
-(`docs/plans/shipped/input-ux-w2-view-delete-undo.md`, `docs/plans/shipped/input-ux-w2-conflict-discard-undo.md`).
-Next: the new-issue and Time-remaining drafts, then the `Sync/` archive/restore entry point for the queue panel's
-row Delete, each in its own PR with a bucket-E case beside the existing
-`OfflineFirst/*` and toast Undo cases. Delete each bullet as it lands.
+View-delete Undo, the conflict "Discard my edit" Undo (#116) and the create drafts shipped
+(`docs/plans/shipped/input-ux-w2-view-delete-undo.md`, `docs/plans/shipped/input-ux-w2-conflict-discard-undo.md`,
+`docs/plans/shipped/input-ux-w2-create-drafts.md`). Next: the queue's "Open as draft" settle step, the `Sync/`
+archive/restore entry point for the queue panel's row Delete, and the Time remaining bucket-E case once the S2 lock
+is released, each in its own PR with a bucket-E case beside the existing `OfflineFirst/*` and toast Undo cases.
+Delete each bullet as it lands.
 
 Status: open
-Last-reviewed: 2026-11-23
+Last-reviewed: 2026-11-24
