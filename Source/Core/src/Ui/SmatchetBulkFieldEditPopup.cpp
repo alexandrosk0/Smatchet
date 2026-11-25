@@ -105,22 +105,44 @@ TicketIndex IndexPaneTickets(AppController& app, const std::string& paneId) {
     return index;
 }
 
+// Re-reads every row's query from one snapshot of the pane, so the grouping, the coverage and the fetches below all see
+// the status each row has now: the learned workflow is written under the row's status key, so a status a row left
+// since the popup opened must not label the answer for the one it has now. A row that left its group no longer speaks
+// for it.
+void RefreshStatusQueries(AppController& app, BulkEditPopupRequest& req, bool byGroup) {
+    const TicketIndex index = IndexPaneTickets(app, req.PaneId);
+    BulkEditPopupRequest::StatusPickCache& cache = req.StatusCache;
+    for (TransitionsQuery& query : req.StatusQueries) {
+        const auto ticket = index.ById.find(query.IssueId);
+        if (ticket == index.ById.end()) {
+            continue;
+        }
+        const std::string before = byGroup ? StatusGroupKey(query) : std::string();
+        query = smatchet::statuscombo::BuildStatusTransitionsQuery(app, *ticket->second, req.Field,
+                                                                   ticket->second->GetFieldValue(req.Field.Id));
+        if (!before.empty() && before != StatusGroupKey(query)) {
+            const auto rep = cache.GroupRep.find(before);
+            if (rep != cache.GroupRep.end() && rep->second == query.IssueId) {
+                cache.GroupRep.erase(rep);
+            }
+        }
+    }
+}
+
 // Starts the live transitions fetches this pass may start: up to kStatusFetchesInFlight in flight, rows taking turns
-// from FetchCursor, and above kStatusGroupFetchAbove rows one fetching row per group. Each fetch carries the row's
-// status as the grid has it now: the learned workflow is written under the row's status key, so a status the row
-// left since the popup opened must not label the answer for the one it has now.
+// from FetchCursor (each row is looked at once per pass), and above kStatusGroupFetchAbove rows one fetching row per
+// group.
 void StartStatusFetches(AppController& app, BulkEditPopupRequest& req, std::vector<TransitionsLookup>& lookups,
                         std::unordered_set<std::string>& covered, bool byGroup, int inFlight) {
     BulkEditPopupRequest::StatusPickCache& cache = req.StatusCache;
     const size_t rowCount = req.StatusQueries.size();
-    TicketIndex index;
-    bool indexed = false;
+    const size_t start = cache.FetchCursor % rowCount; // fixed for the pass: the cursor moves as fetches start
     for (size_t k = 0; k < rowCount && inFlight < kStatusFetchesInFlight; ++k) {
-        const size_t i = (cache.FetchCursor + k) % rowCount;
+        const size_t i = (start + k) % rowCount;
         if (lookups[i].fromLive || IsFetching(lookups[i])) {
             continue;
         }
-        std::string group = byGroup ? StatusGroupKey(req.StatusQueries[i]) : std::string();
+        const std::string group = byGroup ? StatusGroupKey(req.StatusQueries[i]) : std::string();
         if (!group.empty()) {
             // One row per group fetches for all of them, and keeps doing so after a failed fetch, so a tracker that
             // errors on one issue is not asked about every sibling in turn.
@@ -128,23 +150,6 @@ void StartStatusFetches(AppController& app, BulkEditPopupRequest& req, std::vect
             if (covered.count(group) != 0 ||
                 (rep != cache.GroupRep.end() && rep->second != req.StatusQueries[i].IssueId)) {
                 continue;
-            }
-        }
-        if (!indexed) {
-            index = IndexPaneTickets(app, req.PaneId);
-            indexed = true;
-        }
-        const auto ticket = index.ById.find(req.StatusQueries[i].IssueId);
-        if (ticket != index.ById.end()) {
-            req.StatusQueries[i] = smatchet::statuscombo::BuildStatusTransitionsQuery(
-                app, *ticket->second, req.Field, ticket->second->GetFieldValue(req.Field.Id));
-            const std::string moved = byGroup ? StatusGroupKey(req.StatusQueries[i]) : std::string();
-            if (moved != group) { // the row left its group: it no longer speaks for it
-                const auto rep = cache.GroupRep.find(group);
-                if (rep != cache.GroupRep.end() && rep->second == req.StatusQueries[i].IssueId) {
-                    cache.GroupRep.erase(rep);
-                }
-                group = moved;
             }
         }
         const TransitionsQuery query = req.StatusQueries[i];
@@ -181,6 +186,7 @@ void RefreshStatusPick(AppController& app, BulkEditPopupRequest& req) {
     lookups.reserve(rowCount);
     std::unordered_set<std::string> covered; // groups with a live row or a fetch running
     const bool byGroup = rowCount > kStatusGroupFetchAbove;
+    RefreshStatusQueries(app, req, byGroup);
     int inFlight = 0;
     for (const TransitionsQuery& query : req.StatusQueries) {
         lookups.push_back(app.GetAvailableTransitionsForIssue(query));
