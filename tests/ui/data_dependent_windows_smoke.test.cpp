@@ -105,10 +105,12 @@
 
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h"
+#include "DraftStore.h" // the Quick Create and draft-row drafts (audit #51)
 #include "IssueDraft.h" // synthetic offline-create enqueue (case 8)
 #include "SmatchetUiSession.h"
-#include "TicketGridModel.h"          // TicketGridColumn — the draft-row keys host table (case 7b)
-#include "Ui/SmatchetGridUiSupport.h" // RenderNewIssueDraftRow
+#include "TicketGridModel.h"             // TicketGridColumn — the draft-row keys host table (case 7b)
+#include "Tracker/IssueCreatePipeline.h" // IssueCreateResult — a finished create handed to the draft row
+#include "Ui/SmatchetGridUiSupport.h"    // RenderNewIssueDraftRow
 
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — proven real-window probe
@@ -116,6 +118,7 @@
 #include "imgui_te_engine.h"
 
 #include <cstdlib> // getenv — fixture-env gate (case 7)
+#include <future>
 #include <string>
 #include <vector>
 
@@ -544,6 +547,31 @@ bool BootFixtureActiveProjectGrid(ImGuiTestContext* ctx, AppController& app) {
     return visible;
 }
 
+// Set by DeactivateFieldForTest: the next frame drops the caret from whichever field holds it, as a click
+// elsewhere does. Hiding a window while its field still holds the caret is not something a user can do, and
+// ImGui then writes that field's old text back when it next draws.
+bool s_clearActiveIdNextFrame = false;
+
+void ClearActiveIdIfAsked() {
+    if (s_clearActiveIdNextFrame) {
+        s_clearActiveIdNextFrame = false;
+        ImGui::ClearActiveID();
+    }
+}
+
+void ClearActiveIdGui(ImGuiTestContext* /*ctx*/) { ClearActiveIdIfAsked(); }
+
+void DeactivateFieldForTest(ImGuiTestContext* ctx) {
+    s_clearActiveIdNextFrame = true;
+    ctx->Yield(2);
+}
+
+// The draft-store scope of the draft row's kept entry (audit #51).
+std::string RowDraftScope() {
+    const AppController* app = SmatchetActiveUiTestAppController();
+    return app != nullptr ? NewIssueRowDraftScope(*app) : std::string("grid");
+}
+
 void ClearNewIssueDraftForTest() {
     g_ui.newIssueDraftActive = false;
     g_ui.newIssueFocusSummaryPending = false;
@@ -552,6 +580,10 @@ void ClearNewIssueDraftForTest() {
     g_ui.newIssueMissingFieldIds.clear();
     g_ui.gridEditError.clear();
     g_ui.gridEditSuccess.clear();
+    // A row a case opened keeps what it typed: drop it, so it never comes back in a later case.
+    ForgetNewIssueRowDraft();
+    smatchet::drafts::Erase("newissue.row", RowDraftScope());
+    smatchet::drafts::Erase("newissue.row.maybe_created", RowDraftScope());
 }
 
 // The draft row's keys are exercised in a host table of their own: the fixture grid boots
@@ -573,6 +605,7 @@ std::vector<TicketGridColumn> DraftRowHostColumns() {
 }
 
 void DrawDraftRowHost(ImGuiTestContext* /*ctx*/) {
+    ClearActiveIdIfAsked();
     if (!s_drawDraftRowHost) {
         return;
     }
@@ -695,6 +728,194 @@ void RegisterNewIssueDraftRowKeys(ImGuiTestEngine* engine) {
     };
 }
 
+// The text the draft store keeps for (surface, scope); empty when none.
+std::string KeptDraftText(const char* surface, const char* scope) {
+    smatchet::drafts::DraftEntry kept;
+    return smatchet::drafts::Get(surface, scope, kept) ? kept.Text : std::string();
+}
+
+// Click "+ New Issue" in the host (the row is inactive) and wait for the caret in the summary field.
+bool OpenDraftWithNewIssueButton(ImGuiTestContext* ctx) {
+    ctx->SetRef("Draft row keys host");
+    ctx->ItemClick("**/+ New Issue");
+    const bool active = YieldUntil(
+        ctx, [] { return g_ui.newIssueDraftActive && GImGui->ActiveId != 0 && !g_ui.newIssueFocusSummaryPending; }, 60);
+    IM_CHECK_NO_RET(active);
+    return active;
+}
+
+// Audit #51: what is typed in the draft row is kept when a view change closes the row; "+ New Issue"
+// brings it back, the text still counts as typed (Esc asks), and a confirmed discard drops it.
+void RegisterNewIssueDraftRowDraftKept(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "NewIssueDraftRow_DraftKeptAndRestored");
+    t->GuiFunc = DrawDraftRowHost;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!FixtureEnvSet()) {
+            ctx->LogInfo("SKIP: SMATCHET_TEST_JIRA_BACKEND_FIXTURE not set — keep the draft off a live backend");
+            return;
+        }
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        ClearNewIssueDraftForTest();
+        s_drawDraftRowHost = true;
+        ctx->Yield(2);
+        ctx->WindowFocus("Draft row keys host");
+
+        if (!OpenDraftWithNewIssueButton(ctx)) {
+            s_drawDraftRowHost = false;
+            return;
+        }
+        ctx->KeyChars("Kept summary");
+        ctx->KeyPress(ImGuiKey_Tab); // summary -> description
+        ctx->KeyPress(ImGuiKey_Tab); // description -> environment
+        ctx->KeyChars("Linux");
+        ctx->Yield(2);
+        const std::string kept = KeptDraftText("newissue.row", RowDraftScope().c_str());
+        IM_CHECK_NO_RET(kept.find("Kept summary") != std::string::npos);
+        IM_CHECK_NO_RET(kept.find("Linux") != std::string::npos);
+
+        // A view change closes the row; the typed text stays kept.
+        CancelUnfinishedNewIssueForGridChange(g_ui);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!g_ui.newIssueDraftActive);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("newissue.row", RowDraftScope().c_str()).c_str(), kept.c_str());
+
+        // The header's "+ New Issue" brings both fields back, with the restored line.
+        static const std::vector<CachedTicket> kNoTickets;
+        StartNewIssueDraft(*SmatchetActiveUiTestAppController(), g_ui, nullptr, kNoTickets);
+        const bool reopened = YieldUntil(
+            ctx, [] { return g_ui.newIssueDraftActive && GImGui->ActiveId != 0 && !g_ui.newIssueFocusSummaryPending; },
+            60);
+        IM_CHECK_NO_RET(reopened);
+        IM_CHECK_STR_EQ_NO_RET(DraftEditBufText("summary").c_str(), "Kept summary");
+        IM_CHECK_STR_EQ_NO_RET(DraftEditBufText("environment").c_str(), "Linux");
+        IM_CHECK_NO_RET(g_ui.gridEditSuccess.find("Restored") != std::string::npos);
+
+        // The restored text counts as typed: Esc asks, and the confirmed discard drops the kept entry.
+        const int popupsBefore = GImGui->OpenPopupStack.Size;
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(g_ui.newIssueDraftActive);
+        IM_CHECK_NO_RET(GImGui->OpenPopupStack.Size == popupsBefore + 1);
+        ctx->ItemClick("//$FOCUSED/Discard draft");
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!g_ui.newIssueDraftActive);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("newissue.row", RowDraftScope().c_str()).c_str(), "");
+
+        ClosePopupsAbove(popupsBefore);
+        ClearNewIssueDraftForTest();
+        s_drawDraftRowHost = false;
+        ctx->Yield();
+    };
+}
+
+// A finished create the draft row will read on its next frame.
+std::future<IssueCreateResult> ReadyCreateResult(const IssueCreateResult& r) {
+    std::promise<IssueCreateResult> done;
+    done.set_value(r);
+    return done.get_future();
+}
+
+// Audit #51: a create settles the kept entry. Created drops it; a failure that may have created the issue
+// marks it, also after a view change closed the row, and the next "+ New Issue" says to check. Typed
+// bytes that are not UTF-8 are still kept. A row the offline queue loaded is never kept.
+void RegisterNewIssueDraftRowKeptDraftSettled(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "NewIssueDraftRow_KeptDraftSettledByCreate");
+    t->GuiFunc = DrawDraftRowHost;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!FixtureEnvSet()) {
+            ctx->LogInfo("SKIP: SMATCHET_TEST_JIRA_BACKEND_FIXTURE not set — keep the draft off a live backend");
+            return;
+        }
+        if (SmatchetActiveUiTestAppController() == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        ClearNewIssueDraftForTest();
+        s_drawDraftRowHost = true;
+        ctx->Yield(2);
+        ctx->WindowFocus("Draft row keys host");
+        const std::string scope = RowDraftScope();
+
+        // Not UTF-8 in one field: the entry is still written, with the bad bytes replaced.
+        if (!OpenDraftWithNewIssueButton(ctx)) {
+            s_drawDraftRowHost = false;
+            return;
+        }
+        ctx->KeyChars("Created summary");
+        ctx->Yield(2);
+        std::vector<char>& desc = g_ui.newIssueDraftEditBufs["description"];
+        IM_CHECK_NO_RET(desc.size() > 3);
+        desc[0] = static_cast<char>(0xC3);
+        desc[1] = '(';
+        desc[2] = '\0';
+        ctx->KeyChars("!");
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(KeptDraftText("newissue.row", scope.c_str()).find("Created summary!") != std::string::npos);
+
+        // Created: the row closes and the kept entry goes.
+        IssueCreateResult created;
+        created.Ok = true;
+        created.IssueKey = "TEST-1";
+        g_ui.newIssueCreateFuture = ReadyCreateResult(created);
+        g_ui.newIssueCreateInFlight = true;
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!g_ui.newIssueDraftActive);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("newissue.row", scope.c_str()).c_str(), "");
+
+        // A create that may have gone through, finishing after a view change closed the row.
+        if (!OpenDraftWithNewIssueButton(ctx)) {
+            s_drawDraftRowHost = false;
+            return;
+        }
+        IM_CHECK_STR_EQ_NO_RET(DraftEditBufText("summary").c_str(), ""); // nothing kept came back
+        ctx->KeyChars("Maybe summary");
+        ctx->Yield(2);
+        std::promise<IssueCreateResult> running;
+        g_ui.newIssueCreateFuture = running.get_future();
+        g_ui.newIssueCreateInFlight = true;
+        ctx->Yield();
+        CancelUnfinishedNewIssueForGridChange(g_ui);
+        ctx->Yield();
+        IssueCreateResult maybe;
+        maybe.Error = "Create issue failed: timed out";
+        maybe.ReplayMayDuplicate = true;
+        running.set_value(maybe);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!g_ui.newIssueCreateInFlight);
+        IM_CHECK_NO_RET(KeptDraftText("newissue.row", scope.c_str()).find("Maybe summary") != std::string::npos);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("newissue.row.maybe_created", scope.c_str()).c_str(), "1");
+        if (!OpenDraftWithNewIssueButton(ctx)) {
+            s_drawDraftRowHost = false;
+            return;
+        }
+        IM_CHECK_STR_EQ_NO_RET(DraftEditBufText("summary").c_str(), "Maybe summary");
+        IM_CHECK_NO_RET(g_ui.gridEditError.find("may have gone through") != std::string::npos);
+
+        // A row the offline queue loads ("Open as draft": no caret request) is neither restored nor kept.
+        // Its project change would rewrite a kept entry if it were. The user clicks in the queue panel
+        // first, so the row's field has left the caret.
+        DeactivateFieldForTest(ctx);
+        CancelUnfinishedNewIssueForGridChange(g_ui);
+        const std::string keptBefore = KeptDraftText("newissue.row", scope.c_str());
+        IM_CHECK_NO_RET(!keptBefore.empty());
+        g_ui.newIssueDraft = IssueDraft{};
+        g_ui.newIssueDraft.FieldValues["summary"] = "From queue";
+        g_ui.newIssueDraftActive = true;
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(DraftEditBufText("summary").c_str(), "From queue");
+        g_ui.newIssueDraft.ProjectKey = "QUEUEPROJ";
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("newissue.row", scope.c_str()).c_str(), keptBefore.c_str());
+
+        ClearNewIssueDraftForTest();
+        s_drawDraftRowHost = false;
+        ctx->Yield();
+    };
+}
+
 // Audit #60: Ctrl+F (the grid.search.focus default binding) puts the caret in the focused pane's
 // search box; Esc there clears the search and leaves the box.
 void RegisterGridSearchFocusKeys(ImGuiTestEngine* engine) {
@@ -751,6 +972,205 @@ bool OpenQuickCreateWithCaret(ImGuiTestContext* ctx) {
     return YieldUntil(ctx, [] { return !g_ui.quickCreateOpenLatch && GImGui->ActiveId != 0; }, 30);
 }
 
+void EraseQuickCreateDraftForTest() {
+    smatchet::drafts::Erase("quickcreate.summary", "popup");
+    smatchet::drafts::Erase("quickcreate.description", "popup");
+    smatchet::drafts::Erase("quickcreate.maybe_created", "popup");
+}
+
+std::string QuickCreateDescriptionText() {
+    return g_ui.quickCreateDescBuf.empty() ? std::string() : std::string(g_ui.quickCreateDescBuf.data());
+}
+
+// Audit #51: what is typed in Quick Create survives closing the window. It comes back at the next open
+// with the restored line; Clear drops it, and so does a confirmed Discard.
+void RegisterQuickCreateDraftKept(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "QuickCreate_DraftKeptAndRestored");
+    t->GuiFunc = ClearActiveIdGui;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        g_ui.quickCreateArgSummary.clear();
+        g_ui.quickCreateArgDescription.clear();
+        EraseQuickCreateDraftForTest();
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        ctx->KeyChars("Kept title");
+        ctx->SetRef("Quick Create Issue");
+        ctx->ItemClick("##quickcreate_desc");
+        ctx->KeyChars("Kept body");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "Kept title");
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.description", "popup").c_str(), "Kept body");
+
+        // Closed the way the window's X closes it, then reopened: both come back, with the restored line.
+        DeactivateFieldForTest(ctx); // the X is clicked: the field leaves the caret first
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        IM_CHECK_STR_EQ_NO_RET(QuickCreateSummaryText().c_str(), "Kept title");
+        IM_CHECK_STR_EQ_NO_RET(QuickCreateDescriptionText().c_str(), "Kept body");
+        IM_CHECK_NO_RET(g_ui.quickCreateDescUserEdited); // the context prefill must not replace it
+        ctx->SetRef("Quick Create Issue");
+        IM_CHECK_NO_RET(ctx->ItemExists("Clear"));
+
+        // Clear empties both fields and the kept entry.
+        ctx->ItemClick("Clear");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(QuickCreateSummaryText().c_str(), "");
+        IM_CHECK_STR_EQ_NO_RET(QuickCreateDescriptionText().c_str(), "");
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "");
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.description", "popup").c_str(), "");
+
+        // Typed again, then a confirmed Discard: nothing is kept.
+        ctx->ItemClick("##quickcreate_summary");
+        ctx->KeyChars("Throwaway");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "Throwaway");
+        const int popupsBefore = GImGui->OpenPopupStack.Size;
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(GImGui->OpenPopupStack.Size == popupsBefore + 1);
+        ctx->ItemClick("//$FOCUSED/Discard");
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!g_ui.showQuickCreateIssue);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "");
+
+        ClosePopupsAbove(popupsBefore);
+        EraseQuickCreateDraftForTest();
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield();
+    };
+}
+
+// Audit #51: an open that passes its own text (summary=) neither restores nor rewrites the kept entry until
+// the user edits; a create that may have gone through marks the entry, and the next open says to check.
+void RegisterQuickCreateDraftArgsAndMaybeCreated(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "QuickCreate_DraftArgsAndMaybeCreated");
+    t->GuiFunc = ClearActiveIdGui;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        g_ui.quickCreateArgSummary.clear();
+        g_ui.quickCreateArgDescription.clear();
+        EraseQuickCreateDraftForTest();
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        ctx->KeyChars("Mine");
+        ctx->Yield(2);
+        DeactivateFieldForTest(ctx); // the X is clicked: the field leaves the caret first
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield(2);
+
+        // Opened with summary=: the caller's text shows, and the kept entry stays as it was.
+        g_ui.quickCreateArgSummary = "From the caller";
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(QuickCreateSummaryText().c_str(), "From the caller");
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "Mine");
+        ctx->SetRef("Quick Create Issue");
+        IM_CHECK_NO_RET(!ctx->ItemExists("Clear"));
+
+        // Discarded without an edit: the kept draft this open never showed stays kept.
+        const int popupsBefore = GImGui->OpenPopupStack.Size;
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(GImGui->OpenPopupStack.Size == popupsBefore + 1);
+        ctx->ItemClick("//$FOCUSED/Discard");
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!g_ui.showQuickCreateIssue);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "Mine");
+        ClosePopupsAbove(popupsBefore);
+
+        // Sent with the caller's text and edited while that create runs: its result still leaves the kept draft
+        // alone. (Every check in the block is _NO_RET, so the promise always gets its value.)
+        g_ui.quickCreateArgSummary = "From the caller";
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        ctx->Yield(2);
+        {
+            std::promise<IssueCreateResult> sent;
+            g_ui.quickCreateFuture = sent.get_future();
+            g_ui.quickCreateInFlight = true; // what Submit does
+            ctx->KeyPress(ImGuiKey_End);
+            ctx->KeyChars(" too");
+            ctx->Yield(2);
+            IssueCreateResult landed;
+            landed.Ok = true;
+            landed.IssueKey = "TEST-2";
+            sent.set_value(landed);
+            // The result closes the window with the caret still in the summary. ImGui hands that field's edited
+            // text back to an input drawn within a frame of its deactivation, which no user reopen is fast enough
+            // to hit, so let those frames pass before the next open.
+            ctx->Yield(4);
+        }
+        IM_CHECK_NO_RET(!g_ui.showQuickCreateIssue);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "Mine");
+
+        g_ui.quickCreateArgSummary = "From the caller";
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        ctx->Yield(2);
+        // Once the user edits, the popup's text is theirs and is kept. (The open selects the summary; End
+        // keeps it.)
+        ctx->KeyPress(ImGuiKey_End);
+        ctx->KeyChars("!");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "From the caller!");
+
+        // A create that may have gone through: the entry is marked; the next open restores it and says so.
+        IssueCreateResult maybe;
+        maybe.Error = "Create issue failed: timed out";
+        maybe.ReplayMayDuplicate = true;
+        std::promise<IssueCreateResult> done;
+        done.set_value(maybe);
+        g_ui.quickCreateFuture = done.get_future();
+        g_ui.quickCreateInFlight = true;
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.maybe_created", "popup").c_str(), "1");
+        DeactivateFieldForTest(ctx); // the X is clicked: the field leaves the caret first
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        IM_CHECK_STR_EQ_NO_RET(QuickCreateSummaryText().c_str(), "From the caller!");
+        ctx->SetRef("Quick Create Issue");
+        IM_CHECK_NO_RET(ctx->ItemExists("Clear"));
+        ctx->ItemClick("Clear");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "");
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.maybe_created", "popup").c_str(), "");
+
+        // Reopened while its create still runs: the sent text shows as sent, nothing is restored over it, the
+        // create is still polled, and its result erases the entry. (Every check below is _NO_RET, so the promise
+        // always gets its value: a broken promise would throw from the poll.)
+        DeactivateFieldForTest(ctx);
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield(2);
+        EraseQuickCreateDraftForTest();
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        ctx->KeyChars("Sent");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "Sent");
+        std::promise<IssueCreateResult> running;
+        g_ui.quickCreateFuture = running.get_future();
+        g_ui.quickCreateInFlight = true; // what Submit does
+        DeactivateFieldForTest(ctx);
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(g_ui.quickCreateInFlight);
+        IM_CHECK_STR_EQ_NO_RET(QuickCreateSummaryText().c_str(), "Sent");
+        ctx->SetRef("Quick Create Issue");
+        IM_CHECK_NO_RET(!ctx->ItemExists("Clear"));
+        IssueCreateResult created;
+        created.Ok = true;
+        created.IssueKey = "TEST-1";
+        running.set_value(created);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!g_ui.quickCreateInFlight);
+        IM_CHECK_NO_RET(!g_ui.showQuickCreateIssue);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "");
+
+        EraseQuickCreateDraftForTest();
+        g_ui.quickCreateError.clear();
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield();
+    };
+}
+
 // Audit #50: Esc in the quick-create popup with a summary typed keeps the text and asks before
 // discarding; Esc with nothing typed closes it.
 void RegisterQuickCreateEscKeys(ImGuiTestEngine* engine) {
@@ -778,7 +1198,9 @@ void RegisterQuickCreateEscKeys(ImGuiTestEngine* engine) {
         g_ui.showQuickCreateIssue = false;
         ctx->Yield(2);
 
-        // Reopened with nothing typed: Esc closes it without a question.
+        // Reopened with nothing typed (the kept draft is dropped; QuickCreate_DraftKeptAndRestored covers it):
+        // Esc closes it without a question.
+        EraseQuickCreateDraftForTest();
         IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
         IM_CHECK_STR_EQ_NO_RET(QuickCreateSummaryText().c_str(), "");
         const int popupsEmpty = GImGui->OpenPopupStack.Size;
@@ -1012,8 +1434,12 @@ extern "C" void SmatchetRegisterDataDependentWindowsSmokeTests(ImGuiTestEngine* 
     RegisterAttachmentPreviewWindowRenderSmoke(engine);
     RegisterNewIssueDraftRowRenderSmoke(engine);
     RegisterNewIssueDraftRowKeys(engine);
+    RegisterNewIssueDraftRowDraftKept(engine);
+    RegisterNewIssueDraftRowKeptDraftSettled(engine);
     RegisterGridSearchFocusKeys(engine);
     RegisterQuickCreateEscKeys(engine);
+    RegisterQuickCreateDraftKept(engine);
+    RegisterQuickCreateDraftArgsAndMaybeCreated(engine);
     RegisterQuickCreateEscIgnoresOtherWindowsPopups(engine);
     RegisterOfflineQueuePanelRenderSmoke(engine);
 }

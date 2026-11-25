@@ -501,3 +501,10 @@ TEST_CASE("GlobalShortcutAllowedUnderModal: the zoom match needs the whole 'ui.z
     CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.zoomer.in"));
     CHECK_FALSE(GlobalShortcutAllowedUnderModal("app.fullscreen.toggle.extra"));
 }
+
+TEST_CASE("WorklogRemainingDraftText: a Time remaining is kept only while the user edited it") {
+    using smatchet::worklog::WorklogRemainingDraftText;
+    CHECK(WorklogRemainingDraftText(true, "2h 30m") == "2h 30m");
+    CHECK(WorklogRemainingDraftText(true, "") == "");    // typed it empty: nothing to keep
+    CHECK(WorklogRemainingDraftText(false, "3h") == ""); // derived from the spent time, recomputed at open
+}

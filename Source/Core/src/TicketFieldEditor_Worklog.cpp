@@ -130,10 +130,11 @@ struct ActiveWorklogDialogState {
     int TimeSpentFocusFramesLeft = 0;
     /// The dialog scope's state (Ui/SmatchetDialogScope.h): Esc and Ctrl+Enter are read through it.
     smatchet::ui::DialogScopeState Dialog;
-    /// The two text boxes as last handed to the draft store (DraftStore.h), to notice a change without
-    /// allocating each frame.
+    /// The text boxes as last handed to the draft store (DraftStore.h), to notice a change without
+    /// allocating each frame. Time remaining is kept only while the user edited it (WorklogRemainingDraftText).
     std::string DraftSyncedSpent;
     std::string DraftSyncedDescription;
+    std::string DraftSyncedRemaining;
     /// The boxes were filled from an entry kept by an earlier open.
     bool DraftRestored = false;
 };
@@ -147,6 +148,7 @@ constexpr const char* kTimeSpentFieldLabel = "##WorklogTimeSpent";
 /// Draft store surfaces of the two text boxes; the scope is the issue (DraftStore.h).
 constexpr const char* kWorklogSpentDraftSurface = "worklog.time";
 constexpr const char* kWorklogDescriptionDraftSurface = "worklog.description";
+constexpr const char* kWorklogRemainingDraftSurface = "worklog.remaining";
 
 /// Keeps what is typed in the two boxes as a draft, so Cancel, Esc, a restart or a crash does not lose it.
 /// Called once per frame while the dialog is up; it compares the boxes with what was last handed over.
@@ -163,11 +165,19 @@ void SyncWorklogDraft() {
         st.DraftSyncedDescription = st.WorkDescription;
         smatchet::drafts::Put(kWorklogDescriptionDraftSurface, st.IssueId, st.DraftSyncedDescription);
     }
+    const bool remainingChanged =
+        st.TimeRemainingManuallyEdited ? st.DraftSyncedRemaining != st.TimeRemaining : !st.DraftSyncedRemaining.empty();
+    if (remainingChanged) {
+        st.DraftSyncedRemaining =
+            smatchet::worklog::WorklogRemainingDraftText(st.TimeRemainingManuallyEdited, st.TimeRemaining);
+        smatchet::drafts::Put(kWorklogRemainingDraftSurface, st.IssueId, st.DraftSyncedRemaining);
+    }
 }
 
 void EraseWorklogDraft(const std::string& issueId) {
     smatchet::drafts::Erase(kWorklogSpentDraftSurface, issueId);
     smatchet::drafts::Erase(kWorklogDescriptionDraftSurface, issueId);
+    smatchet::drafts::Erase(kWorklogRemainingDraftSurface, issueId);
 }
 
 /// At open: puts back the entry kept for this issue. Not while this issue's last submit is still
@@ -176,6 +186,7 @@ void RestoreWorklogDraft() {
     ActiveWorklogDialogState& st = s_ActiveWorklogState;
     st.DraftSyncedSpent.clear();
     st.DraftSyncedDescription.clear();
+    st.DraftSyncedRemaining.clear();
     st.DraftRestored = false;
     if (st.SubmitInFlight) {
         return;
@@ -192,12 +203,21 @@ void RestoreWorklogDraft() {
         st.WorkDescription[sizeof(st.WorkDescription) - 1] = '\0';
         st.DraftRestored = true;
     }
+    smatchet::drafts::DraftEntry remaining;
+    if (smatchet::drafts::Get(kWorklogRemainingDraftSurface, st.IssueId, remaining)) {
+        std::strncpy(st.TimeRemaining, remaining.Text.c_str(), sizeof(st.TimeRemaining) - 1);
+        st.TimeRemaining[sizeof(st.TimeRemaining) - 1] = '\0';
+        st.TimeRemainingManuallyEdited = true; // it was typed: the spent time no longer derives it
+        st.DraftRestored = true;
+    }
     st.DraftSyncedSpent = st.TimeSpent;
     st.DraftSyncedDescription = st.WorkDescription;
+    st.DraftSyncedRemaining =
+        smatchet::worklog::WorklogRemainingDraftText(st.TimeRemainingManuallyEdited, st.TimeRemaining);
 }
 
-/// The "restored" line with its Clear button, above the time inputs. Clearing empties both boxes; the
-/// next SyncWorklogDraft erases the kept entry.
+/// The "restored" line with its Clear button, above the time inputs. Clearing empties both boxes and puts
+/// back the issue's own Time remaining; the next SyncWorklogDraft erases the kept entry.
 void DrawWorklogDraftNotice() {
     ActiveWorklogDialogState& st = s_ActiveWorklogState;
     if (!st.DraftRestored) {
@@ -208,6 +228,9 @@ void DrawWorklogDraftNotice() {
     if (ImGui::SmallButton(SmatchetLocalization::T("worklog.draft_clear", "Clear"))) {
         st.TimeSpent[0] = '\0';
         st.WorkDescription[0] = '\0';
+        std::strncpy(st.TimeRemaining, st.TotalTimeRemaining.c_str(), sizeof(st.TimeRemaining) - 1);
+        st.TimeRemaining[sizeof(st.TimeRemaining) - 1] = '\0';
+        st.TimeRemainingManuallyEdited = false;
         st.DraftRestored = false;
         st.TimeSpentFocusFramesLeft = kTimeSpentFocusFrames;
     }
@@ -821,6 +844,8 @@ WorklogDialogTestSnapshot GetWorklogDialogSnapshotForTests() {
     snap.TimeSpentActive = snap.Active && s_WorklogTimeSpentActiveForTests;
     snap.TimeSpent = s_ActiveWorklogState.TimeSpent;
     snap.Description = s_ActiveWorklogState.WorkDescription;
+    snap.TimeRemaining = s_ActiveWorklogState.TimeRemaining;
+    snap.TimeRemainingManuallyEdited = s_ActiveWorklogState.TimeRemainingManuallyEdited;
     snap.ErrorMsg = s_ActiveWorklogState.ErrorMsg;
     snap.DraftRestored = s_ActiveWorklogState.DraftRestored;
     return snap;
