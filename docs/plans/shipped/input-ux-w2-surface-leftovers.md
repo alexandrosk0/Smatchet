@@ -138,8 +138,8 @@ None.
   - `CommandNameMatchRanges` matches the name alone first. Before, a word that a later name segment contains could score higher in the title (the word-end bonus) and so mark nothing in the name, e.g. `comment` against `issue.comments` / "Comment on issue". The haystack is used only when the name alone does not match.
   - The Preview trims the sample before applying the rules, so a path pasted with leading spaces is not reported as unchanged.
   - The bucket-E mark probe also requires the toolbar editor's window id, because the command palette has a `##cmdlist` child too.
-  - The new debt entry for the `left-view-history-grid` step name is worded as depending on PR #2486 merging, and has its `Status:` line.
-- Backlog: `debt/2026-11-24-left-view-history-stale-ci-step-name.md`. PR #2486 renames a CI step that `docs/plans/active/left-view-history-grid.md` quotes; that plan is under another lock.
+  - The new debt entry for the `left-view-history-grid` step name no longer claims a rename before PR #2486 had merged, and has its `Status:` line.
+- Backlog: `debt/2026-11-24-left-view-history-stale-ci-step-name.md`. PR #2486 renamed a CI step that `docs/plans/active/left-view-history-grid.md` quotes; that plan is under another lock.
 
 ## Deviations from plan
 
