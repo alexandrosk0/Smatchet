@@ -247,6 +247,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`input-ux-w2-conflict-discard-undo`](shipped/input-ux-w2-conflict-discard-undo.md) | 2026-11-23 | Plan — Input UX Wave 2 leftover: Undo on the conflict resolver's "Discard my edit" |
 | [`input-ux-w2-view-delete-undo`](shipped/input-ux-w2-view-delete-undo.md) | 2026-11-23 | Plan — Input UX Wave 2 leftover: Undo on the view-delete toast |
 | [`input-ux-w2-create-drafts`](shipped/input-ux-w2-create-drafts.md) | 2026-11-24 | Plan — Input UX Wave 2 leftover: drafts for Quick Create, the new-issue row and the worklog Time remaining |
+| [`input-ux-w2-surface-leftovers`](shipped/input-ux-w2-surface-leftovers.md) | 2026-11-24 | Plan — Input UX Wave 2 leftover: the text-field and matcher surfaces the locks held back |
 <!-- END auto-plan-index -->
 
 ### Notes
