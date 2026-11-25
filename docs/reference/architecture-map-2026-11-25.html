@@ -169,7 +169,7 @@ footer { color: var(--muted); font-size: 13px; max-width: 80ch; }
           <button type="button" id="clearSel" hidden>Clear selection</button>
         </div>
         <div class="scroll">
-          <svg id="graph" role="img" aria-label="Layered dependency graph of Smatchet's 23 C++ modules. Hosts sit at the top, base utilities at the bottom, and most include arrows point downward."></svg>
+          <svg id="graph" role="group" aria-label="Layered dependency graph of Smatchet's 23 C++ modules. Hosts sit at the top, base utilities at the bottom, and most include arrows point downward."></svg>
         </div>
         <div class="legend" aria-hidden="true">
           <span><svg width="34" height="10"><line x1="0" y1="5" x2="34" y2="5" stroke="var(--edge)" stroke-width="1"/></svg><svg width="34" height="10"><line x1="0" y1="5" x2="34" y2="5" stroke="var(--edge)" stroke-width="5"/></svg>few → many includes</span>
@@ -576,7 +576,17 @@ function depList(list, kind, other) {
 }
 function group(title, node) { const g = h('div', 'group'); g.append(h('span', 'eyebrow', title), node); return g; }
 function renderInspector() {
+  // Rebuilding the inspector removes the button that was just activated; remember whether focus
+  // was inside it so keyboard users are not dropped back to the top of the document.
+  const hadFocus = insp.contains(document.activeElement);
   insp.replaceChildren();
+  renderInspectorBody();
+  if (hadFocus) {
+    const target = sel ? nodeEls[sel] : insp.querySelector('button');
+    if (target) target.focus();
+  }
+}
+function renderInspectorBody() {
   if (!sel) {
     insp.append(h('span', 'eyebrow', 'Reading the map'), h('h3', null, 'Start from the hub'));
     const ul = document.createElement('ul');
