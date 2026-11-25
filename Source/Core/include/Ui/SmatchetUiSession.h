@@ -7,6 +7,8 @@
 #include "Types/AppUpdateTypes.h"    // AppUpdateInfo (by-value member + std::future<AppUpdateInfo>)
 #include "Types/AttachmentTypes.h"   // AttachmentDescriptor
 #include "Types/FieldEditTypes.h"    // FieldEditResult
+#include "Types/TransitionsTypes.h"  // TransitionsQuery (the bulk-edit status picker's per-row queries)
+#include "StatusComboOptionsPure.h"  // StatusOptionsSource (the bulk-edit status picker's cached list)
 #include "Types/CatalogFetchTypes.h" // GridCatalogFetchLatch (the grid's catalog fetch, latched at launch)
 #include "PendingActionTypes.h"      // PendingActionTarget (the pane a grid edit was made in)
 #include "Sync/SyncTypes.h"          // TrackerIssueFetchPack, TrackerConnectivityBannerForUi (::Level member init)
@@ -166,6 +168,25 @@ struct BulkEditPopupRequest {
     std::vector<std::string> PendingValues;    ///< the values waiting for the confirm step
     bool Clear = false;                        ///< the pending apply clears the field
     std::vector<std::string> LabelSuggestions; ///< labels fields: every label seen in the pane's tickets
+    /// The status field only: one transitions query per row the job will touch, taken when the popup opens (project,
+    /// issue type and current status of the row), so the picker offers the moves every one of them allows.
+    std::vector<TransitionsQuery> StatusQueries;
+    /// The status picker's list, recomputed every few frames rather than every frame (a selection can hold
+    /// thousands of rows): the statuses every row can move to, and where the least live row's list came from.
+    struct StatusPickCache {
+        bool Valid = false;          ///< computed at least once since the popup opened
+        bool Applicable = false;     ///< the tracker has transitions; false = the catalog's list stands
+        int Frame = 0;               ///< ImGui frame of the last recompute
+        std::size_t FetchCursor = 0; ///< next row a live fetch may start from (rows take turns)
+        /// The pane snapshot the row queries were last rebuilt from (held; the same snapshot needs no rebuild).
+        std::shared_ptr<const void> QuerySnapshot;
+        /// Large selections: the one row per (project, issue type, status) group whose live fetch teaches the rest.
+        std::unordered_map<std::string, std::string> GroupRep;
+        std::vector<TrackerFieldOption> Options;
+        smatchet::statuscombo::StatusOptionsSource From = smatchet::statuscombo::StatusOptionsSource::Live;
+        smatchet::offline::DataFreshness Freshness = smatchet::offline::DataFreshness::Fresh;
+    };
+    StatusPickCache StatusCache;
 };
 
 struct FieldEditCommitResult {
