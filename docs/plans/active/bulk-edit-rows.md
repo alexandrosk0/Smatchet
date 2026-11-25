@@ -285,7 +285,6 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
 - `bash scripts/dev/pre-ship.sh`: all gates passed except the review ack, which is recorded after the code-review pass.
 - Build gate: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` passed (fresh configure, 1107 steps).
 - Ctrl+F while a popup is open: covered by `BulkFieldEdit/GridSearchFocusRequestKeepsDialogOpen` (follow-up for Issue #2449; it failed without the fix and passes with it).
-- Not done: a bucket-E case for Ctrl+F while a popup is open (item deferred to Issue #2449; the test was written and failed without the fix, as expected, and is attached to the Issue).
 - Bulk status transitions: `StatusComboOptionsPure` doctests (intersection, empty, single row, name match across ids, source ranking) and bucket-E `BulkFieldEdit/Status_OffersOnlyMovesEveryRowAllows`, `Status_NoCommonMoveOffersNoneOfThem`, `Status_OfflineOffersWhatIsRemembered`, `Status_LargeSelectionFetchesOncePerGroup`; `test-ui-bulk-field-edit` 14 / 14, `test-ui-filter-dropdown` 25 / 25, `test-ui-data-dependent-windows` 12 / 12.
 - Not measured: the status picker's per-refresh cost on a selection of 1,000+ rows (online and offline). Estimated cheap after the distinct-list dedupe; a `perf-measure` run is owed before the next phase touches this picker.
 - Manual residue: none.
