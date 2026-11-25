@@ -44,6 +44,16 @@ struct BulkRow {
     std::string Message; ///< failure message or skip reason
 };
 
+/// One row of a per-row bulk edit: the values THIS row gets (a pasted column, or an undo that gives each row its own
+/// before-value back). A row with `HasConflictBase` sends `ConflictBase` as its ADR-0016 scalar base and the job does
+/// not capture the row's current value for it; a row without one captures the current value as the shared form does.
+struct BulkRowInput {
+    std::string IssueId;
+    std::vector<std::string> Values;
+    std::string ConflictBase;
+    bool HasConflictBase = false;
+};
+
 struct BulkFieldEditJob {
     std::uint64_t Id = 0;
     std::string PaneId; ///< the pane the user acted in; its target is latched onto every row
@@ -52,7 +62,9 @@ struct BulkFieldEditJob {
     BulkMode Mode = BulkMode::Replace;
     std::vector<BulkRow> Rows;
     bool IsRevert = false;
-    bool Reported = false; ///< the summary toast of this job was shown (it is shown once)
+    bool IsUndo = false;           ///< an undo's inverse job: it records no history entry and its toast reads "Undone"
+    std::uint64_t UndoEntryId = 0; ///< the grid history entry of this job (0 = none); its summary toast offers Undo
+    bool Reported = false;         ///< the summary toast of this job was shown (it is shown once)
 };
 
 struct BulkSummary {

@@ -308,6 +308,7 @@ The ticket grid keeps one **active cell**, drawn with a focus ring. Click a cell
 | `F2` | Edit the active cell, the caret at the end of the value. |
 | `Enter` | Edit the active cell with the value selected, so typing replaces it. |
 | A letter, digit or symbol | Start editing the active cell with that text instead of its value (type-to-edit). On a dropdown cell the character goes into the dropdown's filter. |
+| `Ctrl+Z` | Undo the newest edit made in this grid pane: a cell you saved, or a whole bulk "Set ... for N rows" (each row gets its own old value back). |
 
 While a text cell is being edited:
 
@@ -318,6 +319,8 @@ While a text cell is being edited:
 | `Esc` | Drop the change; the cell is not written and stays the active cell. |
 
 Moving after a save skips cells you cannot edit (read-only columns and issues), and opens no editor: press `Enter`, `F2` or just type to edit the next cell. With nothing editable that way, the active cell stays. Saving an unchanged value writes nothing and still moves. `Ctrl+Enter` saves without moving (it is reserved for applying a value to a selection). On a duration cell `Tab` keeps its old behaviour (it leaves the cell and saves), and the picker of a date cell opens on `F2` / `Enter` / typing without taking the typed text.
+
+Every saved grid edit also shows a **Saved** toast with an **Undo** button (about 6 seconds); `Ctrl+Z` presses it while it is up, and after it is gone `Ctrl+Z` on the grid undoes from the pane's last 50 edits. An edit that has not finished saving answers "Still saving" and stays undoable. An undo that finds the field changed meanwhile (by someone else, or by sync) reports a conflict instead of overwriting it. The cell's right-click menu has the same action as "Undo <field> on <issue> (Ctrl+Z)". Dates, cascading fields and option lists the editors write as text are not recorded. A cell whose save the tracker rejected reopens with the value you typed and the tracker's message under it (`Esc` drops it).
 
 The grid scrolls to keep the active cell in view, clear of the header row and the ID column. The active cell, a cell range and a row selection follow their issues: a sync or a re-sort does not drop them (only rows that left the view are dropped), and the active cell also follows its row through a search and comes back when the search is cleared. Typing in the search box still clears a range or row selection, as before. The arrow keys belong to the grid while it has the keyboard, so the generic focus cursor does not move with them. Paste, fill-down and undo are planned in the same plan, `docs/plans/active/input-ux-w3-grid-spreadsheet.md`.
 

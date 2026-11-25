@@ -190,6 +190,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/GridCopyPure.test.cpp
         # Grid cell-cursor math: moves at the edges, Tab wrap, skip-read-only sweep, range extend (input UX Wave 3). Header-only.
         Core/GridCursorPure.test.cpp
+        # Grid undo history (Ui/GridUndoPure.h): bounded stack, landed/failed settling, newest-take, inverse (input UX Wave 3). Header-only.
+        Core/GridUndoPure.test.cpp
         # Copy-on-write sink list behind the automation error / Lua log sinks (#2307); its concurrent
         # register-vs-invoke case is a TSan target. Header-only.
         Core/StringSinkList.test.cpp
@@ -1001,6 +1003,8 @@ add_executable(SmatchetTests
     Core/GridCopyPure.test.cpp
     # Grid cell-cursor math (Ui/GridCursorPure.h), header-only; no extra production .cpp.
     Core/GridCursorPure.test.cpp
+    # Grid undo history (Ui/GridUndoPure.h), header-only; no extra production .cpp.
+    Core/GridUndoPure.test.cpp
     # ViewDefinition::Columns — the ordered-column-list model replacing ColumnOrder +
     # ColumnWidths + an independently-mutable Fields (column-view-save-simplification).
     # Header-only pure helpers over ViewDefinition; no extra production .cpp to link.

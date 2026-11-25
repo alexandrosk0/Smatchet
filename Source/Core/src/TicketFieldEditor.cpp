@@ -538,6 +538,32 @@ bool InlineEditTabPressed(bool editJustStarted) {
     return pressed;
 }
 
+// The last save of this cell was rejected: the editor opens on the value the user typed, with the tracker's message
+// under it, so the value is fixed rather than retyped (#31). A typed character that opened the editor (type-to-edit)
+// is the user's newer input and is kept.
+void SeedFromRejectedValue(const CachedTicket& ticket, const TrackerField& field, SpreadsheetState& state,
+                           bool editJustStarted) {
+    if (!editJustStarted || state.CellRejectedValue == nullptr ||
+        state.EditInitialValue != std::string(state.EditBuffer)) {
+        return;
+    }
+    std::snprintf(state.EditBuffer, sizeof(state.EditBuffer), "%s", state.CellRejectedValue->c_str());
+    state.EditRejectedMessage = state.CellRejectedMessage != nullptr ? *state.CellRejectedMessage : std::string();
+    state.EditRejectedIssueId = ticket.id;
+    state.EditRejectedFieldId = field.Id;
+}
+
+// The tracker's reason for the rejected value, under the field (the duration widget draws its own box).
+void DrawRejectedMessage(const SpreadsheetState& state, bool escapePressed, bool isDuration, const ImVec2& durationMin,
+                         const ImVec2& durationMax) {
+    if (state.EditRejectedMessage.empty() || escapePressed) {
+        return;
+    }
+    const ImVec2 inputMin = isDuration ? durationMin : ImGui::GetItemRectMin();
+    const ImVec2 inputMax = isDuration ? durationMax : ImGui::GetItemRectMax();
+    smatchet::ui::DrawInlineTextErrorBelowRect(state.EditRejectedMessage, inputMin, inputMax);
+}
+
 // Draws the active inline single-line text editor for a non-ADF text cell and commits / cancels
 // the edit. Extracted from RenderTextEditor's editing branch; behaviour byte-identical (duration
 // fields route through the suggestion widget, plain fields through InputText). Caller has already
@@ -546,6 +572,7 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
                           std::vector<PendingFieldEdit>& pendingEdits) {
     const bool editJustStarted = state.EditJustStarted;
     const bool isDuration = IsTimeDurationField(field.Id);
+    SeedFromRejectedValue(ticket, field, state, editJustStarted);
     bool explicitSubmit = false;
     bool deactivated = false;
     bool tabPressed = false;
@@ -591,6 +618,7 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
     const GridEditExit exitAfter = explicitSubmit ? EditExitForKey(tabPressed) : GridEditExit::None;
 
     const bool escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
+    DrawRejectedMessage(state, escapePressed, isDuration, durationRectMin, durationRectMax);
     // A typed duration is read the tolerant way ("1.5h", "90 m", "1:30"); one that does not read is explained
     // under the field while the user types and is never committed (#38). An untouched value is left alone: a
     // tracker figure this reader cannot parse is not the user's typo.
