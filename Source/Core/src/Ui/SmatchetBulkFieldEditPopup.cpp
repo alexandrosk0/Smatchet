@@ -87,34 +87,26 @@ std::string StatusGroupKey(const TransitionsQuery& query) {
     return smatchet::workflow::BuildLearnedTransitionsKey(query.ProjectKey, query.IssueTypeKey, query.FromStatusKey);
 }
 
-// The pane's tickets by id, built once per pass when the first fetch is about to start.
-struct TicketIndex {
-    std::shared_ptr<const std::vector<CachedTicket>> Tickets; // keeps the pointers below alive
-    std::unordered_map<std::string, const CachedTicket*> ById;
-};
-
-TicketIndex IndexPaneTickets(AppController& app, const std::string& paneId) {
-    TicketIndex index;
-    index.Tickets = app.TicketsSnapshotForTarget(app.LatchPendingActionTargetForPane(paneId));
-    if (index.Tickets) {
-        index.ById.reserve(index.Tickets->size());
-        for (const CachedTicket& ticket : *index.Tickets) {
-            index.ById.emplace(ticket.id, &ticket);
-        }
-    }
-    return index;
-}
-
 // Re-reads every row's query from one snapshot of the pane, so the grouping, the coverage and the fetches below all see
 // the status each row has now: the learned workflow is written under the row's status key, so a status a row left
 // since the popup opened must not label the answer for the one it has now. A row that left its group no longer speaks
-// for it.
+// for it. The snapshot is immutable, so the same one as the last pass means no row changed: nothing is rebuilt then.
 void RefreshStatusQueries(AppController& app, BulkEditPopupRequest& req, bool byGroup) {
-    const TicketIndex index = IndexPaneTickets(app, req.PaneId);
     BulkEditPopupRequest::StatusPickCache& cache = req.StatusCache;
+    const std::shared_ptr<const std::vector<CachedTicket>> tickets =
+        app.TicketsSnapshotForTarget(app.LatchPendingActionTargetForPane(req.PaneId));
+    if (!tickets || tickets == cache.QuerySnapshot) {
+        return;
+    }
+    cache.QuerySnapshot = tickets; // held, so a freed snapshot's address is never mistaken for a new one
+    std::unordered_map<std::string, const CachedTicket*> byId;
+    byId.reserve(tickets->size());
+    for (const CachedTicket& ticket : *tickets) {
+        byId.emplace(ticket.id, &ticket);
+    }
     for (TransitionsQuery& query : req.StatusQueries) {
-        const auto ticket = index.ById.find(query.IssueId);
-        if (ticket == index.ById.end()) {
+        const auto ticket = byId.find(query.IssueId);
+        if (ticket == byId.end()) {
             continue;
         }
         const std::string before = byGroup ? StatusGroupKey(query) : std::string();
@@ -173,7 +165,8 @@ void StartStatusFetches(AppController& app, BulkEditPopupRequest& req, std::vect
 // stays in it), so a row already at a status never rules that status out. The cue covers the least live row.
 //
 // The cost of a pass: one cache lookup per row, then one list per DISTINCT non-live answer (rows that read the same
-// remembered workflow from the same status share one), so a thousand siblings cost about as much as one.
+// remembered workflow from the same status share one), so a thousand siblings cost about as much as one. When the
+// pane's ticket snapshot changed since the last pass, one index of it and one query rebuild per row come first.
 void RefreshStatusPick(AppController& app, BulkEditPopupRequest& req) {
     BulkEditPopupRequest::StatusPickCache& cache = req.StatusCache;
     cache.Valid = true;

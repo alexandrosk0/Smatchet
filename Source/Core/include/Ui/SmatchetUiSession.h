@@ -178,6 +178,8 @@ struct BulkEditPopupRequest {
         bool Applicable = false;     ///< the tracker has transitions; false = the catalog's list stands
         int Frame = 0;               ///< ImGui frame of the last recompute
         std::size_t FetchCursor = 0; ///< next row a live fetch may start from (rows take turns)
+        /// The pane snapshot the row queries were last rebuilt from (held; the same snapshot needs no rebuild).
+        std::shared_ptr<const void> QuerySnapshot;
         /// Large selections: the one row per (project, issue type, status) group whose live fetch teaches the rest.
         std::unordered_map<std::string, std::string> GroupRep;
         std::vector<TrackerFieldOption> Options;
