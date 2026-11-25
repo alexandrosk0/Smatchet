@@ -244,7 +244,10 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`input-ux-w2-tolerant-parsing`](shipped/input-ux-w2-tolerant-parsing.md) | 2026-11-19 | input UX Wave 2 piece 4.5 — one parse-and-explain layer (durations, dates, issue URLs, site URLs, queries) with a shared inline error under the field, plus a toast on every remaining silent failure |
 | [`input-ux-w2-drafts-undo`](shipped/input-ux-w2-drafts-undo.md) | 2026-11-20 | Plan — Input UX Wave 2, piece 4.3: drafts and undo |
 | [`input-ux-w2-gesture-keys`](shipped/input-ux-w2-gesture-keys.md) | 2026-11-20 | Plan — Input UX Wave 2, piece 4.6: keyboard equivalents for pointer gestures |
+| [`input-ux-w2-conflict-discard-undo`](shipped/input-ux-w2-conflict-discard-undo.md) | 2026-11-23 | Plan — Input UX Wave 2 leftover: Undo on the conflict resolver's "Discard my edit" |
 | [`input-ux-w2-view-delete-undo`](shipped/input-ux-w2-view-delete-undo.md) | 2026-11-23 | Plan — Input UX Wave 2 leftover: Undo on the view-delete toast |
+| [`input-ux-w2-create-drafts`](shipped/input-ux-w2-create-drafts.md) | 2026-11-24 | Plan — Input UX Wave 2 leftover: drafts for Quick Create, the new-issue row and the worklog Time remaining |
+| [`input-ux-w2-surface-leftovers`](shipped/input-ux-w2-surface-leftovers.md) | 2026-11-24 | Plan — Input UX Wave 2 leftover: the text-field and matcher surfaces the locks held back |
 <!-- END auto-plan-index -->
 
 ### Notes

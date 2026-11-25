@@ -88,6 +88,16 @@ void CancelUnfinishedNewIssueForGridChange(UiDrawSession& d);
 /// seed fields (assignee, priority, ...) alone do not count as content.
 bool NewIssueDraftHasUserContent(const UiDrawSession& d);
 
+/// The kept new-issue draft (SmatchetNewIssueDraftUi.cpp, INPUT_UX_AUDIT.md #51). The draft-store scope of
+/// the row's entry for the focused tracker connection.
+std::string NewIssueRowDraftScope(const AppController& app);
+/// Before a view change closes the row: stores its typed text one last time. True when that text is kept
+/// ("+ New Issue" brings it back); false for a row the offline queue loaded, an empty row, or one whose
+/// create is still running (that create's result settles the entry).
+bool KeepNewIssueRowDraftOnClose(const UiDrawSession& d);
+/// The row was closed by something other than its own buttons: the next row decides afresh whether it is kept.
+void ForgetNewIssueRowDraft();
+
 // Consolidated Shared Utilities
 bool ImGuiEffectiveKeyCtrl();
 bool ImGuiEffectiveKeyShift();

@@ -3,9 +3,11 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "DraftStore.h"
 #include "FilterDropdown.h"
 #include "TrackerOptionDropdown.h"
 #include "IssueDraft.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "ProjectResolver.h"
 #include "RecentSelections.h"
@@ -24,6 +26,7 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include <nlohmann/json.hpp>
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
@@ -49,6 +52,38 @@ bool s_openDiscardConfirmPending = false;
 // a plain text field copies its buffer into FieldValues on every keystroke.
 std::unordered_map<std::string, std::string> s_draftEditSeeds;
 
+// Kept field texts (RestoreNewIssueRowDraft) whose input has not drawn yet, such as a column the view
+// does not show. EnsureDraftEditBuf puts each into its buffer when it makes that buffer; until then the
+// text still counts as typed and is still kept.
+std::unordered_map<std::string, std::string> s_rowDraftPending;
+
+// The user put this text in the field: it is not blank and differs from the text the field opened with.
+bool RowFieldTextTyped(const std::string& fieldId, const std::string& live) {
+    if (TrimCopy(live).empty()) {
+        return false;
+    }
+    const auto seeded = s_draftEditSeeds.find(fieldId);
+    return seeded == s_draftEditSeeds.end() || seeded->second != live;
+}
+
+// Calls fn(fieldId, text) for each field text the user put in, drawn or still pending.
+template <typename Fn> void ForEachTypedRowField(const UiDrawSession& d, Fn&& fn) {
+    for (const auto& kv : d.newIssueDraftEditBufs) {
+        if (kv.second.empty()) {
+            continue;
+        }
+        const std::string live(kv.second.data());
+        if (RowFieldTextTyped(kv.first, live)) {
+            fn(kv.first, live);
+        }
+    }
+    for (const auto& kv : s_rowDraftPending) {
+        if (d.newIssueDraftEditBufs.count(kv.first) == 0 && !TrimCopy(kv.second).empty()) {
+            fn(kv.first, kv.second);
+        }
+    }
+}
+
 // Esc asks before discarding when the user typed anything: the summary, the description or
 // staged attachments (NewIssueDraftHasUserContent), or any other free-text field whose live
 // text differs from the text it opened with.
@@ -56,24 +91,209 @@ bool DraftHasTypedText(const UiDrawSession& d) {
     if (NewIssueDraftHasUserContent(d)) {
         return true;
     }
-    for (const auto& kv : d.newIssueDraftEditBufs) {
-        if (kv.second.empty()) {
-            continue;
-        }
-        const std::string live(kv.second.data());
-        if (TrimCopy(live).empty()) {
-            continue;
-        }
-        const auto seeded = s_draftEditSeeds.find(kv.first);
-        if (seeded == s_draftEditSeeds.end() || seeded->second != live) {
-            return true;
+    bool typed = false;
+    ForEachTypedRowField(d, [&typed](const std::string&, const std::string&) { typed = true; });
+    return typed;
+}
+
+// What is typed in the row is kept in the draft store (DraftStore.h), so a view change (which closes the
+// row), a restart or a crash does not lose it (INPUT_UX_AUDIT.md #51); "+ New Issue" brings it back. The
+// kept text is a small JSON object: the project, the issue type and the typed field texts. Picks in the
+// row's other dropdowns and staged attachments are not kept. One row at a time, so one entry per tracker
+// connection: the project and type it holds belong to that connection.
+constexpr const char* kNewIssueRowDraftSurface = "newissue.row";
+// Set when a create of the kept text failed in a way that may still have created the issue.
+constexpr const char* kNewIssueRowMaybeCreatedSurface = "newissue.row.maybe_created";
+
+// Whether the open row is kept, decided at its first frame. A row opened for typing ("+ New Issue" in the
+// header or in the grid, both of which ask for the caret in the summary) is kept; a row the offline queue
+// loaded ("Open as draft") is not, since the queue holds that one.
+enum class RowDraftKeep { Undecided, Kept, NotKept };
+RowDraftKeep s_rowDraftKeep = RowDraftKeep::Undecided;
+// The scope of the open row's entry: the connection focused at its first frame.
+std::string s_rowDraftScope;
+// The scope of a create still running for a kept row the user has since closed; its result settles it.
+std::string s_rowDraftClosedInFlightScope;
+// What was last handed to the draft store, and whether a row text input changed since.
+std::string s_rowDraftSynced;
+std::string s_rowDraftSyncedProject;
+std::string s_rowDraftSyncedTypeId;
+std::string s_rowDraftSyncedTypeName;
+bool s_rowDraftDirty = false;
+
+std::string BuildRowDraftText(const UiDrawSession& d) {
+    nlohmann::json fields = nlohmann::json::object();
+    ForEachTypedRowField(d, [&fields](const std::string& fieldId, const std::string& text) { fields[fieldId] = text; });
+    if (fields.empty()) {
+        return std::string(); // nothing typed: erases the kept entry
+    }
+    nlohmann::json j = nlohmann::json::object();
+    j["project"] = d.newIssueDraft.ProjectKey;
+    j["issuetype_id"] = d.newIssueDraft.IssueTypeId;
+    j["issuetype_name"] = d.newIssueDraft.IssueTypeName;
+    j["fields"] = std::move(fields);
+    // Typed bytes need not be valid UTF-8; replace keeps dump() from throwing on them.
+    return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
+void EraseKeptRowDraft(const std::string& scope) {
+    if (scope.empty()) {
+        return;
+    }
+    smatchet::drafts::Erase(kNewIssueRowDraftSurface, scope);
+    smatchet::drafts::Erase(kNewIssueRowMaybeCreatedSurface, scope);
+    if (scope == s_rowDraftScope) {
+        s_rowDraftSynced.clear();
+        s_rowDraftDirty = true; // an open kept row puts its own text back at the next sync
+    }
+}
+
+// The row closed: its entry (if any) stays as it is, and the next row decides afresh.
+void ResetRowDraftKeep() {
+    s_rowDraftKeep = RowDraftKeep::Undecided;
+    s_rowDraftScope.clear();
+    s_rowDraftSynced.clear();
+    s_rowDraftSyncedProject.clear();
+    s_rowDraftSyncedTypeId.clear();
+    s_rowDraftSyncedTypeName.clear();
+    s_rowDraftDirty = false;
+    s_rowDraftPending.clear();
+}
+
+// The user discarded the row, or it was created or queued: the kept entry goes with it.
+void EraseOpenRowDraftAndReset() {
+    if (s_rowDraftKeep == RowDraftKeep::Kept) {
+        EraseKeptRowDraft(s_rowDraftScope);
+    }
+    ResetRowDraftKeep();
+}
+
+// Once per frame while the row is up. Builds the text only when a row input changed, or the project or
+// type did, and calls the store only when the text changed. Not while a create runs: its result settles it.
+void SyncNewIssueRowDraft(const UiDrawSession& d) {
+    if (s_rowDraftKeep != RowDraftKeep::Kept || d.newIssueCreateInFlight) {
+        return;
+    }
+    const IssueDraft& draft = d.newIssueDraft;
+    const bool headerChanged = draft.ProjectKey != s_rowDraftSyncedProject ||
+                               draft.IssueTypeId != s_rowDraftSyncedTypeId ||
+                               draft.IssueTypeName != s_rowDraftSyncedTypeName;
+    if (!s_rowDraftDirty && !headerChanged) {
+        return;
+    }
+    s_rowDraftDirty = false;
+    s_rowDraftSyncedProject = draft.ProjectKey;
+    s_rowDraftSyncedTypeId = draft.IssueTypeId;
+    s_rowDraftSyncedTypeName = draft.IssueTypeName;
+    std::string text = BuildRowDraftText(d);
+    if (text != s_rowDraftSynced) {
+        s_rowDraftSynced = std::move(text);
+        smatchet::drafts::Put(kNewIssueRowDraftSurface, s_rowDraftScope, s_rowDraftSynced);
+        if (s_rowDraftSynced.empty()) {
+            // Nothing kept any more, so nothing a later draft could be mistaken for.
+            smatchet::drafts::Erase(kNewIssueRowMaybeCreatedSurface, s_rowDraftScope);
         }
     }
-    return false;
+}
+
+// Puts a kept entry back over the freshly seeded row. The kept field texts wait in s_rowDraftPending until
+// their inputs draw; each field's seed stays the text it opened with, so the kept text counts as typed (Esc
+// asks, the entry stays kept). A malformed entry is erased and ignored.
+void RestoreNewIssueRowDraft(UiDrawSession& d) {
+    smatchet::drafts::DraftEntry kept;
+    if (!smatchet::drafts::Get(kNewIssueRowDraftSurface, s_rowDraftScope, kept)) {
+        return;
+    }
+    std::string parseErr;
+    const nlohmann::json j = smatchet::json_safe::ParseBounded(kept.Text, parseErr);
+    const bool shaped = parseErr.empty() && j.is_object() && j.contains("fields") && j["fields"].is_object();
+    if (!shaped) {
+        LOG_WARN("new issue: the kept draft could not be read (%s); dropped",
+                 parseErr.empty() ? "unexpected shape" : parseErr.c_str());
+        EraseKeptRowDraft(s_rowDraftScope);
+        return;
+    }
+    const auto readString = [&j](const char* key) {
+        const auto it = j.find(key);
+        return it != j.end() && it->is_string() ? it->get<std::string>() : std::string();
+    };
+    IssueDraft& draft = d.newIssueDraft;
+    const std::string project = readString("project");
+    if (!project.empty()) {
+        draft.ProjectKey = project;
+        if (draft.FieldValues.count("project") != 0) {
+            draft.FieldValues["project"] = project;
+        }
+    }
+    const std::string typeId = readString("issuetype_id");
+    const std::string typeName = readString("issuetype_name");
+    if (!typeId.empty() || !typeName.empty()) {
+        draft.IssueTypeId = typeId;
+        draft.IssueTypeName = typeName;
+        // The type dropdown reads its selection from here, as the queue's "Open as draft" sets it.
+        if (draft.FieldValues.count("issuetype") != 0) {
+            draft.FieldValues["issuetype"] = typeId.empty() ? typeName : typeId;
+        }
+    }
+    const nlohmann::json& fields = j["fields"];
+    for (auto it = fields.begin(); it != fields.end(); ++it) {
+        if (it.value().is_string()) {
+            s_rowDraftPending[it.key()] = it.value().get<std::string>();
+        }
+    }
+    s_rowDraftSynced = kept.Text;
+    s_rowDraftSyncedProject = draft.ProjectKey;
+    s_rowDraftSyncedTypeId = draft.IssueTypeId;
+    s_rowDraftSyncedTypeName = draft.IssueTypeName;
+    smatchet::drafts::DraftEntry maybeCreated;
+    if (smatchet::drafts::Get(kNewIssueRowMaybeCreatedSurface, s_rowDraftScope, maybeCreated)) {
+        d.gridEditError = SmatchetLocalization::T(
+            "newissue.draft_restored_maybe_created",
+            "Restored your unsaved issue. Its last Create may have gone through: check the tracker before "
+            "creating it again.");
+    } else {
+        d.gridEditSuccess =
+            SmatchetLocalization::T("newissue.draft_restored", "Restored your unsaved issue. Cancel discards it.");
+    }
+}
+
+// At the open row's first frame: decides whether it is kept, and restores a kept entry into a row opened
+// for typing. A create of the kept text still running keeps the entry as it is until it lands.
+void DecideNewIssueRowDraftKeep(const AppController& app, UiDrawSession& d) {
+    if (s_rowDraftKeep != RowDraftKeep::Undecided) {
+        return;
+    }
+    if (!d.newIssueFocusSummaryPending) {
+        s_rowDraftKeep = RowDraftKeep::NotKept;
+        return;
+    }
+    s_rowDraftKeep = RowDraftKeep::Kept;
+    s_rowDraftScope = NewIssueRowDraftScope(app);
+    s_rowDraftSyncedProject = d.newIssueDraft.ProjectKey;
+    s_rowDraftSyncedTypeId = d.newIssueDraft.IssueTypeId;
+    s_rowDraftSyncedTypeName = d.newIssueDraft.IssueTypeName;
+    if (!d.newIssueCreateInFlight && s_rowDraftClosedInFlightScope != s_rowDraftScope) {
+        RestoreNewIssueRowDraft(d);
+    }
+}
+
+// A create finished: created or queued erases the entry it came from, one that may have gone through
+// marks it, so the next restore says to check. Also when a view change closed the row meanwhile.
+void SettleRowDraftCreate(const IssueCreateResult& r, bool rowClosedMeanwhile) {
+    const std::string scope = rowClosedMeanwhile                     ? s_rowDraftClosedInFlightScope
+                              : s_rowDraftKeep == RowDraftKeep::Kept ? s_rowDraftScope
+                                                                     : std::string();
+    s_rowDraftClosedInFlightScope.clear();
+    if (r.Ok || r.QueuedOfflineId > 0) {
+        EraseKeptRowDraft(scope);
+    } else if (IsAmbiguousCreateFailure(r) && !scope.empty()) {
+        smatchet::drafts::Put(kNewIssueRowMaybeCreatedSurface, scope, "1");
+    }
 }
 
 // Cancel, "Discard draft" and Esc on an empty draft: close the row and drop everything typed.
 void DiscardNewIssueDraft(UiDrawSession& d) {
+    EraseOpenRowDraftAndReset();
     s_draftTextActiveId = 0;
     d.newIssueDraftActive = false;
     d.newIssueFocusSummaryPending = false;
@@ -113,6 +333,7 @@ void PrepareNewIssueDraftForSubmit(UiDrawSession& d) {
 
 // The draft is in the offline queue: close it and say so.
 void FinishQueuedNewIssueDraft(UiDrawSession& d, const std::string& okMessage) {
+    EraseOpenRowDraftAndReset(); // the queue holds it now
     d.gridEditError.clear();
     d.gridEditSuccess = okMessage.empty() ? "Queued offline." : okMessage;
     d.newIssueDraftActive = false;
@@ -168,8 +389,14 @@ std::vector<char>& EnsureDraftEditBuf(UiDrawSession& d, const std::string& field
     auto& buf = d.newIssueDraftEditBufs[fieldId];
     if (buf.empty()) {
         s_draftEditSeeds[fieldId] = seed;
-        buf.resize((std::max)(minSize, seed.size() + 64), '\0');
-        std::memcpy(buf.data(), seed.data(), (std::min)(buf.size() - 1, seed.size()));
+        const auto pending = s_rowDraftPending.find(fieldId);
+        const std::string& text = pending != s_rowDraftPending.end() ? pending->second : seed;
+        buf.resize((std::max)(minSize, text.size() + 64), '\0');
+        std::memcpy(buf.data(), text.data(), (std::min)(buf.size() - 1, text.size()));
+        if (pending != s_rowDraftPending.end()) {
+            d.newIssueDraft.FieldValues[fieldId] = text;
+            s_rowDraftPending.erase(pending);
+        }
         // Previously description newlines were stripped to work around the single-line InputText.
         // The description field now uses InputTextMultiline so newlines are preserved.
     }
@@ -214,9 +441,13 @@ void PollNewIssueCreateResult(UiDrawSession& d) {
         d.newIssueCreateFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
         IssueCreateResult r = d.newIssueCreateFuture.get();
         d.newIssueCreateInFlight = false;
+        // Created or queued, also when a view change closed the row meanwhile: the kept entry must not come
+        // back on the next "+ New Issue", or the issue would be filed twice.
+        SettleRowDraftCreate(r, d.newIssueDiscardAsyncCreateResult);
         if (d.newIssueDiscardAsyncCreateResult) {
             d.newIssueDiscardAsyncCreateResult = false;
         } else if (r.Ok) {
+            ResetRowDraftKeep();
             d.newIssueMissingFieldIds.clear();
             d.newIssueDraftActive = false;
             d.newIssueDraft = IssueDraft{};
@@ -552,6 +783,7 @@ void DrawDraftTextFieldInput(AppController& app, UiDrawSession& d, const std::st
             d.newIssueQueueFallbackVisible = false;
             d.newIssueQueueFallbackError.clear();
             d.newIssueDraft.FieldValues[fieldId] = std::string(buf.data());
+            s_rowDraftDirty = true;
         }
         if (ImGui::IsItemActive()) {
             s_draftTextActiveId = ImGui::GetItemID();
@@ -574,6 +806,9 @@ void DrawDraftTextFieldInput(AppController& app, UiDrawSession& d, const std::st
     }
     const ImGuiInputTextFlags textFlags = isSummary ? ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_None;
     const bool submitted = ImGui::InputText("##input", buf.data(), buf.size(), textFlags);
+    if (ImGui::IsItemEdited()) {
+        s_rowDraftDirty = true;
+    }
     if (ImGui::IsItemActive()) {
         s_draftTextActiveId = ImGui::GetItemID();
     }
@@ -724,6 +959,25 @@ void HandleDraftRowKeys(AppController& app, UiDrawSession& d) {
 
 } // namespace
 
+std::string NewIssueRowDraftScope(const AppController& app) {
+    const std::string key = app.FocusedCacheBackendKey();
+    return key.empty() ? std::string("grid") : "grid|" + key;
+}
+
+bool KeepNewIssueRowDraftOnClose(const UiDrawSession& d) {
+    if (!d.newIssueDraftActive || s_rowDraftKeep != RowDraftKeep::Kept) {
+        return false;
+    }
+    if (d.newIssueCreateInFlight) {
+        s_rowDraftClosedInFlightScope = s_rowDraftScope; // the create's result settles the entry
+        return false;
+    }
+    SyncNewIssueRowDraft(d);
+    return !s_rowDraftSynced.empty();
+}
+
+void ForgetNewIssueRowDraft() { ResetRowDraftKeep(); }
+
 void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vector<TicketGridColumn>& columns,
                             const TrackerConfig& cfg, const CachedTicket* lastVisibleTicket) {
     const std::shared_ptr<const std::vector<TrackerField>> catalogSnapshot = app.GetAvailableFields();
@@ -736,9 +990,12 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
     ImGui::TableNextRow(0, kNewIssueRowH);
 
     if (!d.newIssueDraftActive) {
+        ResetRowDraftKeep();
         DrawNewIssueInactiveCell(app, d, cfg, lastVisibleTicket);
         return;
     }
+    // Before the project check below, so a kept entry's own project gets its catalog fetched.
+    DecideNewIssueRowDraftKeep(app, d);
 
     // If the user changed the draft's project mid-session, kick a per-project catalog refresh
     // on a worker thread so the returned create-meta becomes per-project required-fields for the next
@@ -775,6 +1032,7 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
         // Pending scroll is handled after ID column EndGroup; if no Id column, clear stale flag.
         d.newIssueScrollDraftRowIntoViewPending = false;
     }
+    SyncNewIssueRowDraft(d);
     // No Id column drew the popup this frame: drop the request rather than open it later.
     s_openDiscardConfirmPending = false;
 }

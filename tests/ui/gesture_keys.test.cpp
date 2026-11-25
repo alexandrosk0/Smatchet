@@ -65,6 +65,9 @@ extern "C" void SmatchetUiTestDrawAnnotatePathRemaps();
 extern "C" void SmatchetUiTestAnnotateRemapsBegin();
 extern "C" void SmatchetUiTestAnnotateRemapsEnd();
 extern "C" int SmatchetUiTestAnnotateRemapCount();
+extern "C" const char* SmatchetUiTestAnnotateRemapFrom(int i);
+extern "C" const char* SmatchetUiTestAnnotateRemapTo(int i);
+extern "C" const char* SmatchetUiTestAnnotateRemapPreview();
 
 namespace {
 
@@ -596,11 +599,14 @@ void RegisterPathRemapKeys(ImGuiTestEngine* engine) {
         IM_CHECK_EQ(SmatchetUiTestAnnotateRemapCount(), 1);
         // The caret is already in the new row's "from": typing needs no click.
         IM_CHECK_EQ(GImGui->ActiveId, ctx->ItemInfo("$$0/from").ID);
-        ctx->KeyChars("C:/src");
+        ctx->KeyChars(" C:/src ");
         ctx->KeyPress(ImGuiKey_Tab); // to the "to" field
-        ctx->KeyChars("D:/dst");
+        ctx->KeyChars("D:/dst ");
         ctx->KeyPress(ImGuiKey_Enter);
         ctx->Yield(3);
+        // Edge spaces are trimmed on commit (#131), so the stored rule is the one that applies.
+        IM_CHECK_STR_EQ(SmatchetUiTestAnnotateRemapFrom(0), "C:/src");
+        IM_CHECK_STR_EQ(SmatchetUiTestAnnotateRemapTo(0), "D:/dst");
 
         // Enter in the last row's filled "to" added the next rule and put the caret in its "from".
         IM_CHECK_EQ(SmatchetUiTestAnnotateRemapCount(), 2);
@@ -611,6 +617,18 @@ void RegisterPathRemapKeys(ImGuiTestEngine* engine) {
         ctx->KeyPress(ImGuiKey_Enter);
         ctx->Yield(3);
         IM_CHECK_EQ(SmatchetUiTestAnnotateRemapCount(), 2);
+
+        // Preview: a sample path shows what the rules make of it, and a path no rule changes says so.
+        IM_CHECK_STR_EQ(SmatchetUiTestAnnotateRemapPreview(), "");
+        ctx->ItemInputValue("Preview", "c:\\src\\game\\a.cpp");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(SmatchetUiTestAnnotateRemapPreview(), "-> D:/dst\\game\\a.cpp");
+        ctx->ItemInputValue("Preview", "   c:/src/x.cpp "); // indented, as pasted from a log
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(SmatchetUiTestAnnotateRemapPreview(), "-> D:/dst/x.cpp");
+        ctx->ItemInputValue("Preview", "E:/other/a.cpp");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(SmatchetUiTestAnnotateRemapPreview(), "No rule changes this path.");
 
         ctx->Yield(2);
     };

@@ -24,6 +24,7 @@
 #include "Ui/SmatchetDialogScope.h"
 #include "Ui/SmatchetImGuiFonts.h"
 #include "Ui/SmatchetInput.h"
+#include "Ui/SmatchetMatchHighlight.h"
 #include "Ui/SmatchetSubmitKeys.h"
 #include "Ui/SubmitKeysPure.h"
 #include "Ui/SmatchetTheme.h"
@@ -768,6 +769,13 @@ void SmatchetToolbarUi::DrawEditorCommandPicker(ToolbarButton& b) {
     const std::string q(cmdSearch_);
     if (!cmdFilterValid_ || q != cmdFilterKey_) {
         cmdFiltered_ = smatchet::toolbar_editor::RankCommandMatches(cmdNames_, cmdHaystacks_, q);
+        cmdRanges_.resize(cmdFiltered_.size());
+        for (std::size_t row = 0; row < cmdFiltered_.size(); ++row) {
+            const std::size_t idx = static_cast<std::size_t>(cmdFiltered_[row]);
+            const std::string& haystack = idx < cmdHaystacks_.size() ? cmdHaystacks_[idx] : cmdNames_[idx];
+            smatchet::toolbar_editor::CommandNameMatchRanges(haystack, cmdNames_[idx].size(), q, cmdScratch_,
+                                                             cmdRanges_[row]);
+        }
         cmdFilterKey_ = q;
         cmdFilterValid_ = true;
     }
@@ -775,9 +783,21 @@ void SmatchetToolbarUi::DrawEditorCommandPicker(ToolbarButton& b) {
     if (cmdFiltered_.empty()) {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("toolbar.editor.no_command_match", "No matching commands."));
     }
-    for (const int idx : cmdFiltered_) {
-        const std::string& n = cmdNames_[static_cast<std::size_t>(idx)];
-        if (ImGui::Selectable(n.c_str(), b.CommandId == n)) {
+    for (std::size_t row = 0; row < cmdFiltered_.size(); ++row) {
+        const std::string& n = cmdNames_[static_cast<std::size_t>(cmdFiltered_[row])];
+        const std::vector<smatchet::textmatch::ByteRange>& marks = cmdRanges_[row];
+        // The row keeps its label (its ID and test refs); with marks, its text is drawn again with them on top.
+        if (!marks.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        }
+        const ImVec2 textPos = ImGui::GetCursorScreenPos(); // where Selectable draws its label
+        const bool picked = ImGui::Selectable(n.c_str(), b.CommandId == n);
+        if (!marks.empty()) {
+            ImGui::PopStyleColor();
+            SmatchetMatchHighlight::DrawText(ImGui::GetWindowDrawList(), textPos, ImGui::GetColorU32(ImGuiCol_Text),
+                                             n.c_str(), n.c_str() + n.size(), marks.data(), marks.size());
+        }
+        if (picked) {
             b.CommandId = n;
         }
     }
@@ -845,6 +865,10 @@ void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
             if (fa && !g.empty()) {
                 ImGui::SameLine();
                 ImGui::TextUnformatted(g.c_str());
+            }
+            if (smatchet::toolbar_editor::IconNameMatchesNoIcon(b.IconName, g)) {
+                ImGui::TextDisabled(
+                    "%s", SmatchetLocalization::T("toolbar.editor.no_such_icon", "No such icon. Pick... lists them."));
             }
 
             // DR23: std::string-backed — no truncation of a long tooltip.

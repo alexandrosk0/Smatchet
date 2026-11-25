@@ -77,6 +77,7 @@ const char* const kGridWindow = "Smatchet - Active Project";
 const char* const kPriorityKey = "field:priority";
 const char* const kSummaryKey = "field:summary";
 const char* const kLabelsKey = "field:labels";
+const char* const kStatusKey = "field:status";
 const char* const kPriorityField = "priority";
 const char* const kLabelsField = "labels";
 constexpr int kFixtureRows = 12;
@@ -1193,6 +1194,224 @@ static void RegisterLabelsEnterNothingTicked(ImGuiTestEngine* engine) {
     };
 }
 
+// BulkFieldEdit/Status_OffersOnlyMovesEveryRowAllows: the status picker lists the moves every selected row can make, as
+// one ticket's status combo does for itself, not every status of the catalog. Three rows script different moves; only
+// "Done" is common to all of them.
+static void RegisterStatusCommonMoves(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "BulkFieldEdit", "Status_OffersOnlyMovesEveryRowAllows");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        Env env;
+        if (!Setup(ctx, &env)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        // Status and summary only: a third column would push the status cell toward the edge the clicks must reach.
+        nlohmann::json fields = nlohmann::json::array();
+        fields.push_back("status");
+        fields.push_back("summary");
+        BULK_REQUIRE(RunCommand(ctx, env.App, "view.update", {{"fields", fields}}).Ok);
+        BULK_REQUIRE(StepUntil(ctx, 300, [] { return IndexOfKey(kStatusKey) >= 0 && IndexOfKey(kSummaryKey) >= 0; }));
+        ctx->Yield(10);
+
+        const std::set<int> rows = FirstRows(3);
+        SelectRows(rows);
+        std::vector<std::string> ids;
+        for (int row : rows) {
+            ids.push_back(IdAtRow(row));
+        }
+        BULK_REQUIRE(ids.size() == 3 && !ids[0].empty() && !ids[1].empty() && !ids[2].empty());
+        const auto move = [](const char* id, const char* name) {
+            TrackerFieldOption option;
+            option.Id = id;
+            option.Value = name;
+            return option;
+        };
+        env.Fake->SetSupportsIssueTransitions(true);
+        env.Fake->SetIssueTransitions(ids[0], {move("11", "In Progress"), move("21", "Done"), move("31", "Closed")});
+        env.Fake->SetIssueTransitions(ids[1], {move("11", "In Progress"), move("21", "Done")});
+        env.Fake->SetIssueTransitions(ids[2], {move("21", "Done"), move("31", "Closed")});
+
+        BULK_REQUIRE(OpenBulkPopup(ctx, "Status", 3, *rows.begin(), kStatusKey));
+        BULK_REQUIRE(StepUntil(ctx, 300, [&] { return env.Fake->FetchIssueTransitionsCalls() >= 3; })); // one per row
+        // Until every row's answer is live: the picker refreshes every few frames, and a catalog list would match too.
+        BULK_REQUIRE(StepUntil(ctx, 300, [] {
+            const BulkEditPopupRequest::StatusPickCache& c = g_ui.bulkEditPopupRequest.StatusCache;
+            return c.Applicable && c.From == smatchet::statuscombo::StatusOptionsSource::Live;
+        }));
+        const std::uint64_t jobId = g_ui.nextBulkJobId;
+        const std::size_t callsBefore = env.Fake->UpdateIssueFieldsCallCount();
+
+        // "Closed" is a move of two rows only: no match in the list, so Enter picks nothing and the picker stays open.
+        ctx->KeyChars("Clos");
+        ctx->Yield(3);
+        ctx->KeyPress(ImGuiKey_Enter);
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(g_ui.bulkEditPopupRequest.Active);
+        IM_CHECK_NO_RET(FindJob(jobId) == nullptr);
+        IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore);
+
+        // "Done" is common: the same filter box now finds it, and the pick moves all three rows.
+        ctx->KeyPress(ImGuiKey_Backspace, 4);
+        PickByTyping(ctx, "Done");
+        BULK_REQUIRE(FindJob(jobId) != nullptr);
+        BULK_REQUIRE(WaitJobDone(ctx, jobId));
+        const smatchet::grid::bulk::BulkSummary summary = smatchet::grid::bulk::Summarize(*FindJob(jobId));
+        IM_CHECK_NO_RET(summary.Total == 3);
+        IM_CHECK_NO_RET(summary.Saved == 3);
+        IM_CHECK_NO_RET(summary.Failed == 0);
+        IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore + 3);
+        SelectRows({});
+    };
+}
+
+// BulkFieldEdit/Status_NoCommonMoveOffersNoneOfThem: two rows script moves that share nothing (the rows' own status,
+// Open, aside), so neither "In Progress" nor "Closed" is offered and an Enter on either picks nothing.
+static void RegisterStatusNoCommonMove(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "BulkFieldEdit", "Status_NoCommonMoveOffersNoneOfThem");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        Env env;
+        if (!Setup(ctx, &env)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        nlohmann::json fields = nlohmann::json::array();
+        fields.push_back("status");
+        fields.push_back("summary");
+        BULK_REQUIRE(RunCommand(ctx, env.App, "view.update", {{"fields", fields}}).Ok);
+        BULK_REQUIRE(StepUntil(ctx, 300, [] { return IndexOfKey(kStatusKey) >= 0 && IndexOfKey(kSummaryKey) >= 0; }));
+        ctx->Yield(10);
+
+        const std::set<int> rows = FirstRows(2);
+        SelectRows(rows);
+        std::vector<std::string> ids;
+        for (int row : rows) {
+            ids.push_back(IdAtRow(row));
+        }
+        BULK_REQUIRE(ids.size() == 2 && !ids[0].empty() && !ids[1].empty());
+        const auto move = [](const char* id, const char* name) {
+            TrackerFieldOption option;
+            option.Id = id;
+            option.Value = name;
+            return option;
+        };
+        env.Fake->SetSupportsIssueTransitions(true);
+        env.Fake->SetIssueTransitions(ids[0], {move("11", "In Progress")});
+        env.Fake->SetIssueTransitions(ids[1], {move("31", "Closed")});
+
+        BULK_REQUIRE(OpenBulkPopup(ctx, "Status", 2, *rows.begin(), kStatusKey));
+        BULK_REQUIRE(StepUntil(ctx, 300, [&] { return env.Fake->FetchIssueTransitionsCalls() >= 2; }));
+        // Until every row's answer is live: the picker refreshes every few frames, and a catalog list would match too.
+        BULK_REQUIRE(StepUntil(ctx, 300, [] {
+            const BulkEditPopupRequest::StatusPickCache& c = g_ui.bulkEditPopupRequest.StatusCache;
+            return c.Applicable && c.From == smatchet::statuscombo::StatusOptionsSource::Live;
+        }));
+        const std::uint64_t jobId = g_ui.nextBulkJobId;
+        const std::size_t callsBefore = env.Fake->UpdateIssueFieldsCallCount();
+        for (const char* typed : {"Prog", "Clos"}) {
+            ctx->KeyChars(typed);
+            ctx->Yield(3);
+            ctx->KeyPress(ImGuiKey_Enter);
+            ctx->Yield(3);
+            IM_CHECK_NO_RET(g_ui.bulkEditPopupRequest.Active);
+            IM_CHECK_NO_RET(FindJob(jobId) == nullptr);
+            ctx->KeyPress(ImGuiKey_Backspace, static_cast<int>(std::string(typed).size()));
+        }
+        IM_CHECK_NO_RET(env.Fake->UpdateIssueFieldsCallCount() == callsBefore);
+        g_ui.bulkEditPopupRequest.Active = false;
+        SelectRows({});
+    };
+}
+
+// BulkFieldEdit/Status_OfflineOffersWhatIsRemembered: with the tracker unreachable no transitions are asked for, and
+// the picker still lists options (the remembered workflow or the catalog, never an empty list) with a cue that says
+// the list is not live, so the rows can still be queued.
+static void RegisterStatusOfflineCatalog(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "BulkFieldEdit", "Status_OfflineOffersWhatIsRemembered");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        Env env;
+        if (!Setup(ctx, &env)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        nlohmann::json fields = nlohmann::json::array();
+        fields.push_back("status");
+        fields.push_back("summary");
+        BULK_REQUIRE(RunCommand(ctx, env.App, "view.update", {{"fields", fields}}).Ok);
+        BULK_REQUIRE(StepUntil(ctx, 300, [] { return IndexOfKey(kStatusKey) >= 0 && IndexOfKey(kSummaryKey) >= 0; }));
+        ctx->Yield(10);
+
+        const std::set<int> rows = FirstRows(3);
+        SelectRows(rows);
+        env.Fake->SetSupportsIssueTransitions(true);
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *env.App, TrackerConnectivityState::TransportDown));
+        const std::size_t fetchesBefore = env.Fake->FetchIssueTransitionsCalls();
+
+        BULK_REQUIRE(OpenBulkPopup(ctx, "Status", 3, *rows.begin(), kStatusKey));
+        ctx->Yield(15);                                                           // past the picker's refresh interval
+        IM_CHECK_NO_RET(env.Fake->FetchIssueTransitionsCalls() == fetchesBefore); // offline: nothing is asked for
+        const BulkEditPopupRequest::StatusPickCache& cache = g_ui.bulkEditPopupRequest.StatusCache;
+        IM_CHECK_NO_RET(g_ui.bulkEditPopupRequest.StatusQueries.size() == 3);
+        IM_CHECK_NO_RET(cache.Valid && cache.Applicable);
+        IM_CHECK_NO_RET(!cache.Options.empty()); // the rows' current status is always offered
+        IM_CHECK_NO_RET(cache.From != smatchet::statuscombo::StatusOptionsSource::Live);
+        IM_CHECK_NO_RET(cache.Freshness != smatchet::offline::DataFreshness::Fresh);
+        g_ui.bulkEditPopupRequest.Active = false;
+        SelectRows({});
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *env.App, TrackerConnectivityState::AuthenticatedReachable));
+    };
+}
+
+// BulkFieldEdit/Status_LargeSelectionFetchesOncePerGroup: above a handful of rows the picker asks the tracker about
+// one row per (project, issue type, status) group, not one per row; the fixture's twelve rows hold two groups (eleven
+// Tasks and one Bug, all Open).
+static void RegisterStatusFetchesPerGroup(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "BulkFieldEdit", "Status_LargeSelectionFetchesOncePerGroup");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        Env env;
+        if (!Setup(ctx, &env)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        nlohmann::json fields = nlohmann::json::array();
+        fields.push_back("status");
+        fields.push_back("summary");
+        BULK_REQUIRE(RunCommand(ctx, env.App, "view.update", {{"fields", fields}}).Ok);
+        BULK_REQUIRE(StepUntil(ctx, 300, [] { return IndexOfKey(kStatusKey) >= 0 && IndexOfKey(kSummaryKey) >= 0; }));
+        ctx->Yield(10);
+
+        const std::set<int> rows = FirstRows(12);
+        SelectRows(rows);
+        BULK_REQUIRE(rows.size() == 12);
+        TrackerFieldOption done;
+        done.Id = "21";
+        done.Value = "Done";
+        env.Fake->SetSupportsIssueTransitions(true);
+        for (int row : rows) {
+            env.Fake->SetIssueTransitions(IdAtRow(row), {done});
+        }
+        const std::size_t fetchesBefore = env.Fake->FetchIssueTransitionsCalls();
+
+        BULK_REQUIRE(OpenBulkPopup(ctx, "Status", 12, *rows.begin(), kStatusKey));
+        BULK_REQUIRE(StepUntil(ctx, 300, [] {
+            const BulkEditPopupRequest::StatusPickCache& c = g_ui.bulkEditPopupRequest.StatusCache;
+            return c.Applicable && !c.Options.empty();
+        }));
+        ctx->Yield(40); // several refresh passes: nothing more may be asked for
+        const std::size_t fetches = env.Fake->FetchIssueTransitionsCalls() - fetchesBefore;
+        IM_CHECK_NO_RET(fetches >= 1);
+        IM_CHECK_NO_RET(fetches <= 2); // the Task group and the Bug group, never one per row
+        g_ui.bulkEditPopupRequest.Active = false;
+        SelectRows({});
+    };
+}
+
 extern "C" void SmatchetRegisterBulkFieldEditTests(ImGuiTestEngine* engine) {
     RegisterCommandPath(engine);
     RegisterGridSearchFocusKeepsModal(engine);
@@ -1205,6 +1424,10 @@ extern "C" void SmatchetRegisterBulkFieldEditTests(ImGuiTestEngine* engine) {
     RegisterLabelsRemoveMode(engine);
     RegisterLabelsEnterKeepsModal(engine);
     RegisterLabelsEnterNothingTicked(engine);
+    RegisterStatusCommonMoves(engine);
+    RegisterStatusNoCommonMove(engine);
+    RegisterStatusOfflineCatalog(engine);
+    RegisterStatusFetchesPerGroup(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

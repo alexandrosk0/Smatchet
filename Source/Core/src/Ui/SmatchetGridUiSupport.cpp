@@ -664,15 +664,19 @@ void CancelUnfinishedNewIssueForGridChange(UiDrawSession& d) {
         return;
     }
     // The grid path has no confirmation seam (the view/query is already switching), so a
-    // draft with real content at least announces its own destruction instead of vanishing
-    // silently (P2-H4).
+    // draft with real content says where it went instead of vanishing silently (P2-H4). A row
+    // opened with "+ New Issue" keeps its typed text in the draft store (audit #51).
+    const bool kept = KeepNewIssueRowDraftOnClose(d);
     if (d.newIssueDraftActive && NewIssueDraftHasUserContent(d)) {
         SmatchetToastManager::Instance().Push(
             SmatchetLocalization::T("toast.new_issue", "New issue"),
-            SmatchetLocalization::T("draft.discarded_on_view_change",
-                                    "The in-progress new-issue draft was discarded by the view change."),
-            ToastType::Warning);
+            kept ? SmatchetLocalization::T("draft.kept_on_view_change",
+                                           "The view change closed your new-issue draft. + New Issue brings it back.")
+                 : SmatchetLocalization::T("draft.discarded_on_view_change",
+                                           "The in-progress new-issue draft was discarded by the view change."),
+            kept ? ToastType::Info : ToastType::Warning);
     }
+    ForgetNewIssueRowDraft();
     d.newIssueDraftActive = false;
     d.newIssueScrollDraftRowIntoViewPending = false;
     d.newIssueFocusSummaryPending = false;
