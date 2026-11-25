@@ -3,6 +3,7 @@
 // The Offline Queue panel's "Other queued changes" table (Quality Pillar 6): queued and failed comments,
 // worklogs and watches, read from the IAppPendingActions snapshot, never SQLite. UI thread only.
 
+#include <cstdint>
 #include <string>
 
 class IAppPendingActions;
@@ -32,3 +33,6 @@ void ResetHeldRowsDrawnForTests();
 bool SmatchetOfflineConflictDraftRestoredForTest();
 /// Forgets every kept resolution, so one test case does not open on what another one typed.
 void SmatchetOfflineConflictDraftsClearForTest();
+/// Conflict rows held by "Discard my edit" while its Undo toast is live (#116), and whether `id` is one.
+int SmatchetOfflineConflictDiscardHeldCountForTest();
+bool SmatchetOfflineConflictDiscardHeldForTest(std::int64_t id);

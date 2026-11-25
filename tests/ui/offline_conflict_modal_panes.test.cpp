@@ -44,6 +44,7 @@
 #include "Ui/SmatchetInlineError.h"           // InlineErrorKindForTests — the parser's reason is on screen
 #include "Ui/SmatchetOfflineQueueActionsUi.h" // SmatchetOfflineConflictDraft*ForTest
 #include "Ui/SmatchetSubmitKeys.h"            // KeyHintDrawnForTest
+#include "Ui/SmatchetToast.h"                 // the "Edit discarded" Undo toast (#116)
 #include "UiTestWriteScope.h" // BucketE::UiTestWriteScope — disable fresh-install read-only so the write lands
 
 #include "imgui.h"
@@ -675,6 +676,80 @@ void CasePickKeysResolveToEachSide(ImGuiTestContext* ctx, const KeyboardCase& c)
     }
 }
 
+// Opens the resolver on the case's conflict row as the `unverified` kind and clicks "Discard my edit".
+// Returns true once the resolver closed.
+bool DiscardFromUnverifiedPane(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    const bool opened = OpenConflictModal(ctx, "{\"kind\":\"unverified\",\"mine\":\"mine-original\"}", c.EditId);
+    IM_CHECK_NO_RET(opened);
+    if (!opened) {
+        return false;
+    }
+    ctx->SetRef(kModalTitle);
+    ctx->ItemClick("Discard my edit");
+    const bool closed = YieldUntil(ctx, [] { return !WindowIsLive(kModalTitle); }, 30);
+    IM_CHECK_NO_RET(closed);
+    return closed;
+}
+
+// "Discard my edit" is undoable (INPUT_UX_AUDIT.md #116): the row is held, hidden from the panel and still
+// queued while the toast is live. Undo brings it back; a toast that settles (DismissAllLive commits) deletes
+// it. The fixture tracker is held down, though a conflict row is never replayed anyway.
+void CaseDiscardMyEditUndo(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    smatchet_tests::ScopedFakeNetworkReset networkReset;
+    smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+    SmatchetToastManager& toasts = SmatchetToastManager::Instance();
+    toasts.DismissAllLive();
+    const char* rowRef = MarkConflictAndFindRow(ctx, c);
+    if (rowRef == nullptr) {
+        return;
+    }
+    // Pinned by ID: the wildcard ref would also match another conflict row in the panel.
+    const ImGuiID rowId = ctx->ItemInfo(rowRef).ID;
+    IM_CHECK_NO_RET(rowId != 0);
+    const std::string title = "Edit discarded";
+    const std::string body = "Undo puts it back in the offline queue.";
+
+    // Discard, then Undo: the row was held and hidden but never left the queue, and it comes back.
+    if (!DiscardFromUnverifiedPane(ctx, c)) {
+        return;
+    }
+    IM_CHECK_NO_RET(SmatchetOfflineConflictDiscardHeldForTest(c.EditId));
+    IM_CHECK_NO_RET(toasts.LiveUndoableCount() == 1);
+    IM_CHECK_NO_RET(toasts.HasLive(title, body));
+    IM_CHECK_NO_RET(!QueuedPayload(c).empty());
+    ctx->SetRef(kHostTitle);
+    const bool hidden = YieldUntil(ctx, [&] { return !ctx->ItemExists(rowId); }, 30);
+    IM_CHECK_NO_RET(hidden);
+    IM_CHECK_NO_RET(toasts.UndoNewest());
+    IM_CHECK_NO_RET(!SmatchetOfflineConflictDiscardHeldForTest(c.EditId));
+    IM_CHECK_NO_RET(toasts.LiveUndoableCount() == 0);
+    const bool back = YieldUntil(ctx, [&] { return ctx->ItemExists(rowId); }, 30);
+    IM_CHECK_NO_RET(back);
+    IM_CHECK_NO_RET(!QueuedPayload(c).empty());
+
+    // Discard again and let the toast settle: the row is deleted, and it stays hidden until the published
+    // queue snapshot no longer has it (no flash of the deleted row), then the hold is forgotten.
+    if (!DiscardFromUnverifiedPane(ctx, c)) {
+        return;
+    }
+    IM_CHECK_NO_RET(SmatchetOfflineConflictDiscardHeldForTest(c.EditId));
+    toasts.DismissAllLive();
+    IM_CHECK_NO_RET(QueuedPayload(c).empty());
+    ctx->SetRef(kHostTitle);
+    bool flashed = false;
+    const bool forgotten = YieldUntil(
+        ctx,
+        [&] {
+            flashed = flashed || ctx->ItemExists(rowId);
+            return !SmatchetOfflineConflictDiscardHeldForTest(c.EditId);
+        },
+        60);
+    IM_CHECK_NO_RET(forgotten);
+    IM_CHECK_NO_RET(!flashed);
+    IM_CHECK_NO_RET(!ctx->ItemExists(rowId));
+    IM_CHECK_NO_RET(SmatchetOfflineConflictDiscardHeldCountForTest() == 0);
+}
+
 void RegisterKeyboardCase(ImGuiTestEngine* engine, const char* name, KeyboardCaseBody body) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineConflictModalPanes", name);
     t->UserData = reinterpret_cast<void*>(body);
@@ -706,6 +781,7 @@ extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* 
     RegisterKeyboardCase(engine, "ConflictRow_EnterOpensResolver", CaseRowEnterOpensResolver);
     RegisterKeyboardCase(engine, "ConflictRow_ClickAndSpaceDoNotOpen", CaseRowClickAndSpaceDoNotOpen);
     RegisterKeyboardCase(engine, "Scalar_AltMAndAltTPickASide", CasePickKeysResolveToEachSide);
+    RegisterKeyboardCase(engine, "Unverified_DiscardMyEditUndo", CaseDiscardMyEditUndo);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

@@ -25,6 +25,81 @@
   - `docs/plans/INDEX.md`
   - `docs/self-improvement/categories/debt/2026-11-22-drafts-undo-deferred.md`
 - **Notes**: #116 conflict Discard my edit undo
+## In-flight locks (5 active)
+
+### `bulk-status-allowed-transitions`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/bulk-status-allowed-transitions`
+- **Started**: 2026-11-24T14:05:57Z
+- **Updated**: 2026-11-24T15:41:43Z
+- **Write set** (11 paths):
+  - `Source/Core/include/StatusComboOptionsPure.h`
+  - `Source/Core/include/TicketFieldEditor.h`
+  - `Source/Core/src/TicketFieldEditor.cpp`
+  - `Source/Core/src/Ui/SmatchetBulkFieldEditPopup.cpp`
+  - `tests/ui/bulk_field_edit.test.cpp`
+  - `tests/Core/StatusComboOptionsPure.test.cpp`
+  - `docs/guides/bulk-edit.md`
+  - `docs/plans/active/bulk-edit-rows.md`
+  - `Source/Core/include/Ui/SmatchetUiSession.h`
+  - `Source/Core/src/SmatchetLocalization.cpp`
+  - `scripts/dev/test-ui-bulk-field-edit.sh`
+
+### `grid-search-focus-keeps-popups`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/grid-search-focus-keeps-popups`
+- **Started**: 2026-11-24T13:25:05Z
+- **Write set** (2 paths):
+  - `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp`
+  - `tests/ui/bulk_field_edit.test.cpp`
+
+### `input-ux-w2-create-drafts`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/input-ux-w2-create-drafts`
+- **Started**: 2026-11-24T12:33:37Z
+- **Updated**: 2026-11-24T14:22:19Z
+- **Write set** (15 paths):
+  - `Source/Core/src/Ui/SmatchetQuickCreateIssueUi.cpp`
+  - `Source/Core/src/Ui/SmatchetNewIssueDraftUi.cpp`
+  - `Source/Core/src/TicketFieldEditor_Worklog.cpp`
+  - `Source/Core/src/TicketFieldEditor_Worklog.h`
+  - `Source/Core/include/Ui/SmatchetWorklogSubmitPure.h`
+  - `tests/Core/SmatchetWorklogSubmitPure.test.cpp`
+  - `tests/ui/data_dependent_windows_smoke.test.cpp`
+  - `docs/plans/active/input-ux-w2-create-drafts.md`
+  - `docs/plans/shipped/input-ux-w2-create-drafts.md`
+  - `docs/plans/INDEX.md`
+  - `docs/self-improvement/categories/debt/2026-11-22-drafts-undo-deferred.md`
+  - `Source/Core/src/Ui/SmatchetGridUiSupport.cpp`
+  - `Source/Core/include/Ui/SmatchetGridUiSupport.h`
+  - `docs/self-improvement/categories/test/2026-11-24-fixture-gated-ui-tests-not-in-ci.md`
+  - `.github/workflows/build-and-test.yml`
+
+### `input-ux-w2-surface-leftovers`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/input-ux-w2-text-field-leftovers`
+- **Originating plan**: [`docs/plans/shipped/input-ux-w2-surface-leftovers.md`](../../../docs/plans/shipped/input-ux-w2-surface-leftovers.md)
+- **Started**: 2026-11-24T20:56:13Z
+- **Updated**: 2026-11-24T21:25:11Z
+- **Write set** (14 paths):
+  - `Source/Core/src/Ui/SmatchetToolbarUi.cpp`
+  - `Source/Core/include/Ui/SmatchetToolbarUi.h`
+  - `Source/Core/src/Ui/SmatchetToolbarUi_detail.h`
+  - `Source/Core/src/Ui/AnnotateAnalysisUi_Preferences.cpp`
+  - `Source/Core/src/Ui/AnnotateAnalysisUi_Internal.h`
+  - `tests/Core/ToolbarEditorPure.test.cpp`
+  - `tests/ui/funcsize_main_ui_smoke.test.cpp`
+  - `tests/ui/gesture_keys.test.cpp`
+  - `docs/plans/active/input-ux-w2-surface-leftovers.md`
+  - `docs/plans/shipped/input-ux-w2-surface-leftovers.md`
+  - `docs/plans/INDEX.md`
+  - `docs/self-improvement/categories/debt/2026-11-16-text-field-migration-blocked-surfaces.md`
+  - `docs/self-improvement/categories/debt/2026-11-19-one-matcher-deferred.md`
+  - `docs/self-improvement/categories/debt/2026-11-24-left-view-history-stale-ci-step-name.md`
 
 ### `input-ux-w3-grid-s2`
 
