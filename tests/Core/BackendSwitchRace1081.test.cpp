@@ -241,3 +241,65 @@ TEST_CASE("issue #1081: PaneSyncKickStillCurrent — stale-generation kick is dr
     CHECK_FALSE(smatchet::PaneSyncKickStillCurrent(false, 7u, 7u));
     CHECK_FALSE(smatchet::PaneSyncKickStillCurrent(false, 0u, 0u));
 }
+
+// --- Pane catalog apply decisions (PaneSyncKickPolicy.h): what AppController::applyPaneCatalogOnMainThread_ does with
+// a catalog a worker fetched for a pane. The fetch latches the backend generation after the pane's first sync swapped
+// its backend in (the kick-time generation was already stale, so every new pane's catalog was dropped); a stale or
+// wrong-site result for a pane with no catalog re-fetches (bounded) instead of leaving the pane without one. The
+// controller wiring is covered against the real headless AppController in AppControllerFieldCatalog.posix.test.cpp.
+
+TEST_CASE("A pane catalog result is current only when neither the backend nor the catalog epoch moved") {
+    CHECK(smatchet::PaneCatalogResultCurrent(8, 8, 3, 3));
+    CHECK_FALSE(smatchet::PaneCatalogResultCurrent(7, 8, 3, 3)); // backend swapped or the pane retired mid-fetch
+    CHECK_FALSE(smatchet::PaneCatalogResultCurrent(8, 8, 3, 4)); // catalog cleared (a tracker switch starts) mid-fetch
+}
+
+TEST_CASE("A current pane catalog fetched for the pane's site applies when the pane has no live catalog") {
+    CHECK(smatchet::DecidePaneCatalogApply(true, true, false, true, true, 0) ==
+          smatchet::PaneCatalogApplyVerdict::Apply);
+    // The budget does not matter for a usable result.
+    CHECK(smatchet::DecidePaneCatalogApply(true, true, false, true, true, smatchet::kMaxPaneCatalogRefetches) ==
+          smatchet::PaneCatalogApplyVerdict::Apply);
+}
+
+TEST_CASE("A pane catalog fetched for another site never applies, even when nothing else moved") {
+    // The pane moved to another site; its latest configuration names the new one: fetch again with it.
+    CHECK(smatchet::DecidePaneCatalogApply(true, true, false, false, true, 0) ==
+          smatchet::PaneCatalogApplyVerdict::DropRefetch);
+    // No configuration for the new site yet (its next sync kick brings one): owed.
+    CHECK(smatchet::DecidePaneCatalogApply(true, true, false, false, false, 0) ==
+          smatchet::PaneCatalogApplyVerdict::DropOwed);
+}
+
+TEST_CASE("A pane catalog never replaces a live catalog that landed while it loaded") {
+    // The focused grid fetch or a RefreshFieldCatalog (project-scoped) filled the pane first: keep it.
+    CHECK(smatchet::DecidePaneCatalogApply(true, true, true, true, true, 0) ==
+          smatchet::PaneCatalogApplyVerdict::DropNotNeeded);
+    CHECK(smatchet::DecidePaneCatalogApply(true, false, true, true, true, 0) ==
+          smatchet::PaneCatalogApplyVerdict::DropNotNeeded);
+}
+
+TEST_CASE("A stale pane catalog for a pane with no catalog is fetched again, within the budget") {
+    for (unsigned attempt = 0; attempt < smatchet::kMaxPaneCatalogRefetches; ++attempt) {
+        CAPTURE(attempt);
+        CHECK(smatchet::DecidePaneCatalogApply(true, false, false, true, true, attempt) ==
+              smatchet::PaneCatalogApplyVerdict::DropRefetch);
+    }
+    // Budget spent: owed, shown as unavailable with Retry, and no unbounded fetch loop.
+    CHECK(smatchet::DecidePaneCatalogApply(true, false, false, true, true, smatchet::kMaxPaneCatalogRefetches) ==
+          smatchet::PaneCatalogApplyVerdict::DropOwed);
+}
+
+TEST_CASE("A stale pane catalog is never fetched again with another site's configuration") {
+    CHECK(smatchet::DecidePaneCatalogApply(true, false, false, false, false, 0) ==
+          smatchet::PaneCatalogApplyVerdict::DropOwed);
+    CHECK(smatchet::DecidePaneCatalogApply(true, false, false, true, false, 0) ==
+          smatchet::PaneCatalogApplyVerdict::DropOwed);
+}
+
+TEST_CASE("A pane catalog for a retired context owes nothing") {
+    CHECK(smatchet::DecidePaneCatalogApply(false, true, false, true, true, 0) ==
+          smatchet::PaneCatalogApplyVerdict::DropNotNeeded);
+    CHECK(smatchet::DecidePaneCatalogApply(false, false, false, true, true, 0) ==
+          smatchet::PaneCatalogApplyVerdict::DropNotNeeded);
+}

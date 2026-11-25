@@ -507,7 +507,7 @@ bool AppendCachedTicketFromJiraSearchIssue(
         // The comment blob is mapped OUTSIDE the selectedFields loop, and deliberately so.
         // BuildFetchFieldListsFromView always puts "comment" on the wire (outFieldsList), but it
         // only lands in outSelectedFields when the ACTIVE VIEW carries it as a column — and
-        // EraseCatalogLegacyCommentField drops `comment` from the picker, so no view can. Keying
+        // AppController::ApplyCatalogCorrections drops `comment` from the picker, so no view can. Keying
         // the mapping off selectedFields therefore fetched the payload on every sync and threw it
         // away, leaving both the Comments-cell hover tooltip AND its numeric count empty.
         // MapJiraPresentField derives fieldValues["comments"] (the count) from this same branch,

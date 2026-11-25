@@ -34,6 +34,9 @@ struct WorklogDialogTestSnapshot {
     bool TimeSpentActive = false;
     std::string TimeSpent;
     std::string Description;
+    std::string TimeRemaining;
+    /// Time remaining was typed (or restored as typed), so the spent time does not derive it.
+    bool TimeRemainingManuallyEdited = false;
     std::string ErrorMsg;
     /// The boxes were filled from an entry kept by an earlier open.
     bool DraftRestored = false;

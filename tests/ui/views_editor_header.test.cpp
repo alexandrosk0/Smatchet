@@ -20,12 +20,14 @@
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "SmatchetUiModeIds.h"
 #include "SmatchetUiSession.h"
+#include "Ui/SmatchetToast.h" // the undo toast of a deleted view
 
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <future>
@@ -608,12 +610,151 @@ void RegisterSidebarSearchAndRename(ImGuiTestEngine* engine) {
     };
 }
 
+// ---- View-delete Undo (INPUT_UX_AUDIT.md #90; docs/plans/input-ux-w2-view-delete-undo.md) -----------
+
+bool HasView(ImGuiTestContext* ctx, AppController* app, const std::string& id) {
+    const std::vector<std::string> ids = ViewIdsInOrder(ctx, app);
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+// Sets the latch the "Delete view?" confirm sets on Delete, and waits for the top-of-frame delete to run.
+bool DeleteThroughLatch(ImGuiTestContext* ctx, AppController* app, const std::string& id, const char* name) {
+    g_ui.viewsPendingDeleteId = id;
+    g_ui.viewsPendingDeleteToastName = name;
+    g_ui.viewsPendingDeleteActive = true;
+    for (int i = 0; i < 60; ++i) {
+        ctx->Yield();
+        if (!g_ui.viewsPendingDeleteActive && !HasView(ctx, app, id)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The toast history is not time-bound, unlike the live toast (1.8 s), so a slow lane cannot miss it.
+bool RestoredToastRaised(const char* name) {
+    for (const ToastHistoryEntry& entry : SmatchetToastManager::Instance().History()) {
+        if (entry.Title == "View restored" && entry.Message == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool WaitForView(ImGuiTestContext* ctx, AppController* app, const std::string& id) {
+    for (int i = 0; i < 60; ++i) {
+        if (HasView(ctx, app, id)) {
+            return true;
+        }
+        ctx->Yield();
+    }
+    return false;
+}
+
+// The "View deleted" toast's Undo puts the view back under its id. Deleting the active view and undoing it
+// makes it active again; undoing the delete of another view brings it back without switching away from the
+// view the user is on.
+void CheckViewDeleteUndo(ImGuiTestContext* ctx, AppController* app) {
+    const char* const kNameA = "zz undo delete view A";
+    const char* const kNameB = "zz undo delete view B";
+    const char* const kJqlB = "project = ZZUNDO ORDER BY key";
+    std::vector<std::string> created;
+    for (const char* name : {kNameA, kNameB}) {
+        nlohmann::json args;
+        args["name"] = name;
+        if (std::strcmp(name, kNameB) == 0) {
+            args["jql"] = kJqlB; // the restored active view's query reaches the grid config
+        }
+        const smatchet::cmd::CommandResult r = RunCommand(ctx, app, "view.create", args);
+        IM_CHECK_NO_RET(r.Ok);
+        if (r.Ok && r.Data) {
+            created.push_back(r.Data->value("id", std::string()));
+        }
+    }
+    IM_CHECK_NO_RET(created.size() == 2);
+    if (created.size() == 2) {
+        ctx->Yield(3); // the deferred create lands
+        const std::string idA = created[0];
+        const std::string idB = created[1];
+        SmatchetToastManager& toasts = SmatchetToastManager::Instance();
+        toasts.DismissAllLive();
+        toasts.ClearHistory(); // RestoredToastRaised reads the history
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(CurrentViewId(ctx, app) == idB); // the last one created is active
+
+        // The active view: deleted, then back and active again.
+        IM_CHECK_NO_RET(DeleteThroughLatch(ctx, app, idB, kNameB));
+        IM_CHECK_NO_RET(CurrentViewId(ctx, app) != idB);
+        IM_CHECK_NO_RET(toasts.LiveUndoableCount() == 1);
+        IM_CHECK_NO_RET(toasts.HasLive("View deleted", kNameB));
+        IM_CHECK_NO_RET(toasts.UndoNewest());
+        const bool backB = WaitForView(ctx, app, idB);
+        if (!backB) {
+            ctx->LogError("Undo did not bring the deleted active view '%s' back", idB.c_str());
+        }
+        IM_CHECK_NO_RET(backB);
+        IM_CHECK_NO_RET(WaitForCurrentView(ctx, app, idB));
+        IM_CHECK_NO_RET(toasts.LiveUndoableCount() == 0);
+        IM_CHECK_NO_RET(RestoredToastRaised(kNameB));
+        // The editor and the grid query follow the restored view, as they followed its neighbour at delete.
+        IM_CHECK_NO_RET(g_ui.viewDraft.Id == idB);
+        IM_CHECK_NO_RET(g_ui.cfg.JqlQuery == kJqlB);
+
+        // Another view: back, and the active view stays B.
+        IM_CHECK_NO_RET(DeleteThroughLatch(ctx, app, idA, kNameA));
+        IM_CHECK_NO_RET(CurrentViewId(ctx, app) == idB);
+        IM_CHECK_NO_RET(toasts.UndoNewest());
+        const bool backA = WaitForView(ctx, app, idA);
+        if (!backA) {
+            ctx->LogError("Undo did not bring the deleted view '%s' back", idA.c_str());
+        }
+        IM_CHECK_NO_RET(backA);
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(CurrentViewId(ctx, app) == idB);
+        toasts.DismissAllLive();
+        ctx->Yield(2);
+    }
+    for (const std::string& id : created) {
+        nlohmann::json del;
+        del["id"] = id;
+        RunCommand(ctx, app, "view.delete", del);
+    }
+}
+
+void RegisterViewDeleteUndo(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "ViewsEditorHeader", "DeleteUndo_BringsViewBackKeepsCurrentView");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        ViewsDashboardStateGuard guard;
+        g_ui.cfg.UiMode = UiMode::Desktop;
+        CheckViewDeleteUndo(ctx, app);
+        // A failed check can leave the undoable "View deleted" toast live; a later test's Ctrl+Z must not undo it.
+        SmatchetToastManager::Instance().DismissAllLive();
+        g_ui.viewsPendingDeleteActive = false;
+        g_ui.viewsPendingDeleteId.clear();
+        g_ui.viewsPendingDeleteToastName.clear();
+        g_ui.viewsPendingRestore = false;
+        g_ui.viewsPendingRestorePayload = ViewDefinition();
+        g_ui.viewsPendingRestoreWasActive = false;
+        g_ui.viewsPendingRestoreBackendKey.clear();
+        g_ui.viewsPendingRestorePaneIds.clear();
+        g_ui.viewsPendingRestoreFallbackId.clear();
+        g_ui.viewsPendingRestoreFocusedPaneId.clear();
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterViewsEditorHeaderTests(ImGuiTestEngine* engine) {
     RegisterActionButtonOrder(engine);
     RegisterViewSwitchKeys(engine);
     RegisterSidebarSearchAndRename(engine);
+    RegisterViewDeleteUndo(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

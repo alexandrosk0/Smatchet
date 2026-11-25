@@ -520,6 +520,34 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
                                    false, ticket.id, false);
 }
 
+// Whether the cell at (shown row, drawn column) opens an editor: an editor column the tracker lets this user write for
+// this issue, in a view that is not read-only. The same test the cell draw makes (`allowEditsForCell`), so a key that
+// starts an edit, or a commit-and-move that skips read-only cells, agrees with what a click would do.
+bool GridCellEditable(ActiveProjectDrawCtx& ctx, int row, int col) {
+    const auto& shown = ctx.pane.filteredIndices;
+    if (ctx.readOnlyMode || row < 0 || col < 0 || static_cast<size_t>(row) >= shown.size() ||
+        static_cast<size_t>(col) >= ctx.columns.size() || shown[static_cast<size_t>(row)] >= ctx.tickets.size()) {
+        return false;
+    }
+    const TicketGridColumn& column = ctx.columns[static_cast<size_t>(col)];
+    switch (column.Plan) {
+    case TicketGridColumn::RenderPlan::TextEditor:
+    case TicketGridColumn::RenderPlan::SingleSelect:
+    case TicketGridColumn::RenderPlan::MultiSelect:
+    case TicketGridColumn::RenderPlan::Cascading:
+    case TicketGridColumn::RenderPlan::Labels:
+    case TicketGridColumn::RenderPlan::DateTimeEditor:
+        break;
+    default:
+        return false;
+    }
+    if (column.ColumnKind == TicketGridColumn::Kind::Id || !column.NeedsAllowEditsCheck) {
+        return false;
+    }
+    const CachedTicket& ticket = ctx.tickets[shown[static_cast<size_t>(row)]];
+    return ctx.app.CanEditFieldForIssue(ticket.id, column.FieldId, ctx.catalogIndex.Find(column.FieldId));
+}
+
 // Makes anchor..extent (shown row, drawn column; inclusive, any order) the pane's cell range, snapshotting the
 // identities of its rows and columns (SpreadsheetState::SetRange). Runs on a gesture, never per cell.
 static void SetPaneCellRange(ActiveProjectDrawCtx& ctx, int anchorRow, int anchorCol, int extentRow, int extentCol) {

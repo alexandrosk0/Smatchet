@@ -1,7 +1,8 @@
 // AppController_PaneContexts.cpp — multi-grid / pane-context cluster extracted from
 // AppController.cpp (behavior-preserving TU split, plan
 // docs/plans/appcontroller-service-extraction.md, Slice 2). Holds the per-pane
-// GridLiveContext lifecycle + live-sync coordination: focused-context tracking,
+// GridLiveContext lifecycle + live-sync coordination (the pane's own field catalog lives in
+// AppController_PaneCatalog.cpp): focused-context tracking,
 // EnsurePaneLiveSyncStarted / SyncPaneWithBackend, TickAllContexts, TickChangeMonitors +
 // the membership/ticket-change diff glue, and the hidden-pane eviction / retirement policy.
 // Method DECLARATIONS stay in AppController.h; only definitions moved here, so linkage and
@@ -12,18 +13,13 @@
 // SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=behavior-preserving TU split of AppController.cpp, a companion TU defining AppController pane-context methods needs the full class definition and adds no new coupling; owner=orchestrator; revisit=when AppController.h is narrowed per ADR-0020 / debt.md)
 #include "AppController.h"
 #include "CacheBackendKeyPure.h"
-#include "CatalogOfflinePolicyPure.h"
-#include "ComponentOptionsPickPure.h" // CatalogIsRowProject: does the loaded catalog already have the view's scope
 // clang-format on
 
 #include "ConfigManager.h"
-#include "FieldCatalogCache.h"
 #include "GridContextDepsAdapter.h"
 #include "GridPaneEvictionPolicy.h"
-#include "ITrackerBackend.h"      // per-pane catalog fetch: backend->FieldCatalog()->FetchFieldCatalog
-#include "ITrackerFieldCatalog.h" // TrackerFieldCatalogResult + FetchFieldCatalog
+#include "ITrackerBackend.h" // change probe: backend->Reader()
 #include "LocalCacheManager.h"
-#include "PaneCatalogScopePure.h"
 #include "PaneSyncKickPolicy.h"
 #include "SalientRosterResolve.h"
 #include "TicketSyncService.h"
@@ -35,7 +31,6 @@
 #include "Sync/WalkOwnedKeysPure.h"
 #include "Tracker/ParentHierarchyPure.h" // ParentKeyOf: the parent-field contract the walk-owned check applies
 #include "Sync/DeltaSyncPure.h"
-#include "Sync/CatalogRestorePure.h"
 #include "Sync/MembershipDiffPure.h"
 #include "Sync/RemoteChangeInvalidationPure.h"
 #include "Sync/RemoteVersionPure.h"
@@ -497,177 +492,12 @@ void AppController::applyPaneSyncKickOnMainThread_(const std::string& paneId, Tr
     // Per-pane catalog population (per-pane-catalog-value-read-routing): SyncPaneWithBackend
     // above just created this pane's OWN backend. A cross-backend pane's context catalog is
     // still empty (the same-backend seed in EnsurePaneContextLive didn't apply), so kick an
-    // off-thread fetch into ITS context now, scoped by the view this kick resolved. The
-    // just-recorded generation is captured so the apply drops if a swap/retirement happens
-    // mid-flight (#1081).
-    kickPaneCatalogFetch_(paneId, cfgCopy, kickOwnView ? kickOwnView->Jql : std::string(), capturedGeneration);
-}
-
-void AppController::kickPaneCatalogFetch_(const std::string& paneId, const TrackerConfig& cfg,
-                                          const std::string& ownViewQuery, std::uint64_t capturedGeneration) {
-    // UI thread. The catalog is scoped to the single project the pane's OWN resolved view names, read with
-    // the pane's own backend parser, as the focused catalog's ResolveViewProjectKeyForCatalog does: Jira only
-    // runs createmeta (components, versions, project custom-field options) for a scoped fetch. Empty
-    // (unscoped) is the documented fallback for a view naming zero or several projects, or a kick that
-    // resolved no view (its config then carries the focused view's query, which is another pane's scope).
-    const std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
-    if (it == gridContexts_.end()) {
-        return;
-    }
-    // Read after the sync kick: SyncPaneWithBackend may have just created the backend.
-    const std::shared_ptr<ITrackerBackend> paneBackend = std::atomic_load(&it->second->Backend);
-    const std::string paneProjectKey =
-        smatchet::catalog::PaneCatalogProjectKey(paneBackend ? &paneBackend->Connectivity() : nullptr, ownViewQuery);
-    populatePaneCatalogAfterSync_(paneId, cfg, paneProjectKey, capturedGeneration);
-}
-
-void AppController::KickPaneCatalogFetchForTest(const std::string& paneId, const TrackerConfig& cfg,
-                                                const std::string& ownViewQuery) {
-    const std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
-    if (it != gridContexts_.end()) {
-        kickPaneCatalogFetch_(paneId, cfg, ownViewQuery, it->second->backendGeneration_.load());
-    }
-}
-
-void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, const TrackerConfig& cfgCopy,
-                                                  const std::string& projectKey, std::uint64_t capturedGeneration) {
-    // UI thread. Resolve the (just-synced) context; a fetch is only worthwhile when it lacks a
-    // catalog for the project its view names — a same-backend pane already carrying a seeded
-    // copy of that scope would only duplicate the focused catalog's own fetch traffic.
-    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
-    if (it == gridContexts_.end()) {
-        return;
-    }
-    GridLiveContext& ctx = *it->second;
-    {
-        std::lock_guard<std::mutex> lk(ctx.fieldCatalog.availableFieldsMutex_);
-        // Loaded for this scope already (same-backend seed or a prior fetch): nothing to do. A catalog of another
-        // scope (an unscoped seed, or the pane's previous view's project) does not count for a scoped view: its
-        // components and versions are not this project's. It stays visible while the scoped fetch runs. An
-        // unscoped request keeps whatever loaded catalog the pane has, which is a superset.
-        if (ctx.fieldCatalog.fieldCatalogEverLoaded_ &&
-            (projectKey.empty() ||
-             smatchet::components::CatalogIsRowProject(ctx.fieldCatalog.currentCatalogProjectKey_, projectKey))) {
-            // The loaded catalog answers the current view, so a fetch still in flight for an earlier view (the pane
-            // switched away and back) is superseded too: it must not land over this one.
-            ctx.fieldCatalog.PaneCatalogFetchSeq.fetch_add(1);
-            return;
-        }
-    }
-    // Capture a STRONG handle to the pane's backend (ADR-0012): a live swap must not free it
-    // mid-fetch. atomic_load — the shared_ptr instance read cannot race SetBackend's exchange.
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&ctx.Backend);
-    if (!backend || !backend->FieldCatalog()) {
-        return; // backend not up yet, or a backend without a catalog endpoint (e.g. fixture)
-    }
-    TrackerConfig cfgForFetch = cfgCopy; // value-capture: the worker must not touch UI-thread cfg
-    // This fetch supersedes any still in flight for the pane (its view changed): only the latest one applies.
-    const std::uint64_t fetchSeq = ctx.fieldCatalog.PaneCatalogFetchSeq.fetch_add(1) + 1;
-    LaunchBackgroundTask([this, paneId, backend, cfgForFetch, projectKey, capturedGeneration, fetchSeq]() mutable {
-        /* PILLAR2_WORKER_ONLY */ // est-latency: catalog HTTP fetch off the UI thread
-        auto catalogResult = backend->FieldCatalog()->FetchFieldCatalog(cfgForFetch, projectKey);
-        std::string restoredWarning;
-        // The project the catalog that lands describes: the fetch's own, unless the unscoped snapshot stands in.
-        std::string catalogProjectKey = projectKey;
-        TrackerFieldCatalogResult catalog;
-        if (catalogResult) {
-            catalog = std::move(catalogResult.value());
-        } else {
-            // Pillar 6: the pane falls back to the catalog snapshot saved for its tracker (the file read
-            // stays on this worker); the apply marks it as saved, so the next sync still tries the live
-            // fetch. Without a snapshot the pane keeps the focused-catalog fallback and the next
-            // focus/refresh retries. Logged, not swallowed (policy).
-            LOG_WARN("AppController::populatePaneCatalogAfterSync_ fetch failed pane='%s' project='%s' err=%s",
-                     paneId.c_str(), projectKey.c_str(), catalogResult.error().Detail.c_str());
-            // The snapshot keyed by the SAME project the fetch was for comes first; the unscoped one only stands
-            // in when the project has none saved yet, and then restores as no project's catalog, so its
-            // components never pass for this project's list.
-            const std::vector<std::string> candidateKeys = smatchet::sync::CatalogSnapshotCandidates(
-                projectKey, FieldCatalogCache::BuildFieldCatalogCacheKey(cfgForFetch, projectKey),
-                FieldCatalogCache::BuildFieldCatalogCacheKey(cfgForFetch, std::string()));
-            std::string snapErr;
-            std::size_t loadedIndex = 0;
-            if (!FieldCatalogCache::TryLoadFirstFieldCatalogSnapshot(candidateKeys, catalog.Fields, catalog.Components,
-                                                                     catalog.IssueTypeMeta, snapErr, loadedIndex)) {
-                LOG_INFO("AppController::populatePaneCatalogAfterSync_ pane='%s' has no saved catalog: %s",
-                         paneId.c_str(), snapErr.c_str());
-                return;
-            }
-            catalogProjectKey = smatchet::sync::RestoredSnapshotScope(projectKey, loadedIndex, candidateKeys.size());
-            restoredWarning = std::string("Offline: restored the field catalog from local snapshot.") +
-                              smatchet::catalogoffline::kLastFetchFailedMarker + catalogResult.error().Detail;
-        }
-        // The corrections the focused catalog gets (read-only timetracking, History / Comments columns): without
-        // them a pane catalog that replaces a seeded copy would make non-editable fields editable.
-        ApplyCatalogCorrections(catalog.Fields, backend->Connectivity().GetTrackerType());
-        mainThreadDispatcher.PostToMainThread(
-            [this, paneId, capturedGeneration, fetchSeq, fields = std::move(catalog.Fields),
-             components = std::move(catalog.Components), issueTypeMeta = std::move(catalog.IssueTypeMeta),
-             catalogProjectKey = std::move(catalogProjectKey), restoredWarning = std::move(restoredWarning)]() mutable {
-                applyPaneCatalogOnMainThread_(paneId, capturedGeneration, std::move(fields), std::move(components),
-                                              std::move(issueTypeMeta), catalogProjectKey, restoredWarning, fetchSeq);
-            });
-    });
-}
-
-void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std::uint64_t capturedGeneration,
-                                                  std::vector<TrackerField> fields,
-                                                  std::vector<TrackerComponent> components,
-                                                  std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta,
-                                                  const std::string& catalogProjectKey,
-                                                  const std::string& restoredWarning, std::uint64_t fetchSeq) {
-    // UI thread. Re-validate the CAPTURED context (issue #1457 / #1081 discipline): write ONLY
-    // when the pane's context still exists AND its backend generation is unchanged since the
-    // fetch was kicked. A swap/retirement between kick and apply means this snapshot belongs to
-    // a stale backend — dropping it avoids landing a foreign catalog in the live context (the
-    // exact class the debt cluster's #975 entry warns about: never re-resolve focus at
-    // completion; write through the kick-time context or drop).
-    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
-    if (it == gridContexts_.end()) {
-        return;
-    }
-    GridLiveContext& ctx = *it->second;
-    if (ctx.backendGeneration_.load() != capturedGeneration) {
-        LOG_INFO("AppController::applyPaneCatalogOnMainThread_ pane='%s' catalog apply dropped — backend generation "
-                 "moved mid-fetch (per-pane-catalog-value-read-routing / #1081).",
-                 paneId.c_str());
-        return;
-    }
-    if (ctx.fieldCatalog.PaneCatalogFetchSeq.load() != fetchSeq) {
-        LOG_INFO("AppController::applyPaneCatalogOnMainThread_ pane='%s' catalog for project '%s' dropped — a later "
-                 "fetch for the pane's current view superseded it.",
-                 paneId.c_str(), catalogProjectKey.c_str());
-        return;
-    }
-    const bool restored = !restoredWarning.empty();
-    std::size_t fieldCount = 0;
-    {
-        std::lock_guard<std::mutex> lk(ctx.fieldCatalog.availableFieldsMutex_);
-        if (restored && !ctx.fieldCatalog.AvailableFields->empty()) {
-            return; // a saved catalog never replaces the one the pane already has
-        }
-        fieldCount = fields.size();
-        ctx.fieldCatalog.AvailableFields = std::make_shared<std::vector<TrackerField>>(std::move(fields));
-        ctx.fieldCatalog.AvailableComponents = std::move(components);
-        ctx.fieldCatalog.AvailableIssueTypeMeta = std::move(issueTypeMeta);
-        // Pinned with the catalog it describes: the components editor trusts the catalog's list for a row only
-        // when this names the row's project (GetPaneFieldCatalogProjectKey / ComponentOptionsPickPure.h).
-        ctx.fieldCatalog.currentCatalogProjectKey_ = catalogProjectKey;
-        // A restored snapshot leaves the catalog "not loaded", so the next sync kick retries the live fetch,
-        // while fieldCatalogRestored_ still routes the pane's reads to it.
-        ctx.fieldCatalog.fieldCatalogEverLoaded_ = !restored;
-        ctx.fieldCatalog.fieldCatalogRestored_ = restored;
-        ctx.fieldCatalog.LastTrackerFieldCatalogError.clear();
-        ctx.fieldCatalog.LastTrackerFieldCatalogErrorTransient = false;
-        ctx.fieldCatalog.LastTrackerFieldCatalogWarning = restoredWarning;
-    }
-    // Bump AFTER the write is visible so a read-routing consumer that observes the new revision
-    // also observes the new fields (the read-routing cache keys on this revision — the
-    // same-backend staleness invalidation path).
-    ctx.fieldCatalog.TrackerFieldCatalogRevision.fetch_add(1);
-    LOG_INFO(
-        "AppController::applyPaneCatalogOnMainThread_ pane='%s' populated own catalog (%zu fields, project='%s'%s).",
-        paneId.c_str(), fieldCount, catalogProjectKey.c_str(), restored ? ", from the saved snapshot" : "");
+    // off-thread fetch into ITS context now, scoped by the view this kick resolved. The fetch
+    // latches the backend generation itself, after the sync above: when that sync swaps the
+    // backend in, as a fresh context's first sync does, SetBackend bumps backendGeneration_ on
+    // this thread, so the kick's capturedGeneration is already stale here, and an apply checked
+    // against it was dropped every time (the pane then rendered every cell read-only).
+    kickPaneCatalogFetch_(paneId, cfgCopy, kickOwnView ? kickOwnView->Jql : std::string());
 }
 
 GridLiveContext& AppController::paneContextOrFocused_(const std::string& paneId) {
@@ -716,50 +546,6 @@ std::uint64_t AppController::GetPaneTicketsRevision(const std::string& paneId) c
 std::shared_ptr<const ViewDefinition> AppController::GetPaneResolvedView(const std::string& paneId) const {
     std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
     return (it == gridContexts_.end()) ? nullptr : it->second->resolvedOwnView;
-}
-
-// --- Per-pane field-catalog READ routing (per-pane-catalog-value-read-routing) --------------
-// These resolve THROUGH the pane's OWN GridLiveContext::fieldCatalog, which is populated by:
-//   (a) EnsurePaneContextLive's same-backend one-time seed copy (existing), and
-//   (b) the cross-backend per-pane catalog fetch kicked from applyPaneSyncKickOnMainThread_
-//       (populatePaneCatalogAfterSync_ below), which writes into the CAPTURED context
-//       (never fieldCatalog()) under the #1081 kick-time generation check.
-// A pane with no live/populated context falls back to the focused catalog — identical to
-// today's shared read, so the routing is never a regression, only an upgrade once populated.
-std::uint64_t AppController::GetPaneFieldCatalogRevision(const std::string& paneId) const {
-    std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
-    return (it == gridContexts_.end()) ? 0 : it->second->fieldCatalog.TrackerFieldCatalogRevision.load();
-}
-
-bool AppController::IsPaneFieldCatalogPopulated(const std::string& paneId) const {
-    std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
-    if (it == gridContexts_.end()) {
-        return false;
-    }
-    const GridContextFieldCatalog& cat = it->second->fieldCatalog;
-    std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_); // availableFieldsMutex_ is mutable
-    return cat.fieldCatalogEverLoaded_ || cat.fieldCatalogRestored_;
-}
-
-std::shared_ptr<const std::vector<TrackerField>>
-AppController::GetPaneAvailableFields(const std::string& paneId) const {
-    std::string projectKey;
-    return GetPaneAvailableFields(paneId, projectKey);
-}
-
-std::shared_ptr<const std::vector<TrackerField>>
-AppController::GetPaneAvailableFields(const std::string& paneId, std::string& outProjectKey) const {
-    std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
-    if (it != gridContexts_.end()) {
-        const GridContextFieldCatalog& cat = it->second->fieldCatalog;
-        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_); // availableFieldsMutex_ is mutable
-        if (cat.fieldCatalogEverLoaded_ || cat.fieldCatalogRestored_) {
-            outProjectKey = cat.currentCatalogProjectKey_; // pinned with the snapshot, read in the same hold
-            return cat.AvailableFields; // snapshot under the lock — the fetch worker swaps, never rewrites
-        }
-    }
-    // No populated per-pane catalog: the focused catalog's snapshot (same data the shared read used).
-    return GetAvailableFields(outProjectKey);
 }
 
 void AppController::SyncPaneWithBackend(const std::string& paneId, const TrackerConfig* configOverride,
