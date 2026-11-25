@@ -1,5 +1,7 @@
 #include "SmatchetLocalizedImGui.h"
 
+#include "imgui_internal.h" // ImGuiInputTextState::ReloadUserBufAndMoveToEnd
+
 // Out-of-line definition of the dictation focus-hook, moved off the hot,
 // ~45-includer SmatchetLocalizedImGui.h header (debt 2026-05-18). The three routed
 // InputText wrappers in that header call this once per draw; keeping the body here
@@ -24,4 +26,17 @@ void HookDictationOnLastItem(char* buf, std::size_t buf_size) {
     }
 }
 
-}  // namespace SmatchetLocalizedImGui
+void ApplyPendingDictationReload() {
+    const unsigned int pendingReloadId = g_dictationRouter.ConsumePendingReloadItemId();
+    if (pendingReloadId == 0u) {
+        return;
+    }
+    // Null when that widget has no text state (never active, or another field took the caret since): nothing
+    // then holds a stale copy to write back. MoveToEnd puts the caret after the dictated text, where the
+    // router spliced it.
+    if (ImGuiInputTextState* state = ::ImGui::GetInputTextState(static_cast<ImGuiID>(pendingReloadId))) {
+        state->ReloadUserBufAndMoveToEnd();
+    }
+}
+
+} // namespace SmatchetLocalizedImGui

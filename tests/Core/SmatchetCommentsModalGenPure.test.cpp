@@ -8,6 +8,7 @@ namespace {
 
 using SmatchetCommentsModalGen::AllocGen;
 using SmatchetCommentsModalGen::CallbackIsStale;
+using SmatchetCommentsModalGen::PostedBodyRestoredAsDraft;
 
 // Reproduces the pre-#1713 allocator: a per-open counter reset to 0 then pre-incremented, so
 // every open yields the same token (1) and the guard can never tell dispatches apart.
@@ -89,4 +90,18 @@ TEST_CASE("end-to-end: with distinct gens the stale original-open fetch loses th
     // !CallbackIsStale and clobber fetch B's fresh list.
     const int buggyGen = 1;
     CHECK_FALSE(CallbackIsStale(true, buggyGen, buggyGen, issue, issue));
+}
+
+TEST_CASE("PostedBodyRestoredAsDraft: a later open showing the posted comment as a draft is cleared (#2459)") {
+    const std::string scope = "jira|OFF-1";
+    const std::string body = "the comment";
+    // Reopened while posting: same scope, restored, box holds what was posted.
+    CHECK(PostedBodyRestoredAsDraft(true, true, scope, scope, true, body, body));
+
+    CHECK_FALSE(PostedBodyRestoredAsDraft(false, true, scope, scope, true, body, body)); // failed: the draft stays
+    CHECK_FALSE(PostedBodyRestoredAsDraft(true, false, scope, scope, true, body, body)); // closed
+    CHECK_FALSE(PostedBodyRestoredAsDraft(true, true, "jira|OFF-2", scope, true, body, body));    // another issue
+    CHECK_FALSE(PostedBodyRestoredAsDraft(true, true, "", "", true, body, body));                 // no scope
+    CHECK_FALSE(PostedBodyRestoredAsDraft(true, true, scope, scope, false, body, body));          // typed into since
+    CHECK_FALSE(PostedBodyRestoredAsDraft(true, true, scope, scope, true, body + " more", body)); // edited
 }

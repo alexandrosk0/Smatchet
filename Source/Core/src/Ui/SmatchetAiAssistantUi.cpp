@@ -42,14 +42,10 @@
 
 #include "imgui.h"
 // `imgui_internal.h` must be pulled BEFORE the `#define ImGui SmatchetLocalizedImGui`
-// macro below — same ordering as SmatchetUI_MainMenu.cpp. We need it for
-// `ImGui::GetInputTextState(id)->ReloadUserBufAndMoveToEnd()`, which is the
-// only sanctioned way to force ImGui to re-read an externally-modified `buf`
-// on the next InputText call when the widget is currently active. Without
-// this reload, the Whisper dictation router splices text into `s_inputCharBuf`
-// while the chat input is focused, then `ImGui::InputTextMultiline` below
-// overwrites the splice with the stale internal `state->TextA`. See
-// imgui_widgets.cpp:4821 (init_reload_from_user_buf) for the upstream branch.
+// macro below — same ordering as SmatchetUI_MainMenu.cpp. Needed for the window
+// lookups the panel's focus return uses (ImGuiWindow, FindWindowByID). The
+// dictation reload that also needed it is drained once per frame by
+// SmatchetLocalizedImGui::ApplyPendingDictationReload (#2458).
 #include "imgui_internal.h"
 #include "Ui/SmatchetDialogScope.h"
 #include "SmatchetLocalizedImGui.h"
@@ -1058,38 +1054,6 @@ void SeedInputBufferFromModel(UiDrawSession& d) {
     }
 }
 
-// Drain the dictation router's pending-reload item id and ask ImGui to re-read
-// the externally-spliced char buffer on the next InputText call. Extracted from
-// DrawInputAndButtons; behaviour byte-identical.
-void ProcessPendingDictationReload() {
-    // Splice-reload bridge for Whisper dictation. The router calls
-    // `InsertIntoFocusedInputText` from the MainThreadDispatcher drain at the
-    // top of the frame; when the splice target is the AI Assistant chat input
-    // AND that widget is currently the active ImGui item, ImGui's
-    // `InputTextMultiline` below would silently overwrite the freshly-spliced
-    // `s_inputCharBuf` with its stale internal `state->TextA` (see
-    // imgui_widgets.cpp:4821 — without `WantReloadUserBuf` the active widget
-    // ignores `buf`). The router records the target widget's item id; we
-    // drain it here and ask ImGui to re-read `s_inputCharBuf` on the next
-    // InputText call. `MoveToEnd` matches the post-splice cursor (`*Cursor`
-    // is set to `insertAt + copyLen` by the router) so the caret lands after
-    // the dictated text the user just spoke.
-    const unsigned int pendingReloadId = g_dictationRouter.ConsumePendingReloadItemId();
-    if (pendingReloadId != 0u) {
-        // `ImGui::GetInputTextState` resolves through the
-        // `#define ImGui SmatchetLocalizedImGui` macro + the
-        // `using namespace ::ImGui;` in that namespace, so the underlying
-        // call lands in the real `::ImGui::GetInputTextState`. Returns nullptr
-        // when no input-text widget has been active for `id` (e.g. the panel
-        // was just opened and the AI input has never received focus) — that's
-        // a no-op for us: a never-active widget has no internal state to
-        // overwrite the splice with.
-        if (ImGuiInputTextState* state = ImGui::GetInputTextState(pendingReloadId)) {
-            state->ReloadUserBufAndMoveToEnd();
-        }
-    }
-}
-
 // Measure the context the next turn would send, mapping each block's real body
 // size into the pure consent inputs (security.md 2026-05-17 P2). Builds the same
 // snapshot as BuildSendContext (audit-trail fetch deferred), so the modal shows
@@ -1355,8 +1319,6 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     SeedInputBufferFromModel(d);
 
     const float inputH = ImGui::GetTextLineHeight() * kInputRowsTall;
-
-    ProcessPendingDictationReload();
 
     AiAssistantController* ctrl = app.HasAiAssistantController() ? &app.GetAiAssistantController() : nullptr;
     const smatchet::ai::AiEscAction esc = ReadAssistantEsc(d, ctrl);

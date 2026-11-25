@@ -3,7 +3,7 @@
 
 > **Slug**: `input-ux-w2-dictation-drain` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -26,7 +26,7 @@ Intended outcome:
 
 - **One drain (#2458).**
   - `SmatchetLocalizedImGui::ApplyPendingDictationReload()`, defined next to `HookDictationOnLastItem` in `SmatchetDictationHook.cpp`, takes the pending id and reloads that widget's `ImGuiInputTextState`. `GetInputTextState(id)` returns state only for the widget that owns it, so the drain is right for any field.
-  - `SmatchetUI` calls it once per frame, straight after the in-frame `mainThreadDispatcher.Drain()` (where the Whisper post-back splices) and before any panel draws. Splices posted by the standalone loop's drain before `NewFrame` are covered by the same call.
+  - `SmatchetUI` calls it straight after the in-frame `mainThreadDispatcher.Drain()` (where the Whisper post-back splices), before the panels draw, and once more at the top of `SmatchetUI::Draw`, before the palette, Quick Create and bug-report overlays. The second call covers splices from hosts that also drain the dispatcher before `NewFrame` (the `--spawn` bootstrap, Android).
   - The two panel drains are removed, so there is one site for every field.
   - `WhisperAiAssistantAutosendScenario` consumed the id itself to prove the reload was armed. The central drain now consumes it first, so the router keeps the last consumed id for tests (`TakeLastConsumedReloadItemIdForTest`), and the scenario reads that instead.
 - **Posted draft (#2459).**
@@ -35,7 +35,7 @@ Intended outcome:
     - the modal is open on the same draft scope;
     - the box is still marked `DraftRestored`;
     - the box holds exactly the posted body.
-  - `ApplyCommentPostResult` applies it in its stale branch: it clears the box, `DraftRestored` and `DraftSynced`. Text the user typed since stays, because the box no longer equals the posted body.
+  - `ApplyCommentPostResult` applies it in its stale branch: it clears the box, `DraftRestored` and `DraftSynced`, and reloads the box's ImGui text state (the box id is latched at draw), because the reopened box normally has the caret and ImGui would write its own copy back. Text the user typed since stays, because the box no longer equals the posted body.
 
 ## Interface contracts
 
@@ -70,14 +70,14 @@ N/A: nothing is extracted. Two drain blocks move into one helper of about ten li
 
 ## UX Pillar callouts
 
-- **Pillar 1**: one atomic exchange per frame; the reload runs only on a frame after a splice.
+- **Pillar 1**: two atomic exchanges per frame; the reload runs only on a frame after a splice.
 - **Pillar 2**: no I/O. The fake tracker's hold blocks the post worker only, never the UI thread.
 - **Pillar 3**: `GetInputTextState` returns null for a widget with no state, and the drain does nothing then.
 - **Pillar 6**: N/A. A queued comment takes the same path as a sent one.
 
 ## Perf-review-system gates (mandatory when diff touches `Source/Core/`; else `N/A — <reason>`)
 
-1. **PR-fast CI**: fires. The per-frame cost is one atomic exchange.
+1. **PR-fast CI**: fires. The per-frame cost is two atomic exchanges.
 2. **Pillar 2 static scanner**: N/A, no sync I/O added.
 3. **Dispatcher drain**: touched only by the call placed after it; the drain itself is unchanged.
 4. **Visible-cue bucket-E harness**: N/A, no new stall path.
@@ -85,7 +85,7 @@ N/A: nothing is extracted. Two drain blocks move into one helper of about ten li
 
 ## Risks / non-goals
 
-- **Risk: a splice that lands after the drain in the same frame.** A splice can arrive after the drain from a call on the UI thread outside the dispatcher, such as a scenario tick or a test. It is reloaded on the next frame, before any field draws. A keystroke in that same frame could still see the stale copy. That is the same window the panel drains had.
+- **Risk: a splice that lands after the drain in the same frame.** A splice can arrive after the drain from a call on the UI thread outside the dispatcher, such as a scenario tick or a test. It is reloaded at the top of the next frame, before any field draws. A keystroke in that same frame could still see the stale copy. That is the same window the panel drains had.
 - **Non-goal**: splice at the caret. Insertion still lands at the end, as before.
 
 ## Implementation handoff
@@ -104,7 +104,7 @@ N/A: single slice.
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`; unit `ninja-test-msvc`; UI `ninja-ui-test-msvc`.
 - **Doc validation (blocks plan-doc PRs — keep this bullet)**: `scripts/dev/test-docs.sh`.
 - **Plan stress-test — `grill-with-docs` (keep this bullet)**: the coordinator session fixed the scope (item 6 of the Wave 2 leftovers). The terms follow the Issues and `docs/plans/shipped/input-ux-w2-drafts-undo.md`.
-- **Manual residue**: real-microphone dictation into the worklog description. The bucket-E case drives the router directly, as the existing one does.
+- **Manual residue**: none. The bucket-E cases drive the router directly, as the existing case does; microphone capture is not touched.
 
 ## Open questions
 
@@ -118,13 +118,27 @@ None.
 
 ## Implementation log
 
+- Implemented as planned, single slice, on `claude/input-ux-w2-dictation-drain` off `origin/develop` 1c0d9d6ef.
+- Code review (code-review agent, 1 critical, 1 high, 4 low), all fixed:
+  - Critical: the § Verification "Manual residue" bullet named a manual microphone check with no tracking entry. It now says none: the bucket-E cases drive the router.
+  - High: the #2459 clear was written back by ImGui when the reopened box had the caret, which is the normal case. `CommentsModalState::PostBoxId` latches the box id at draw, and the clear reloads that text state. The bucket-E case now waits for the caret before the release, and checks the box is still empty three frames later.
+  - Low: the overlays drawn before the in-frame drain (palette, Quick Create, bug report) had no reload for a splice from a pre-`NewFrame` drain. `SmatchetUI::Draw` now also calls the drain at its top.
+  - Low: the bucket-E case polled `AddCommentCalls().size()` while the post worker appended to it. `FakeTrackerClient::AddCommentCallCount()` is an atomic count the case polls instead.
+  - Low: comments in `tests/ui/whisper_ai_assistant_autosend.test.cpp` and the autosend scenario pointed at the removed AI Assistant drain or described the order wrongly; repointed.
+
 ## Deviations from plan
+
+- `SmatchetUI` calls the drain twice per frame (top of `Draw`, and after the in-frame dispatcher drain), not once: the code review found routed overlays that draw before the in-frame drain.
+- `tests/ui/whisper_ai_assistant_autosend.test.cpp` (comments only) was not in § Files to modify.
 
 ## Verification (actual)
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index from the repository root: `bash agent-layer/agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*
+- **Build gate**: `ninja-iter-msvc` (`SmatchetStandalone` + `SmatchetCore_DX12`), `ninja-ui-test-msvc` and `ninja-test-msvc` build clean.
+- **Bucket A**: the `DictationInsertionRouter` and `SmatchetCommentsModalGenPure` cases pass (34 cases, 97 assertions in the filtered run).
+- **Bucket E** (`scripts/dev/test-ui-offline-first.sh`): `OfflineFirst` 39/39, 429 checks. Mutants, each rebuilt and run alone:
+  - both `ApplyPendingDictationReload` calls in `SmatchetUI.cpp` removed: `Comments_DictatedTextIsKeptAsDraft` fails;
+  - the #2459 clear removed: `Comments_ReopenWhilePostingClearsPostedDraft` fails;
+  - only the text-state reload in that clear removed: the same case fails.
+- **Bucket E**: `scripts/dev/test-ui-whisper-ai-assistant-autosend.sh`, `WhisperAutosend` 2/2.
+- **Scenario**: `scripts/dev/test-whisper-ai-assistant-autosend.sh` 7/7, run with `SMATCHET_USER_DATA` set to a fresh directory. Against the shared profile its `--spawn` probe failed the MCP token handshake (HTTP 401), and the first attempt, which has no timeout, hung until the child was killed.
+- **Note**: an earlier local run used `test-ui-command-palette-inline-typing.sh` with an `OfflineFirst` filter. That driver does not set the offline-first fixture, so every case returned SKIP and reported as passed. The results above come from the offline-first driver.

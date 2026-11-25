@@ -734,7 +734,9 @@ static void RegisterCommentsDraftSurvivesReplace(ImGuiTestEngine* engine) {
 #if defined(SMATCHET_WITH_WHISPER) // the router is a no-op stub without Whisper
 // OfflineFirst/Comments_DictatedTextIsKeptAsDraft: text dictated into the comment box is kept like typed
 // text. The router writes the buffer without an edit event, so a draft kept only on IsItemEdited would
-// miss it, and a stale draft would come back after the comment was posted.
+// miss it, and a stale draft would come back after the comment was posted. A key typed after the splice
+// keeps the dictated text: the frame's one drain (#2458) has the box re-read its buffer, and the box has
+// no drain of its own, so without it ImGui's own copy of the text would be written back.
 static void RegisterCommentsDictatedTextIsKept(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_DictatedTextIsKeptAsDraft");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -746,9 +748,11 @@ static void RegisterCommentsDictatedTextIsKept(ImGuiTestEngine* engine) {
         ctx->Yield(2);
         g_dictationRouter.InsertIntoFocusedInputText(" and dictated", GImGui->ActiveId);
         ctx->Yield(3);
+        ctx->KeyChars("!");
+        ctx->Yield(2);
 
         const std::string box = GetCommentsModalSnapshotForTests().PostDraft;
-        IM_CHECK_NO_RET(box.find("dictated") != std::string::npos);
+        IM_CHECK_STR_EQ_NO_RET(box.c_str(), "typed and dictated!");
         smatchet::drafts::DraftEntry stored;
         IM_CHECK_NO_RET(smatchet::drafts::Get("comments", CommentsDraftScopeForTest(*app, "OFF-1"), stored));
         IM_CHECK_STR_EQ_NO_RET(stored.Text.c_str(), box.c_str());
@@ -756,6 +760,66 @@ static void RegisterCommentsDictatedTextIsKept(ImGuiTestEngine* engine) {
     };
 }
 #endif
+
+// OfflineFirst/Comments_ReopenWhilePostingClearsPostedDraft (#2459): open another issue and come back
+// while a comment is still posting, and the box restores the stored draft, which is the comment being
+// posted. Once the post goes through, that box is cleared and no longer marked restored, so the same
+// comment is not offered for posting twice.
+static void RegisterCommentsReopenWhilePostingClears(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_ReopenWhilePostingClearsPostedDraft");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        auto* fake = dynamic_cast<smatchet_tests::FakeTrackerClient*>(app->BackendShared().get());
+        IM_CHECK_NO_RET(fake != nullptr);
+        if (!fake) {
+            return;
+        }
+        std::promise<void> release;
+        fake->HoldAddComment(release.get_future().share());
+        struct ReleaseOnExit { // a failed check must not leave the post worker waiting
+            std::promise<void>* p;
+            smatchet_tests::FakeTrackerClient* f;
+            ~ReleaseOnExit() {
+                f->HoldAddComment(std::shared_future<void>());
+                try {
+                    p->set_value();
+                } catch (const std::future_error&) {
+                    // already released by the case
+                }
+            }
+        } releaseOnExit{&release, fake};
+
+        const CachedTicket first = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, first, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        const std::size_t postsBefore = fake->AddCommentCallCount();
+        ctx->KeyChars("posted once");
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Enter);
+        IM_CHECK_NO_RET(YieldUntil(ctx, 60, [&]() { return fake->AddCommentCallCount() == postsBefore + 1; }));
+        IM_CHECK_NO_RET(GetCommentsModalSnapshotForTests().PostInFlight);
+
+        const CachedTicket second = MakeTicketWithHistory("OFF-2", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, second, "comments"));
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, first, "comments"));
+        // The caret is in the box, so ImGui holds its own copy of the text: the clear must reach it too.
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        IM_CHECK_STR_EQ_NO_RET(GetCommentsModalSnapshotForTests().PostDraft.c_str(), "posted once");
+        IM_CHECK_NO_RET(GetCommentsModalSnapshotForTests().DraftRestored);
+
+        fake->HoldAddComment(std::shared_future<void>());
+        release.set_value();
+        IM_CHECK_NO_RET(YieldUntil(ctx, 600, []() { return GetCommentsModalSnapshotForTests().PostDraft.empty(); }));
+        IM_CHECK_NO_RET(!GetCommentsModalSnapshotForTests().DraftRestored);
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(!smatchet::drafts::Get("comments", CommentsDraftScopeForTest(*app, "OFF-1"), stored));
+        ctx->Yield(3); // the box stays empty on the frames after the clear
+        IM_CHECK_STR_EQ_NO_RET(GetCommentsModalSnapshotForTests().PostDraft.c_str(), "");
+        IM_CHECK_NO_RET(fake->AddCommentCallCount() == postsBefore + 1);
+        CloseCommentsViewer(ctx);
+    };
+}
 
 // OfflineFirst/Comments_DiscardErasesTheKeptDraft: Esc asks, and choosing "Discard comment" throws the
 // text away for good: nothing is kept, and the next open starts with an empty box.
@@ -898,6 +962,7 @@ extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
 #if defined(SMATCHET_WITH_WHISPER)
     RegisterCommentsDictatedTextIsKept(engine);
 #endif
+    RegisterCommentsReopenWhilePostingClears(engine);
     RegisterCommentsDiscardErasesDraft(engine);
     RegisterLongTextDraftComesBack(engine);
     RegisterDraftStorePersistsAndReloads(engine);

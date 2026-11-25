@@ -115,6 +115,8 @@ struct CommentsModalState {
     /// The post box text as of the last draft hand-over (or as filled at open / cleared by a post).
     /// Compared with PostBuf each frame so a dictation splice, which raises no edit event, is kept too.
     std::string DraftSynced;
+    /// The post box's ImGui id, as of the last draw: a clear from outside the draw reloads its text state.
+    ImGuiID PostBoxId = 0;
 };
 
 /// The draft store surface of the post box (DraftStore.h).
@@ -539,6 +541,19 @@ void ApplyCommentPostResult(AppController& app, const std::string& issueId, int 
     }
     if (SmatchetCommentsModalGen::CallbackIsStale(s_CommentsState.Active, s_CommentsState.OpenGen, openGen,
                                                   s_CommentsState.IssueId, issueId)) {
+        // A later open of this issue restored the comment being posted as a draft: now that it went
+        // through, clear it, or the box invites posting it twice (#2459).
+        if (SmatchetCommentsModalGen::PostedBodyRestoredAsDraft(
+                result.K != PendingActionSubmitResult::Kind::Failed, s_CommentsState.Active, s_CommentsState.DraftScope,
+                draftScope, s_CommentsState.DraftRestored, s_CommentsState.PostBuf.data(), postedBody)) {
+            s_CommentsState.PostBuf.assign(CommentsModalState::kPostBufferSize, '\0');
+            s_CommentsState.DraftSynced.clear(); // the draft was settled above
+            s_CommentsState.DraftRestored = false;
+            // With the caret in the box ImGui edits its own copy and would write the posted text back.
+            if (ImGuiInputTextState* box = ImGui::GetInputTextState(s_CommentsState.PostBoxId)) {
+                box->ReloadUserBufAndMoveToEnd();
+            }
+        }
         return;
     }
     s_CommentsState.PostInFlight = false;
@@ -624,20 +639,12 @@ bool DrawCommentsPostInput(bool disabled, bool readOnlyMode) {
             ImGui::SetKeyboardFocusHere();
         }
     }
-    // Dictation spliced into the box while it is active: ImGui edits its own copy of the text and would
-    // write that back over the splice, so ask it to re-read the buffer before the box draws. The request
-    // names the widget it is for, so draining it here is right whichever box it names.
-    const unsigned int pendingReloadId = g_dictationRouter.ConsumePendingReloadItemId();
-    if (pendingReloadId != 0u) {
-        if (ImGuiInputTextState* state = ImGui::GetInputTextState(pendingReloadId)) {
-            state->ReloadUserBufAndMoveToEnd();
-        }
-    }
     // The placeholder sits inside the empty box; Ctrl+Enter submits (Ui/SmatchetSubmitKeys.h).
     const bool ctrlEnter = smatchet::ui::SubmitMultilineInput(
         "##CommentsPostBox", st.PostBuf.data(), CommentsModalState::kPostBufferSize, ImVec2(-FLT_MIN, 80.0f),
         SmatchetLocalization::T("comments.post_placeholder", "Write a comment (Markdown supported)..."));
     st.ComposerActive = ImGui::IsItemActive();
+    st.PostBoxId = ImGui::GetItemID();
     if (!st.DraftScope.empty() && st.DraftSynced.compare(st.PostBuf.data()) != 0) {
         // Kept as it changes (an empty box erases the draft), so a close, a replace by another issue or
         // a crash does not lose it. Compared by value, not IsItemEdited: a dictation splice writes the
