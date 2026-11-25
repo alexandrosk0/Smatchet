@@ -342,6 +342,17 @@ struct SpreadsheetState {
      *  comparing the buffer against that live value would read an untouched edit as dirty → spurious
      *  PUT. Captured in CopyToEditBuffer, cleared in ClearEditing. */
     std::string EditInitialValue;
+    /** A cell whose last save the tracker rejected hands its rejected value and message to the editor that opens on it
+     *  (input UX Wave 3, S3). The cell draw points these at the feedback entry for the span of its RenderFieldCell call
+     *  only (null otherwise); the text editor copies the value into EditBuffer on its first frame and keeps the message
+     *  to draw under the field while it is open. */
+    const std::string* CellRejectedValue = nullptr;
+    const std::string* CellRejectedMessage = nullptr;
+    std::string EditRejectedMessage;
+    /** The cell whose editor was reseeded from a rejected value. Kept past the edit's end so the grid can tell an Esc
+     *  (the rejected value is dropped) from a commit (the next save replaces the feedback anyway). */
+    std::string EditRejectedIssueId;
+    std::string EditRejectedFieldId;
     GridRectSelection RectSel;
 
     void SetActiveIssue(const std::string& id) { ActiveIssueId = id; }
@@ -415,6 +426,7 @@ struct SpreadsheetState {
         PendingGridInputTextDeselect = false;
         PendingGridInputTextSelectAll = false;
         EditInitialValue.clear();
+        EditRejectedMessage.clear();
     }
 
     void StartEditing(const std::string& id, int col, const std::string& val) {

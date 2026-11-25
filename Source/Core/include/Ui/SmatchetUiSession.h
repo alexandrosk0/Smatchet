@@ -35,6 +35,7 @@
 #include "Sync/PendingOverlayPure.h" // PendingOverlay (the grid's pending-edit cue)
 #include "Ui/CachedProjectsPure.h"   // RemoveForgottenProjects (a stale read must not resurrect a Forget)
 #include "Ui/BulkFieldEditPure.h"    // BulkFieldEditJob (the bulk field-edit jobs of this session)
+#include "Ui/GridUndoPure.h"         // History (the grid's undoable cell writes)
 #include "SmatchetFocusRequest.h"
 #include "SmatchetWindowExpand.h"
 #if defined(SMATCHET_WITH_AI)
@@ -143,6 +144,12 @@ struct PendingFieldEdit {
     /// edit. The commit result folds back into the job, and the row reports through the job's summary toast
     /// instead of one toast per row. Never persisted: an offline-queue replay reports through the replay path.
     std::uint64_t BulkJobId = 0;
+    /// True for the inverse edit an undo queues: its commit pushes no history entry and no second undo toast, and
+    /// its success toast reads "Undone". Never persisted.
+    bool IsUndo = false;
+    /// The grid undo history entry (UiDrawSession::gridUndo) this edit belongs to; 0 = not recorded. Stamped when the
+    /// entry is pushed so the commit result finds it (an empty display after a clear cannot serve as the marker).
+    std::uint64_t UndoEntryId = 0;
 };
 
 /// The grid's "Set <Field> for N rows" popup (SmatchetBulkFieldEditPopup.cpp): filled by the cell context menu,
@@ -241,6 +248,20 @@ struct CellWriteFeedback {
     CellWriteState State = CellWriteState::Saving;
     std::string Message;
     int FramesRemaining = 0;
+    /// On Error: the value the user typed (the edit's first value), so reopening the cell puts it back in the editor
+    /// with the message under it instead of losing it. Cleared by the next commit or Esc on that cell.
+    std::string RejectedValue;
+};
+
+/// What an undo needs that the pure history does not carry: the pane's target and the tracker field of each change.
+/// Keyed by the history entry id; dropped once the entry leaves the history.
+class AppController;
+
+struct GridUndoContext {
+    PendingActionTarget Target;
+    TrackerField Field;
+    AppController* App =
+        nullptr; ///< the controller that made the edit; the bulk summary toast's Undo needs it (non-owning)
 };
 
 /// Reusable JQL/filter editor state — buffer + autocomplete bookkeeping for one
@@ -1116,6 +1137,9 @@ struct UiDrawSession {
     /// finished jobs are dropped when a new one starts (StartBulkFieldEdit).
     std::map<std::uint64_t, smatchet::grid::bulk::BulkFieldEditJob> bulkFieldEditJobs;
     std::uint64_t nextBulkJobId = 1;
+    /// Grid cell writes that can be undone (Ui/GridUndoPure.h), and the pane target + field behind each entry.
+    smatchet::grid::undo::History gridUndo;
+    std::map<std::uint64_t, GridUndoContext> gridUndoContext;
     BulkEditPopupRequest bulkEditPopupRequest;
     bool hasInFlightEdit = false;
     PendingFieldEdit inFlightEdit;

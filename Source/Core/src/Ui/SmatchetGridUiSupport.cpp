@@ -236,6 +236,32 @@ void DrawBulkEditMenuItem(UiDrawSession* ui, const std::string& issueKey, bool r
     ui->bulkEditPopupRequest = std::move(request);
 }
 
+// Data-cell item "Undo <Field> on <KEY> (Ctrl+Z)" (input UX Wave 3, S3): undoes this pane's newest grid edit, the same
+// action as Ctrl+Z on the grid. Shown only while there is one to undo.
+void DrawUndoMenuItem(AppController* app, UiDrawSession* ui, bool readOnlyMode) {
+    if (!app || !ui || readOnlyMode) {
+        return;
+    }
+    const smatchet::grid::undo::Entry* newest = ui->gridUndo.PeekNewest(ui->pane().id);
+    if (newest == nullptr || newest->Changes.empty()) {
+        return;
+    }
+    const std::map<std::uint64_t, GridUndoContext>::const_iterator ctx = ui->gridUndoContext.find(newest->Id);
+    if (ctx == ui->gridUndoContext.end()) {
+        return;
+    }
+    const std::string fieldName = ctx->second.Field.Name.empty() ? ctx->second.Field.Id : ctx->second.Field.Name;
+    const std::string label =
+        newest->Changes.size() == 1
+            ? SmatchetLocalization::Format("grid.undo.menu_one", "Undo %s on %s (Ctrl+Z)", fieldName.c_str(),
+                                           newest->Changes.front().IssueId.c_str())
+            : SmatchetLocalization::Format("grid.undo.menu_many", "Undo %s on %d rows (Ctrl+Z)", fieldName.c_str(),
+                                           static_cast<int>(newest->Changes.size()));
+    if (ImGui::MenuItem(label.c_str())) {
+        UndoNewestGridEntry(*app, *ui, ui->pane().id);
+    }
+}
+
 } // namespace
 
 /**
@@ -303,6 +329,7 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
             DrawKeyCellCopyMenuItems(app, ui, issueKey, rowForAnnotateMenu, keyMenu);
         } else {
             DrawBulkEditMenuItem(ui, issueKey, readOnlyMode, keyMenu);
+            DrawUndoMenuItem(app, ui, readOnlyMode);
         }
         DrawAnnotateFromCallstackMenuIfAny(app, ui, rowForAnnotateMenu, issueKey);
         DrawUserInfoMenuItemIfUserField(app, ui, fieldId, rawValue);

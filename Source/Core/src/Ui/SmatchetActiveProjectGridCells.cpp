@@ -280,6 +280,22 @@ void PendingCellBadge(const ActiveProjectDrawCtx& ctx, const std::string& issueK
                                                   "is yours. See the Offline Queue panel.");
 }
 
+// A cell whose save the tracker rejected reopens with the rejected value (#31): the text editor reads it, and the
+// tracker's message, from the grid state for the span of the cell's draw. Sets nothing when the cell has no such entry.
+void BindRejectedCellFeedback(SpreadsheetState& gridState,
+                              const std::unordered_map<std::string, CellWriteFeedback>& feedbackByKey,
+                              const std::string& cellKey) {
+    if (feedbackByKey.empty()) {
+        return;
+    }
+    const auto it = feedbackByKey.find(cellKey);
+    if (it == feedbackByKey.end() || it->second.State != CellWriteState::Error || it->second.RejectedValue.empty()) {
+        return;
+    }
+    gridState.CellRejectedValue = &it->second.RejectedValue;
+    gridState.CellRejectedMessage = &it->second.Message;
+}
+
 } // namespace
 
 void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const CachedTicket& ticket,
@@ -487,10 +503,13 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
         const bool allowEditsForCell = !readOnlyMode && column.NeedsAllowEditsCheck &&
                                        app.CanEditFieldForIssue(ticket.id, column.FieldId, fieldMeta);
         ImGui::BeginGroup();
+        BindRejectedCellFeedback(ctx.pane.gridState, d.cellFeedbackByKey, cellKey);
         TicketFieldEditor::RenderFieldCell(
             app, ticket, column, colIndex, fieldMeta, currentValue, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
             allowEditsForCell, ctx.pane.gridState, pendingEdits, d.trackerGridAsync, d.cfg.DateFormatOption,
             d.cfg.DateCompactRelativeThresholdDays, d.cfg.SingleClickToEditGridCells, ctx.catalogProjectKey);
+        ctx.pane.gridState.CellRejectedValue = nullptr;
+        ctx.pane.gridState.CellRejectedMessage = nullptr;
         ImGui::EndGroup();
         // Fields with a viewer window (History) open it on a plain left click: the release must not end
         // a drag (rect-selection) and Ctrl/Shift stay multi-select. The hover tooltip is unchanged.
