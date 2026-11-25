@@ -3,8 +3,10 @@
 #include "ComponentOptionsPickPure.h"
 #include "LocalCacheManager.h"
 #include "SmatchetUiSession.h"
+#include "StatusComboOptionsPure.h"
 #include "TicketGridModel.h"
 #include "TrackerFieldSchema.h"
+#include "Types/TransitionsTypes.h"
 
 #include <string>
 #include <vector>
@@ -26,6 +28,31 @@ namespace components {
 ComponentOptionsPick PickProjectComponents(AppController& app, const std::string& projectKey, const TrackerField& field,
                                            const std::string& catalogProjectKey, ProjectComponentsLookup& holder);
 } // namespace components
+
+namespace statuscombo {
+/// The status options of one ticket (Pillar 6): `Applicable` is false when the tracker has no transitions (the
+/// caller offers the catalog list as it always did).
+struct TicketStatusOptions {
+    bool Applicable = false;
+    StatusComboPick Pick;
+    smatchet::offline::DataFreshness Freshness = smatchet::offline::DataFreshness::Fresh;
+};
+
+/// The transitions query for `ticket`'s status field: its project, issue type and current status (id and name).
+TransitionsQuery BuildStatusTransitionsQuery(const AppController& app, const CachedTicket& ticket,
+                                             const TrackerField& field, const std::string& currentValue);
+
+/// The options of the status combo for `query`'s issue, from `lookup` (what the cache answered for that query): the
+/// live transition set, else the workflow remembered from earlier online use, else every status in `field`'s
+/// catalog; the current status always shows. The single-ticket combo and the bulk-edit picker both use it, so a
+/// status list is built one way.
+TicketStatusOptions PickTicketStatusOptions(const TransitionsLookup& lookup, const TransitionsQuery& query,
+                                            const TrackerField& field);
+
+/// The row drawn first in a status list that is not the live transition set (Pillar 6 freshness cue), then a
+/// separator. Nothing is drawn for a live, fresh list.
+void DrawStatusOptionsCue(StatusOptionsSource from, smatchet::offline::DataFreshness freshness);
+} // namespace statuscombo
 } // namespace smatchet
 
 class TicketFieldEditor {

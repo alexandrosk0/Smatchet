@@ -258,6 +258,13 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
   - `PickProjectComponents` shared by the grid components cell and the bulk popup (was a hand copy).
   - Enter in the tick-box list of the bulk modal applies the pick (`FilterDropdown` `EventKind::Done`); the draw-in-the-popup contract is documented.
   - Quick-create Esc is held back only by popups opened from its own window.
+- Bulk status offers only the moves every selected row can make (branch `claude/bulk-status-allowed-transitions`):
+  - The single-ticket status combo and the bulk picker now share `PickTicketStatusOptions`, `BuildStatusTransitionsQuery` and `DrawStatusOptionsCue` (`TicketFieldEditor.h`), which wrap `PickStatusComboOptions` (live, then learned, then catalog; the current status is always present).
+  - `IntersectStatusOptions` and `LessLiveSource` (`StatusComboOptionsPure.h`) combine the per-row lists: a status stays only if every row's list has it (matched by `SameStatusOption`), in the first row's order. The cue shows the least-live source and the stalest freshness.
+  - Live transitions load lazily through `EnsureIssueTransitionsLoaded`: at most 6 fetches in flight, rows taking turns, and one fetch per (project, issue type, status) group above 8 rows (the group's first row stays its fetcher, so a failing tracker is not asked about every sibling), each fetch carrying the row's current status from the grid. The list is recomputed every 10 frames, builds one list per distinct non-live answer, and is cached in `BulkEditPopupRequest::StatusCache`; an empty intersection shows `grid.bulk.no_common_status`.
+  - Code review: the status list never points into its own `OptionList` (accessor `Opts()`; NRVO is not guaranteed in Debug / ASan builds); the per-frame request cap became an in-flight cap.
+  - Known gap: in a split over two trackers the transitions service reads the focused pane's backend, as the single-ticket combo already does; to be tracked as an Issue.
+  - User guide: `docs/guides/bulk-edit.md`.
 
 ## Deviations from plan
 - **Pre-implementation `grill-with-docs` (2026-11-14):** five gaps fixed before any code was written. (1) ADR-0016 scalar-base capture for every bulk row, through a shared `CaptureScalarBase`. (2) The per-cell menu ctx holds no owned strings (Ui § Per-cell allocation). (3) The P3 Jira bulk path goes through `FieldEditPipelineService`, not a grid-side commit branch, and P3 updates the Ui § Grid one-in-flight wording. (4) The cli, lua and mcp guides are updated. (5) Toast wording follows Ui § Toasts say what happened. The user chose the command name `ticket.set_field_bulk`.
@@ -278,6 +285,8 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
 - `bash scripts/dev/pre-ship.sh`: all gates passed except the review ack, which is recorded after the code-review pass.
 - Build gate: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` passed (fresh configure, 1107 steps).
 - Not done: a bucket-E case for Ctrl+F while a popup is open (item deferred to Issue #2449; the test was written and failed without the fix, as expected, and is attached to the Issue).
+- Bulk status transitions: `StatusComboOptionsPure` doctests (intersection, empty, single row, name match across ids, source ranking) and bucket-E `BulkFieldEdit/Status_OffersOnlyMovesEveryRowAllows`, `Status_NoCommonMoveOffersNoneOfThem`, `Status_OfflineOffersWhatIsRemembered`, `Status_LargeSelectionFetchesOncePerGroup`; `test-ui-bulk-field-edit` 14 / 14, `test-ui-filter-dropdown` 25 / 25, `test-ui-data-dependent-windows` 12 / 12.
+- Not measured: the status picker's per-refresh cost on a selection of 1,000+ rows (online and offline). Estimated cheap after the distinct-list dedupe; a `perf-measure` run is owed before the next phase touches this picker.
 - Manual residue: none.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
