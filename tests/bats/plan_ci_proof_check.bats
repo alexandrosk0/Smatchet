@@ -264,7 +264,11 @@ run_sut() {
     local lone="$BATS_TEST_TMPDIR/lone/scripts/dev"
     mkdir -p "$lone"
     cp "$SUT" "$REPO_ROOT/scripts/dev/project-config.sh" "$lone/"
-    run bash -c 'cd "$1" && bash "$2" develop' _ "$SANDBOX" "$lone/plan-ci-proof-check.sh"
+    # A developer shell may export a layer root that would point the lone copy back
+    # at a real mount; clear every knob project-config.sh honours.
+    run env -u AGENT_LAYER_ROOT -u PROJECT_ROOT -u SMATCHET_PROJECT_CONFIG -u PC_CONFIG_FILE \
+        -u PC_AGENT_LAYER_ROOT -u PC_PROJECT_ROOT -u SMATCHET_PROJECT_ROOT_OVERRIDE \
+        bash -c 'cd "$1" && bash "$2" develop' _ "$SANDBOX" "$lone/plan-ci-proof-check.sh"
     [ "$status" -eq 2 ]
     [[ "$output" == *"plan-proof parser is missing"* ]]
 }

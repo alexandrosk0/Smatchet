@@ -15,7 +15,10 @@
 #   bash scripts/dev/plan-ci-proof-check.sh [--live] [<base-ref>]   # default origin/develop
 #
 # Scope: proof lines this branch ADDS to a plan under docs/plans/{active,shipped}/, vs
-# the merge-base with <base-ref> (committed or not). "This PR" in a plan means the PR
+# the merge-base with <base-ref> (committed or not). A plan is a `*.md` file one level
+# deep there, not a `_*.md` meta-file (_plan-template.md, the _plan-locks*.md mirrors)
+# and not a file in a per-plan subfolder: the same set the merge-time gate reads,
+# through the layer's _mg_planproof_is_plan. "This PR" in a plan means the PR
 # that wrote the line, so an unchanged proof line is not re-checked: a later docs-only
 # edit of the plan, or its git mv to shipped/ (rename detection, -M), does not inherit
 # the original PR's proof. Only the `## Verification` section is read (not
