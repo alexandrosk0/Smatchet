@@ -238,6 +238,37 @@ run_sut() {
     [ "$status" -eq 1 ]
 }
 
+@test "a proof added to a _*.md meta-file (the plan template) is not read" {
+    mkdir -p "$SANDBOX/$FIXTURE_PLAN_DIR"
+    printf '%s\n' '# Template' '## Verification' \
+        '- CI: "Sanitizer (UBSan via Clang)" green on this PR.' \
+        > "$SANDBOX/$FIXTURE_PLAN_DIR/_plan-template.md"
+    commit_all
+    commit_path Source/Standalone/Main.cpp
+    STUB="$STUB_BIN" run_sut develop
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'no changed plan doc'* ]]
+}
+
+@test "the proof parser is the layer's merge-gate module, not a local copy" {
+    # One parser for the pre-push prediction and the merge verdict: the host must
+    # source merge-gates.d/30-plan-proof.sh and keep no awk/grep copy of its own.
+    grep -qF 'merge-gates.d/30-plan-proof.sh' "$SUT"
+    grep -qF '_mg_planproof_checks "$1" "$2"' "$SUT"
+    ! grep -qE "grep -oE 'CI:" "$SUT"
+}
+
+@test "a missing layer parser module fails closed (exit 2)" {
+    # A copy of the script with no agent-layer/ beside it: it must refuse, not
+    # predict with no parser.
+    local lone="$BATS_TEST_TMPDIR/lone/scripts/dev"
+    mkdir -p "$lone"
+    cp "$SUT" "$REPO_ROOT/scripts/dev/project-config.sh" "$lone/"
+    run bash -c 'cd "$1" && bash "$2" develop' _ "$SANDBOX" "$lone/plan-ci-proof-check.sh"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"plan-proof parser is missing"* ]]
+}
+
 @test "unknown option is a usage error" {
     STUB="$STUB_BIN" run_sut --bogus
     [ "$status" -eq 2 ]
