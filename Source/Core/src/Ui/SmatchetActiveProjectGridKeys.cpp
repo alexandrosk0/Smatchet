@@ -6,7 +6,8 @@
 // Home / End, Ctrl+Home / Ctrl+End and PageUp / PageDown move the active cell (Shift extends the range); the math is
 // the pure smatchet::grid::cursor header, tested in bucket A. Slice S2 adds the keys that start and end an edit: F2,
 // Enter and a typed character open the active cell's editor; an inline editor that ended on Enter / Tab leaves a
-// GridEditExit that moves the active cell (read-only cells skipped). Ctrl+V / D / Z come with later slices.
+// GridEditExit that moves the active cell (read-only cells skipped). Slice S3 adds Ctrl+Z, which undoes the pane's
+// newest grid edit. Ctrl+V / D come with the next slice.
 
 #include "SmatchetUI.h"
 #include "SmatchetActiveProjectGridIds.h"
@@ -17,6 +18,7 @@
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetInputModifierBridge.h"
 #include "SpreadsheetState.h"
+#include "SmatchetToast.h"
 #include "TicketGridModel.h"
 #include "Ui/GridCursorPure.h"
 
@@ -256,6 +258,17 @@ void SmatchetUI::drawActiveProjectGridCursorKeys(ActiveProjectDrawCtx& ctx) {
     if (gs.KeyEditKind != GridEditStart::None && ++gs.KeyEditFrames > 3) {
         gs.ClearKeyEdit();
     }
+    // A cell reopened on its rejected value: Esc drops that value (a commit replaces the cell's feedback on dispatch).
+    if (!gs.EditRejectedIssueId.empty() && gs.EditingId.empty()) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            const auto fb = ctx.d.cellFeedbackByKey.find(BuildCellKey(gs.EditRejectedIssueId, gs.EditRejectedFieldId));
+            if (fb != ctx.d.cellFeedbackByKey.end()) {
+                fb->second.RejectedValue.clear();
+            }
+        }
+        gs.EditRejectedIssueId.clear();
+        gs.EditRejectedFieldId.clear();
+    }
     if (ctx.columns.empty() || pane.filteredIndices.empty()) {
         gs.PendingEditExit = GridEditExit::None;
         return;
@@ -309,6 +322,13 @@ void SmatchetUI::drawActiveProjectGridCursorKeys(ActiveProjectDrawCtx& ctx) {
     const bool shift = ImGuiEffectiveKeyShift();
     const bool ctrl = ImGuiEffectiveKeyCtrl();
     const bool alt = io.KeyAlt;
+    // Ctrl+Z undoes this pane's newest grid edit. A live undo toast owns the shortcut (it resolves at the end of the
+    // frame and undoes the edit it belongs to), so the grid acts only when there is none.
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Z, ImGuiInputFlags_None) &&
+        SmatchetToastManager::Instance().LiveUndoableCount() == 0) {
+        UndoNewestGridEntry(ctx.app, ctx.d, pane.id);
+        return;
+    }
     if (!busyLastFrame && RequestEditFromKeys(ctx, columnIds, io, shift, ctrl, alt)) {
         return;
     }

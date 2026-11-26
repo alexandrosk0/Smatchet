@@ -82,6 +82,12 @@ fixture = {
                 {"id": "4", "value": "Low"},
                 {"id": "5", "value": "Trivial"},
             ]},
+            {"id": "status", "name": "Status", "family": "Status", "options": [
+                {"id": "1", "value": "Open"},
+                {"id": "11", "value": "In Progress"},
+                {"id": "21", "value": "Done"},
+                {"id": "31", "value": "Closed"},
+            ]},
             {"id": "summary", "name": "Summary", "family": "Text", "options": []},
             {"id": "labels", "name": "Labels", "family": "Labels", "options": []},
         ],

@@ -33,6 +33,23 @@ constexpr float kOverlayGapPx = 2.0f;
 constexpr float kOverlayPadPx = 3.0f;
 constexpr float kOverlayMinWrapPx = 240.0f;
 
+// One boxed text under a field, painted on the foreground list so it never moves the layout: the error overlay (red
+// border) and the hint (dim, no border) share it.
+void OverlayBelowRect(const std::string& text, const ImVec2& rectMin, const ImVec2& rectMax, ImU32 textColor,
+                      bool border) {
+    const float wrap = (std::max)(rectMax.x - rectMin.x, kOverlayMinWrapPx);
+    const ImVec2 size = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrap);
+    const ImVec2 pos(rectMin.x, rectMax.y + kOverlayGapPx);
+    ImDrawList* const list = ImGui::GetForegroundDrawList();
+    const ImVec2 boxMin(pos.x - kOverlayPadPx, pos.y - 1.0f);
+    const ImVec2 boxMax(pos.x + size.x + kOverlayPadPx, pos.y + size.y + 1.0f);
+    list->AddRectFilled(boxMin, boxMax, ImGui::GetColorU32(ImGuiCol_PopupBg), 3.0f);
+    if (border) {
+        list->AddRect(boxMin, boxMax, textColor, 3.0f);
+    }
+    list->AddText(ImGui::GetFont(), ImGui::GetFontSize(), pos, textColor, text.c_str(), nullptr, wrap);
+}
+
 } // namespace
 
 void DrawInlineParseError(const TrackerParseExplain::ParseMessage& msg) {
@@ -71,16 +88,17 @@ void DrawInlineParseErrorBelowRect(const TrackerParseExplain::ParseMessage& msg,
         return;
     }
     Record(text, "overlay");
-    const float wrap = (std::max)(rectMax.x - rectMin.x, kOverlayMinWrapPx);
-    const ImVec2 size = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrap);
-    const ImVec2 pos(rectMin.x, rectMax.y + kOverlayGapPx);
-    ImDrawList* const list = ImGui::GetForegroundDrawList();
-    const ImVec2 boxMin(pos.x - kOverlayPadPx, pos.y - 1.0f);
-    const ImVec2 boxMax(pos.x + size.x + kOverlayPadPx, pos.y + size.y + 1.0f);
-    const ImU32 errorColor = ImGui::GetColorU32(SmatchetTheme::GetActiveSemanticColors().ErrorText);
-    list->AddRectFilled(boxMin, boxMax, ImGui::GetColorU32(ImGuiCol_PopupBg), 3.0f);
-    list->AddRect(boxMin, boxMax, errorColor, 3.0f);
-    list->AddText(ImGui::GetFont(), ImGui::GetFontSize(), pos, errorColor, text.c_str(), nullptr, wrap);
+    OverlayBelowRect(text, rectMin, rectMax, ImGui::GetColorU32(SmatchetTheme::GetActiveSemanticColors().ErrorText),
+                     true);
+}
+
+void DrawInlineTextErrorBelowRect(const std::string& text, const ImVec2& rectMin, const ImVec2& rectMax) {
+    if (text.empty()) {
+        return;
+    }
+    Record(text, "overlay");
+    OverlayBelowRect(text, rectMin, rectMax, ImGui::GetColorU32(SmatchetTheme::GetActiveSemanticColors().ErrorText),
+                     true);
 }
 
 void DrawInlineParseHintBelowRect(const std::string& text, const ImVec2& rectMin, const ImVec2& rectMax) {
@@ -88,15 +106,7 @@ void DrawInlineParseHintBelowRect(const std::string& text, const ImVec2& rectMin
         return;
     }
     Record(text, "hint");
-    const float wrap = (std::max)(rectMax.x - rectMin.x, kOverlayMinWrapPx);
-    const ImVec2 size = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrap);
-    const ImVec2 pos(rectMin.x, rectMax.y + kOverlayGapPx);
-    ImDrawList* const list = ImGui::GetForegroundDrawList();
-    const ImVec2 boxMin(pos.x - kOverlayPadPx, pos.y - 1.0f);
-    const ImVec2 boxMax(pos.x + size.x + kOverlayPadPx, pos.y + size.y + 1.0f);
-    list->AddRectFilled(boxMin, boxMax, ImGui::GetColorU32(ImGuiCol_PopupBg), 3.0f);
-    list->AddText(ImGui::GetFont(), ImGui::GetFontSize(), pos, ImGui::GetColorU32(ImGuiCol_TextDisabled), text.c_str(),
-                  nullptr, wrap);
+    OverlayBelowRect(text, rectMin, rectMax, ImGui::GetColorU32(ImGuiCol_TextDisabled), false);
 }
 
 #if defined(SMATCHET_BUILD_UI_TESTS)

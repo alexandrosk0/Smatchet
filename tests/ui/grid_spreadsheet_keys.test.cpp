@@ -17,6 +17,10 @@
 //      value selected, value replaced); a dropdown cell opens its popup. Enter / Shift+Enter / Tab / Shift+Tab commit
 //      and move the active cell down / up / right / left over editable cells, opening no editor; Esc reverts and stays;
 //      an unchanged Enter writes nothing and still moves.
+//   6. (S3, audit #28 undo / #31 / #33 / #34) Ctrl+Z puts a saved cell back: through the "saved" toast's Undo while it
+//      is up, and through the grid's own history once it is gone. A bulk set undoes row by row (each row gets ITS
+//      OWN old value back, not one shared value). A cell whose save was rejected reopens on the rejected value with the
+//      message under it, and Esc drops it.
 //
 // Needs the grid-spreadsheet fixture (60 issues) named by SMATCHET_TEST_JIRA_BACKEND_FIXTURE;
 // scripts/dev/test-ui-grid-spreadsheet.sh sets it and the GridSpreadsheet filter. Skips cleanly without it.
@@ -27,8 +31,11 @@
 #include "CachedTicketTypes.h"
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "GridPane.h"
+#include "SmatchetGridUiSupport.h"
+#include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
+#include "Ui/BulkFieldEditPure.h"
 #include "UiTestWriteScope.h"
 
 #include "imgui.h"
@@ -667,6 +674,165 @@ static void RegisterEditFinishes(ImGuiTestEngine* engine) {
     };
 }
 
+// GridSpreadsheet/Undo_CtrlZRestoresASavedCellThroughTheToastAndTheGrid
+static void RegisterUndoSingle(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridSpreadsheet", "Undo_CtrlZRestoresASavedCellThroughTheToastAndTheGrid");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = nullptr;
+        if (!PrepareGrid(ctx, &app)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        const auto editActiveTo = [&](const std::string& id, const char* text) {
+            ctx->KeyPress(ImGuiKey_F2);
+            ctx->Yield(4);
+            IM_CHECK_NO_RET(State().EditingId == id);
+            ctx->KeyCharsReplace(text);
+            ctx->KeyPress(ImGuiKey_Enter);
+            ctx->Yield(4);
+            const bool ok = StepUntil(ctx, 600, [&] { return SummaryOf(*app, id) == text; });
+            ctx->Yield(3);
+            return ok;
+        };
+        SPREADSHEET_REQUIRE(ActivateSummaryCell(ctx, 5));
+        SmatchetToastManager::Instance().DismissAllLive();
+        const std::string a = IdAtRow(5);
+        const std::string originalA = SummaryOf(*app, a);
+        SPREADSHEET_REQUIRE(editActiveTo(a, "Undo A"));
+
+        // The saved toast carries Undo; Ctrl+Z is the shortcut for it while it is up.
+        SPREADSHEET_REQUIRE(
+            StepUntil(ctx, 600, [] { return SmatchetToastManager::Instance().LiveUndoableCount() == 1; }));
+        ctx->KeyPress(ImGuiKey_Z | ImGuiMod_Ctrl);
+        IM_CHECK_NO_RET(StepUntil(ctx, 900, [&] { return SummaryOf(*app, a) == originalA; }));
+
+        // The toast gone, Ctrl+Z on the focused grid undoes the pane's newest edit from the history.
+        const std::string b = State().ActiveIssueId;
+        SPREADSHEET_REQUIRE(!b.empty() && b != a);
+        const std::string originalB = SummaryOf(*app, b);
+        SPREADSHEET_REQUIRE(editActiveTo(b, "Undo B"));
+        SmatchetToastManager::Instance().DismissAllLive();
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(SmatchetToastManager::Instance().LiveUndoableCount() == 0);
+        ctx->KeyPress(ImGuiKey_Z | ImGuiMod_Ctrl);
+        IM_CHECK_NO_RET(StepUntil(ctx, 900, [&] { return SummaryOf(*app, b) == originalB; }));
+        IM_CHECK_NO_RET(SummaryOf(*app, a) == originalA); // the first undo is not undone again
+    };
+}
+
+// GridSpreadsheet/Undo_BulkSetUndoesEachRowToItsOwnValue
+static void RegisterUndoBulk(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridSpreadsheet", "Undo_BulkSetUndoesEachRowToItsOwnValue");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = nullptr;
+        if (!PrepareGrid(ctx, &app)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        const TrackerField* priority = app->FindFieldById("priority");
+        SPREADSHEET_REQUIRE(priority != nullptr);
+        std::string trivialId;
+        for (const TrackerFieldOption& option : priority->AllowedValueOptions) {
+            if (option.Value == "Trivial") {
+                trivialId = option.Id;
+            }
+        }
+        SPREADSHEET_REQUIRE(!trivialId.empty());
+        const auto priorityOf = [&](const std::string& id) {
+            const std::shared_ptr<const std::vector<CachedTicket>> snapshot = app->GetActiveTicketsSnapshot();
+            if (snapshot) {
+                for (const CachedTicket& ticket : *snapshot) {
+                    if (ticket.id == id) {
+                        return ticket.GetFieldValue("priority");
+                    }
+                }
+            }
+            return std::string();
+        };
+        // One issue of each priority the fixture holds: High and Medium differ, so a shared undo would be visible.
+        std::string high;
+        std::string medium;
+        const std::shared_ptr<const std::vector<CachedTicket>> tickets = app->GetActiveTicketsSnapshot();
+        SPREADSHEET_REQUIRE(tickets != nullptr);
+        for (const CachedTicket& ticket : *tickets) {
+            const std::string value = ticket.GetFieldValue("priority");
+            if (high.empty() && value == "High") {
+                high = ticket.id;
+            } else if (medium.empty() && value == "Medium") {
+                medium = ticket.id;
+            }
+        }
+        SPREADSHEET_REQUIRE(!high.empty() && !medium.empty());
+        SmatchetToastManager::Instance().DismissAllLive();
+
+        const std::vector<std::string> ids = {high, medium};
+        SPREADSHEET_REQUIRE(StartBulkFieldEdit(*app, g_ui, Pane().id, *priority, ids,
+                                               std::vector<std::string>{trivialId},
+                                               smatchet::grid::bulk::BulkMode::Replace, false) != 0);
+        const auto isTrivial = [&](const std::string& id) {
+            const std::string value = priorityOf(id);
+            return value == trivialId || value == "Trivial";
+        };
+        SPREADSHEET_REQUIRE(StepUntil(ctx, 900, [&] { return isTrivial(high) && isTrivial(medium); }));
+        SPREADSHEET_REQUIRE(
+            StepUntil(ctx, 600, [] { return SmatchetToastManager::Instance().LiveUndoableCount() == 1; }));
+
+        ctx->KeyPress(ImGuiKey_Z | ImGuiMod_Ctrl);
+        const auto isOneOf = [&](const std::string& id, const char* name, const char* optionId) {
+            const std::string value = priorityOf(id);
+            return value == name || value == optionId;
+        };
+        IM_CHECK_NO_RET(
+            StepUntil(ctx, 900, [&] { return isOneOf(high, "High", "2") && isOneOf(medium, "Medium", "3"); }));
+    };
+}
+
+// GridSpreadsheet/Undo_RejectedValueComesBackInTheEditorUntilEsc
+static void RegisterRejectedValue(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridSpreadsheet", "Undo_RejectedValueComesBackInTheEditorUntilEsc");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = nullptr;
+        if (!PrepareGrid(ctx, &app)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        SPREADSHEET_REQUIRE(ActivateSummaryCell(ctx, 7));
+        const std::string a = IdAtRow(7);
+        const std::string original = SummaryOf(*app, a);
+        const std::string key = BuildCellKey(a, "summary");
+        // The state a commit the tracker rejected leaves (SmatchetGridFieldEditPipeline.cpp).
+        CellWriteFeedback rejected;
+        rejected.State = CellWriteState::Error;
+        rejected.Message = "Summary is too long.";
+        rejected.RejectedValue = "a title the tracker refused";
+        g_ui.cellFeedbackByKey[key] = rejected;
+
+        ctx->KeyPress(ImGuiKey_F2);
+        ctx->Yield(4);
+        SPREADSHEET_REQUIRE(State().EditingId == a);
+        IM_CHECK_NO_RET(std::string(State().EditBuffer) == "a title the tracker refused");
+        IM_CHECK_NO_RET(State().EditRejectedMessage == "Summary is too long.");
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(4);
+        IM_CHECK_NO_RET(State().EditingId.empty());
+        IM_CHECK_NO_RET(SummaryOf(*app, a) == original); // nothing was sent
+        IM_CHECK_NO_RET(g_ui.cellFeedbackByKey[key].RejectedValue.empty());
+
+        // Esc dropped it: the editor opens on the cell's own value again, with no message.
+        ctx->KeyPress(ImGuiKey_F2);
+        ctx->Yield(4);
+        SPREADSHEET_REQUIRE(State().EditingId == a);
+        IM_CHECK_NO_RET(std::string(State().EditBuffer) == original);
+        IM_CHECK_NO_RET(State().EditRejectedMessage.empty());
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(4);
+        g_ui.cellFeedbackByKey.erase(key);
+    };
+}
+
 extern "C" void SmatchetRegisterGridSpreadsheetKeysTests(ImGuiTestEngine* engine) {
     RegisterArrowKeys(engine);
     RegisterScrollIntoView(engine);
@@ -676,6 +842,9 @@ extern "C" void SmatchetRegisterGridSpreadsheetKeysTests(ImGuiTestEngine* engine
     RegisterEditOpens(engine);
     RegisterEditOpensDropdown(engine);
     RegisterEditFinishes(engine);
+    RegisterUndoSingle(engine);
+    RegisterUndoBulk(engine);
+    RegisterRejectedValue(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

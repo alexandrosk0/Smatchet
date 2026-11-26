@@ -398,6 +398,66 @@ smatchet::components::PickProjectComponents(AppController& app, const std::strin
                                 app.GetLastTrackerConnectivityState());
 }
 
+TransitionsQuery smatchet::statuscombo::BuildStatusTransitionsQuery(const AppController& app,
+                                                                    const CachedTicket& ticket,
+                                                                    const TrackerField& field,
+                                                                    const std::string& currentValue) {
+    TransitionsQuery query;
+    query.IssueId = ticket.id;
+    query.ProjectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
+    query.IssueTypeKey = ToLowerAsciiCopy(TrimCopy(ticket.GetFieldValue("issuetype")));
+    query.FromStatusKey = TrackerFieldValueUtils::ResolveOptionId(field, currentValue);
+    query.FromStatusName = app.ResolveDisplayValue(field.Id, &field, currentValue);
+    return query;
+}
+
+smatchet::statuscombo::TicketStatusOptions
+smatchet::statuscombo::PickTicketStatusOptions(const TransitionsLookup& lookup, const TransitionsQuery& query,
+                                               const TrackerField& field) {
+    TicketStatusOptions result;
+    if (!lookup.applicable) {
+        return result;
+    }
+    result.Applicable = true;
+    result.Freshness = lookup.freshness;
+    TrackerFieldOption current;
+    current.Id = query.FromStatusKey;
+    current.Value = query.FromStatusName;
+    if (current.Value.empty()) {
+        current.Value = query.FromStatusKey;
+    }
+    // Live = the options came from this session's fetch, not "the tracker is reachable now": a live but empty
+    // list (no valid move) must not fall back to every status once offline.
+    result.Pick = PickStatusComboOptions(lookup.options, lookup.fromLive, field.AllowedValueOptions, current);
+    return result;
+}
+
+// First combo row when the status list is not the live transition set (Pillar 6 freshness cue). A live list is still
+// cached data once offline or stale, so it only goes without a cue while it is fresh.
+void smatchet::statuscombo::DrawStatusOptionsCue(StatusOptionsSource from, smatchet::offline::DataFreshness freshness) {
+    if (from == StatusOptionsSource::Live && freshness == smatchet::offline::DataFreshness::Fresh) {
+        return;
+    }
+    const char* text = nullptr;
+    if (freshness == smatchet::offline::DataFreshness::Refreshing ||
+        freshness == smatchet::offline::DataFreshness::LoadingNoCache) {
+        text = SmatchetLocalization::T("status.cue.checking", "Checking valid transitions\xE2\x80\xA6");
+    } else if (from == StatusOptionsSource::Learned) {
+        text = SmatchetLocalization::T("status.cue.cached_workflow", "Saved workflow (last seen online)");
+    } else if (from == StatusOptionsSource::Live) {
+        // This session's fetched moves, shown while the tracker is unreachable or its last check failed.
+        text = freshness == smatchet::offline::DataFreshness::CachedOffline
+                   ? SmatchetLocalization::T("status.cue.live_offline", "Valid moves as last fetched (offline)")
+                   : SmatchetLocalization::T("status.cue.live_stale",
+                                             "Valid moves as last fetched (the last check failed)");
+    } else {
+        text = SmatchetLocalization::T("status.cue.all_statuses_offline",
+                                       "All statuses shown \xE2\x80\x94 an invalid move is rejected when it syncs");
+    }
+    ImGui::TextDisabled("%s", text);
+    ImGui::Separator();
+}
+
 namespace {
 
 void QueueEdit(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
@@ -478,6 +538,32 @@ bool InlineEditTabPressed(bool editJustStarted) {
     return pressed;
 }
 
+// The last save of this cell was rejected: the editor opens on the value the user typed, with the tracker's message
+// under it, so the value is fixed rather than retyped (#31). A typed character that opened the editor (type-to-edit)
+// is the user's newer input and is kept.
+void SeedFromRejectedValue(const CachedTicket& ticket, const TrackerField& field, SpreadsheetState& state,
+                           bool editJustStarted) {
+    if (!editJustStarted || state.CellRejectedValue == nullptr ||
+        state.EditInitialValue != std::string(state.EditBuffer)) {
+        return;
+    }
+    std::snprintf(state.EditBuffer, sizeof(state.EditBuffer), "%s", state.CellRejectedValue->c_str());
+    state.EditRejectedMessage = state.CellRejectedMessage != nullptr ? *state.CellRejectedMessage : std::string();
+    state.EditRejectedIssueId = ticket.id;
+    state.EditRejectedFieldId = field.Id;
+}
+
+// The tracker's reason for the rejected value, under the field (the duration widget draws its own box).
+void DrawRejectedMessage(const SpreadsheetState& state, bool escapePressed, bool isDuration, const ImVec2& durationMin,
+                         const ImVec2& durationMax) {
+    if (state.EditRejectedMessage.empty() || escapePressed) {
+        return;
+    }
+    const ImVec2 inputMin = isDuration ? durationMin : ImGui::GetItemRectMin();
+    const ImVec2 inputMax = isDuration ? durationMax : ImGui::GetItemRectMax();
+    smatchet::ui::DrawInlineTextErrorBelowRect(state.EditRejectedMessage, inputMin, inputMax);
+}
+
 // Draws the active inline single-line text editor for a non-ADF text cell and commits / cancels
 // the edit. Extracted from RenderTextEditor's editing branch; behaviour byte-identical (duration
 // fields route through the suggestion widget, plain fields through InputText). Caller has already
@@ -486,6 +572,7 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
                           std::vector<PendingFieldEdit>& pendingEdits) {
     const bool editJustStarted = state.EditJustStarted;
     const bool isDuration = IsTimeDurationField(field.Id);
+    SeedFromRejectedValue(ticket, field, state, editJustStarted);
     bool explicitSubmit = false;
     bool deactivated = false;
     bool tabPressed = false;
@@ -531,6 +618,7 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
     const GridEditExit exitAfter = explicitSubmit ? EditExitForKey(tabPressed) : GridEditExit::None;
 
     const bool escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
+    DrawRejectedMessage(state, escapePressed, isDuration, durationRectMin, durationRectMax);
     // A typed duration is read the tolerant way ("1.5h", "90 m", "1:30"); one that does not read is explained
     // under the field while the user types and is never committed (#38). An untouched value is left alone: a
     // tracker figure this reader cannot parse is not the user's typo.
@@ -744,28 +832,6 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
     }
 }
 
-// First combo row when the status list is not the live transition set (Pillar 6 freshness cue).
-void DrawStatusComboCue(smatchet::statuscombo::StatusOptionsSource from, smatchet::offline::DataFreshness freshness) {
-    const char* text = nullptr;
-    if (freshness == smatchet::offline::DataFreshness::Refreshing ||
-        freshness == smatchet::offline::DataFreshness::LoadingNoCache) {
-        text = SmatchetLocalization::T("status.cue.checking", "Checking valid transitions\xE2\x80\xA6");
-    } else if (from == smatchet::statuscombo::StatusOptionsSource::Learned) {
-        text = SmatchetLocalization::T("status.cue.cached_workflow", "Saved workflow (last seen online)");
-    } else if (from == smatchet::statuscombo::StatusOptionsSource::Live) {
-        // This session's fetched moves, shown while the tracker is unreachable or its last check failed.
-        text = freshness == smatchet::offline::DataFreshness::CachedOffline
-                   ? SmatchetLocalization::T("status.cue.live_offline", "Valid moves as last fetched (offline)")
-                   : SmatchetLocalization::T("status.cue.live_stale",
-                                             "Valid moves as last fetched (the last check failed)");
-    } else {
-        text = SmatchetLocalization::T("status.cue.all_statuses_offline",
-                                       "All statuses shown \xE2\x80\x94 an invalid move is rejected when it syncs");
-    }
-    ImGui::TextDisabled("%s", text);
-    ImGui::Separator();
-}
-
 void RenderSingleSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                               const std::string& currentValue, SpreadsheetState& state,
                               std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
@@ -824,34 +890,16 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
         if (field.Id == "status") {
             // Pillar 6: never block on the live transitions fetch. Live transitions, else the workflow
             // remembered from earlier online use, else every status; the current status always shows.
-            const std::string currentId = ResolveOptionId(field, currentValue);
-            TransitionsQuery query;
-            query.IssueId = ticket.id;
-            query.ProjectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
-            query.IssueTypeKey = ToLowerAsciiCopy(TrimCopy(ticket.GetFieldValue("issuetype")));
-            query.FromStatusKey = currentId;
-            const std::string currentName = app.ResolveDisplayValue(field.Id, &field, currentValue);
-            query.FromStatusName = currentName;
+            const TransitionsQuery query =
+                smatchet::statuscombo::BuildStatusTransitionsQuery(app, ticket, field, currentValue);
             app.EnsureIssueTransitionsLoaded(query);
             const TransitionsLookup lookup = app.GetAvailableTransitionsForIssue(query);
-            if (lookup.applicable) {
-                TrackerFieldOption current;
-                current.Id = currentId;
-                current.Value = currentName;
-                if (current.Value.empty()) {
-                    current.Value = currentId;
-                }
-                // Live = the options came from this session's fetch, not "the tracker is reachable now":
-                // a live but empty list (no valid move) must not fall back to every status once offline.
-                smatchet::statuscombo::StatusComboPick pick = smatchet::statuscombo::PickStatusComboOptions(
-                    lookup.options, lookup.fromLive, field.AllowedValueOptions, current);
-                statusOptions = std::move(pick.Options);
+            smatchet::statuscombo::TicketStatusOptions status =
+                smatchet::statuscombo::PickTicketStatusOptions(lookup, query, field);
+            if (status.Applicable) {
+                statusOptions = std::move(status.Pick.Options);
                 opts = &statusOptions;
-                // A live list is still cached data once offline or stale (Pillar 6: show the cue).
-                if (pick.From != smatchet::statuscombo::StatusOptionsSource::Live ||
-                    lookup.freshness != smatchet::offline::DataFreshness::Fresh) {
-                    DrawStatusComboCue(pick.From, lookup.freshness);
-                }
+                smatchet::statuscombo::DrawStatusOptionsCue(status.Pick.From, status.Freshness);
             }
         }
         RenderSingleSelectComboBody(ticket, field, currentValue, pendingEdits,

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "Config/ToolbarConfig.h"
+#include "TextMatchPure.h"
 #include "Ui/DialogScopeState.h"
 #include "Ui/SmatchetIconPickerUi.h"
 
@@ -134,9 +135,11 @@ class SmatchetToolbarUi {
     std::vector<std::string> cmdNames_;         // registry command names for the command picker
     std::vector<std::string> cmdHaystacks_;     // "name title" per cmdNames_ entry: what the filter matches
     std::vector<int> cmdFiltered_;              // ranked indices into cmdNames_ for the current filter text
-    std::string cmdFilterKey_;                  // filter text cmdFiltered_ was built for
-    bool cmdFilterValid_ = false;               // false forces a rebuild (set when the editor opens)
-    char cmdSearch_[64] = {0};                  // command-picker filter text
+    std::vector<std::vector<smatchet::textmatch::ByteRange>> cmdRanges_; // per cmdFiltered_ row: name bytes to mark
+    smatchet::textmatch::Scratch cmdScratch_;                            // the matcher's work buffers for cmdRanges_
+    std::string cmdFilterKey_;                                           // filter text cmdFiltered_ was built for
+    bool cmdFilterValid_ = false; // false forces a rebuild (set when the editor opens)
+    char cmdSearch_[64] = {0};    // command-picker filter text
     struct ArgsCheckEntry {
         std::string Text;      // args text the status was computed for
         int Status = 0;        // toolbar_editor::ArgsJsonStatus

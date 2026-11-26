@@ -8,7 +8,7 @@
 
 #include "AttachmentCachePure.h"
 #include "SmatchetResult.h"
-#include "Tracker/TrackerError.h"
+#include "TrackerError.h"
 
 #include <cstdint>
 #include <functional>

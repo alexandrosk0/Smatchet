@@ -37,6 +37,7 @@
 - **Write set** (2 paths):
   - `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp`
   - `tests/ui/bulk_field_edit.test.cpp`
+## In-flight locks (2 active)
 
 ### `input-ux-w2-dictation-drain`
 
@@ -45,6 +46,10 @@
 - **Originating plan**: `docs/plans/active/input-ux-w2-dictation-drain.md` (not on this branch yet)
 - **Started**: 2026-11-25T14:35:32Z
 - **Write set** (17 paths):
+- **Originating plan**: `docs/plans/shipped/input-ux-w2-dictation-drain.md` (not on this branch yet)
+- **Started**: 2026-11-25T14:35:32Z
+- **Updated**: 2026-11-25T17:06:48Z
+- **Write set** (19 paths):
   - `Source/Core/include/DictationInsertionRouter.h`
   - `Source/Core/src/DictationInsertionRouter_Whisper.cpp`
   - `Source/Core/src/DictationInsertionRouter_Stubs.cpp`
@@ -85,4 +90,44 @@
   - `docs/self-improvement/categories/debt/2026-11-16-text-field-migration-blocked-surfaces.md`
   - `docs/self-improvement/categories/debt/2026-11-19-one-matcher-deferred.md`
   - `docs/self-improvement/categories/debt/2026-11-24-left-view-history-stale-ci-step-name.md`
+  - `tests/ui/whisper_ai_assistant_autosend.test.cpp`
+  - `docs/plans/INDEX.md`
+
+### `input-ux-w3-grid-s4`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/w3-grid-spreadsheet-s4-91e0b7`
+- **Started**: 2026-11-25T21:05:33Z
+- **Write set** (31 paths):
+  - `Source/Core/include/SpreadsheetState.h`
+  - `Source/Core/include/Ui/BulkFieldEditPure.h`
+  - `Source/Core/include/Ui/GridCursorPure.h`
+  - `Source/Core/include/Ui/GridPastePure.h`
+  - `Source/Core/include/Ui/SmatchetGridUiSupport.h`
+  - `Source/Core/include/Ui/SmatchetUiSession.h`
+  - `Source/Core/src/SmatchetGridFieldEditPipeline.cpp`
+  - `Source/Core/src/SmatchetLocalization.cpp`
+  - `Source/Core/src/TicketFieldEditor.cpp`
+  - `Source/Core/src/Ui/AGENTS.md`
+  - `Source/Core/src/Ui/BulkFieldEditPure.cpp`
+  - `Source/Core/src/Ui/GridPastePure.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridKeys.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridPaste.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi_Internal.h`
+  - `Source/Core/src/Ui/SmatchetGridBulkRequest.cpp`
+  - `Source/Core/src/Ui/SmatchetGridUiSupport.cpp`
+  - `docs/audits/INPUT_UX_AUDIT.md`
+  - `docs/guides/keyboard-shortcuts.md`
+  - `docs/plans/INDEX.md`
+  - `docs/plans/active/input-ux-w3-grid-spreadsheet.md`
+  - `docs/plans/shipped/input-ux-w3-grid-spreadsheet.md`
+  - `docs/self-improvement/categories/debt/2026-11-25-grid-key-edit-review-mediums.md`
+  - `docs/self-improvement/categories/debt/2026-11-25-grid-paste-review-leftovers.md`
+  - `docs/self-improvement/categories/debt/2026-11-25-grid-undo-review-leftovers.md`
+  - `tests/CMakeLists.txt`
+  - `tests/Core/BulkFieldEditPure.test.cpp`
+  - `tests/Core/GridCursorPure.test.cpp`
+  - `tests/Core/GridPastePure.test.cpp`
+  - `tests/ui/grid_spreadsheet_keys.test.cpp`
 

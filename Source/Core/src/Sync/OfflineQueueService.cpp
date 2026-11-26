@@ -1,6 +1,5 @@
 #include "OfflineQueueService.h"
 
-#include "AppController.h"
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
 #include "FieldEditAuditSource.h"
@@ -20,7 +19,6 @@
 #include "ScopeExit.h"
 #include "TextMerge.h"
 #include "TrackerFieldPayloadPure.h" // sprint_add + timetracking queued payloads
-#include "Views.h"
 
 #include <algorithm>
 #include <chrono>
@@ -477,9 +475,9 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft, co
     }
 }
 
-AppController::DeadLetterRestoreSummary
+::DeadLetterRestoreSummary
 OfflineQueueService::RestoreDeadPendingCreates(const std::vector<std::int64_t>& originalIds) {
-    AppController::DeadLetterRestoreSummary summary;
+    ::DeadLetterRestoreSummary summary;
     if (!deps_.Cache() || originalIds.empty()) {
         return summary;
     }
@@ -519,9 +517,9 @@ OfflineQueueService::RestoreDeadPendingCreates(const std::vector<std::int64_t>& 
     return summary;
 }
 
-AppController::DeadFieldEditRestoreSummary
+::DeadFieldEditRestoreSummary
 OfflineQueueService::RestoreDeadPendingFieldEdits(const std::vector<std::int64_t>& originalIds) {
-    AppController::DeadFieldEditRestoreSummary summary;
+    ::DeadFieldEditRestoreSummary summary;
     if (!deps_.Cache() || originalIds.empty()) {
         return summary;
     }
@@ -558,9 +556,8 @@ OfflineQueueService::RestoreDeadPendingFieldEdits(const std::vector<std::int64_t
     return summary;
 }
 
-AppController::DeadLetterDeleteSummary
-OfflineQueueService::DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds) {
-    AppController::DeadLetterDeleteSummary summary;
+::DeadLetterDeleteSummary OfflineQueueService::DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds) {
+    ::DeadLetterDeleteSummary summary;
     if (!deps_.Cache() || deadIds.empty()) {
         return summary;
     }
@@ -588,9 +585,8 @@ OfflineQueueService::DeleteDeadPendingCreates(const std::vector<std::int64_t>& d
     return summary;
 }
 
-AppController::PendingQueueDeleteSummary
-OfflineQueueService::DeletePendingCreates(const std::vector<std::int64_t>& pendingIds) {
-    AppController::PendingQueueDeleteSummary summary;
+::PendingQueueDeleteSummary OfflineQueueService::DeletePendingCreates(const std::vector<std::int64_t>& pendingIds) {
+    ::PendingQueueDeleteSummary summary;
     if (!deps_.Cache() || pendingIds.empty()) {
         return summary;
     }
@@ -845,9 +841,8 @@ bool OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
     return false;
 }
 
-AppController::PendingFieldEditDeleteSummary
-OfflineQueueService::DeletePendingFieldEdits(const std::vector<std::int64_t>& ids) {
-    AppController::PendingFieldEditDeleteSummary summary;
+::PendingFieldEditDeleteSummary OfflineQueueService::DeletePendingFieldEdits(const std::vector<std::int64_t>& ids) {
+    ::PendingFieldEditDeleteSummary summary;
     if (!deps_.Cache() || ids.empty()) {
         return summary;
     }
@@ -875,9 +870,9 @@ OfflineQueueService::DeletePendingFieldEdits(const std::vector<std::int64_t>& id
     return summary;
 }
 
-AppController::DeadFieldEditDeleteSummary
+::DeadFieldEditDeleteSummary
 OfflineQueueService::DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds) {
-    AppController::DeadFieldEditDeleteSummary summary;
+    ::DeadFieldEditDeleteSummary summary;
     if (!deps_.Cache() || deadIds.empty()) {
         return summary;
     }

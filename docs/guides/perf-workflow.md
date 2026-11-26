@@ -34,7 +34,7 @@ Classify the symptom first — the two need different captures and different fix
 
 ### 1. Instrument
 
-Wrap suspected hot paths in `SMATCHET_UI_PERF_SCOPE("perf_temp:<area>")` from `Source/Core/include/Ui/UiPerfMonitor.h`. Write the plan as a spec — `[(file, function-or-block, scope-name), …]`, every name prefixed `perf_temp:` — and apply it with the `perf-instrument` skill.
+Wrap suspected hot paths in `SMATCHET_UI_PERF_SCOPE("perf_temp:<area>")` from `Source/Core/include/UiPerfMonitor.h`. Write the plan as a spec — `[(file, function-or-block, scope-name), …]`, every name prefixed `perf_temp:` — and apply it with the `perf-instrument` skill.
 
 - **Always prefix new markers with `perf_temp:`** so cleanup is mechanical (one text search) and the prefix never collides with production scope names.
 - Committed scopes already cover the frame (`SmatchetUI::Draw`), the dispatcher drain (`MainThreadDispatcher::Drain`) and many panels — [`docs/perf/MARKER_INVENTORY.md`](../perf/MARKER_INVENTORY.md) lists them. Read those rows before adding a marker; never retag one.
@@ -344,6 +344,6 @@ The CLI talks to a running Smatchet instance via MCP HTTP. Discovery order: `--m
 **Adding a scenario:** § Path A3.
 
 **Instrument macros:**
-- `SMATCHET_UI_PERF_SCOPE(name)` — `Source/Core/include/Ui/UiPerfMonitor.h`
-- `UiPerfMonitor::Instance().GetLastFrameRows()` — `Source/Core/src/Ui/UiPerfMonitor.cpp`
+- `SMATCHET_UI_PERF_SCOPE(name)` — `Source/Core/include/UiPerfMonitor.h`
+- `UiPerfMonitor::Instance().GetLastFrameRows()` — `Source/Core/src/UiPerfMonitor.cpp`
 - UI panel: `Inspect > Performance Monitor...`

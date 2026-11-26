@@ -34,12 +34,13 @@ Some code sits outside every leaf directory, so no leaf auto-loads when it is ed
 
 | Code | Rules |
 |---|---|
-| `Source/Core/include/ITrackerBackend.h`, `Source/Core/include/ITracker*.h` | `Source/Core/src/Tracker/AGENTS.md` (Before you edit) |
+| `Source/Core/include/ITrackerBackend.h`, `Source/Core/include/ITracker*.h`, `Source/Core/include/TrackerError.h` | `Source/Core/src/Tracker/AGENTS.md` (Before you edit) |
 | `Source/Core/include/<ctx>/` for `Commands`, `Persistence`, `Sync`, `Tracker`, `Ui` | the leaf of the same context, `Source/Core/src/<ctx>/AGENTS.md` |
 | `Source/Core/src/AppController_IssueCreateOffline.cpp` | `Source/Core/src/Sync/AGENTS.md` (Before you edit) |
 | `AppController_CatalogAndFieldEdit.cpp` (`SubmitFieldEditOrQueue`), `FieldEditPipelineService.cpp`, `PendingActionPolicyPure.cpp`, `ConnectivityMonitorService.cpp`, `AppController_Connectivity.cpp` | `Source/Core/src/Sync/AGENTS.md` § Invariants; the pane a write is bound to: `Source/Core/src/Ui/AGENTS.md` § Offline-first reads (Pillar 6) |
 | `AppController_LocalCacheDb.cpp`, `EditMetaCacheService.cpp`, `IssueTransitionsCacheService.cpp`, `ProjectComponentsCacheService.cpp`, `LookupPayloadsPure.cpp`, `AttachmentDiskCache.cpp`, `AttachmentCachePure.cpp` | `Source/Core/src/Persistence/AGENTS.md` § Invariants; how their cached reads render: `Source/Core/src/Ui/AGENTS.md` § Offline-first reads (Pillar 6) |
 | `TicketGridModel.cpp`, `TicketGridFilterPure.cpp`, `TicketGridSortPure.cpp`, `TicketGridDurationSortPure.cpp`, `GridLiveContext.cpp`, `GridContextDepsAdapter.cpp`, `GridContextFieldCatalogOps.cpp`, `SmatchetGridFieldEditPipeline.cpp`, `SmatchetGridNotifications.cpp`, `TicketFieldEditor*.cpp`, `DataFreshnessCue.cpp` | `Source/Core/src/Ui/AGENTS.md` § Grid and its Grid file map (Before you edit) |
+| `MarkdownConvert.cpp`, `MarkdownToAdf.cpp`, `MarkdownToHtml.cpp`, `AdfToMarkdown.cpp`, `Views.cpp`, `UiPerfMonitor.cpp` (ImGui-free units that Tracker, Sync and the leaf headers also use, so they sit at the root, not under `Ui/`) | `Source/Core/src/Ui/AGENTS.md` |
 | `P4Annotate*.cpp`, `CallstackParser.cpp` | the header comments of `P4Annotate.h` and `CallstackParser.h`; the annotate views: `Source/Core/src/Ui/AGENTS.md` § Annotate views and syntax highlight |
 | `Source/Core/src/AppController_LuaBindings*.cpp`, `AppController_LuaStubs.cpp`, `LuaAutomationHost.cpp` | [`docs/guides/lua.md`](docs/guides/lua.md) § 5 Binding authors |
 | `Source/UnrealPlugins/**` (the Unreal plugin, its `SmatchetImGuiPlugin.Build.cs` and the `SmatchetPackageUnrealLibs_DX12` packaging target) | [`Source/UnrealPlugins/SmatchetImGuiPlugin/README.md`](Source/UnrealPlugins/SmatchetImGuiPlugin/README.md) § Packaging the Native Libraries (staged libs ↔ `Build.cs`); [`BUILD.md`](BUILD.md) § Unreal Packaging |

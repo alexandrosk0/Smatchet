@@ -169,6 +169,27 @@ std::uint64_t StartBulkFieldEdit(AppController& app, UiDrawSession& d, const std
                                  const std::vector<std::string>& values, smatchet::grid::bulk::BulkMode mode,
                                  bool readOnlyMode);
 
+/// Per-row bulk edit: every row gets its own values (a pasted column, or an undo that gives each row its own
+/// before-value back, with the value we wrote as the row's ADR-0016 conflict base). Always Replace mode. An undo job
+/// (`isUndo`) records no history entry and its summary toast reads "Undone".
+std::uint64_t StartBulkFieldEdit(AppController& app, UiDrawSession& d, const std::string& paneId,
+                                 const TrackerField& field, const std::vector<smatchet::grid::bulk::BulkRowInput>& rows,
+                                 bool readOnlyMode, bool isUndo = false);
+
+// SMATCHET_DEVIATION(rule=duplication; reason=a header declaration mirrors its definition signature; owner=grid-engine; revisit=2027-05-15)
+smatchet::grid::bulk::BulkFieldEditJob
+PrepareBulkFieldEditJob(AppController& app, const std::string& paneId, const TrackerField& field,
+                        const std::vector<smatchet::grid::bulk::BulkRowInput>& rows,
+                        std::vector<std::vector<std::string>>* rowValues);
+
+/// Undo (docs/plans/active/input-ux-w3-grid-spreadsheet.md, S3). The toast's Undo button: takes history entry
+/// `entryId` and queues its inverse as ordinary edits. A no-op when the entry is gone.
+void UndoGridEntryById(AppController& app, UiDrawSession& d, std::uint64_t entryId);
+
+/// Grid Ctrl+Z: undoes the newest entry of `paneId`. An entry whose save has not landed yet answers with an info
+/// toast and stays; an empty history answers with a quiet info toast. Returns true when an inverse was queued.
+bool UndoNewestGridEntry(AppController& app, UiDrawSession& d, const std::string& paneId);
+
 /// Folds one row's result into its job (UI thread). An unknown job is ignored with a warning. When the last row
 /// lands, the one summary toast is pushed.
 void FoldBulkRowResult(UiDrawSession& d, std::uint64_t jobId, const std::string& issueId,
