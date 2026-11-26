@@ -2,15 +2,13 @@
 // fix at bf9ce67f (`ReloadUserBuf so ImGui rereads spliced buffer`).
 // The fix lives across the router + AI Assistant TU pair: the router records
 // the focused widget's ItemId in `pendingReloadItemId_` whenever a splice lands
-// while the widget is active, and the AI Assistant draw drains that and calls
-// `ImGuiInputTextState::ReloadUserBufAndMoveToEnd()` before the next
-// InputTextMultiline. Without it, ImGui silently overwrites the freshly-spliced
-// `s_inputCharBuf` with its stale internal `state->TextA`.
-// The pre-existing `whisper-dictation-roundtrip` scenario can't cover this
-// path: it registers its own static buffer (NOT the AI Assistant chat input)
-// and never focuses the AI input as an ImGui widget. This scenario closes the
-// gap by composing the production registration surface that the AI Assistant
-// panel uses:
+// while the widget is active, and the frame's one drain
+// (`SmatchetLocalizedImGui::ApplyPendingDictationReload`, #2458) calls
+// `ImGuiInputTextState::ReloadUserBufAndMoveToEnd()` before any panel draws. Without it, ImGui silently overwrites the
+// freshly-spliced `s_inputCharBuf` with its stale internal `state->TextA`. The pre-existing
+// `whisper-dictation-roundtrip` scenario can't cover this path: it registers its own static buffer (NOT the AI
+// Assistant chat input) and never focuses the AI input as an ImGui widget. This scenario closes the gap by composing
+// the production registration surface that the AI Assistant panel uses:
 //   1. `RegisterAiAssistantInputText(buf, cap, cursor)` — panel-level idempotent
 //      mirror, sets `aiAssistantBuf_`.
 //   2. `RegisterInputTextWithItemId(buf, cap, cursor, NON_ZERO_ID)` — wrapper-
@@ -22,8 +20,9 @@
 // Then drives press → release with `SetMockTranscription` carrying a sentence-
 // ending text and asserts:
 //   - The buf received the mock text (splice landed).
-//   - `ConsumePendingReloadItemId()` returned the registered ItemId at least
-//     once during the post-insert frames (reload was armed).
+//   - The frame's drain consumed the registered ItemId at least once during the
+//     post-insert frames (reload was armed and drained), as reported by
+//     `TakeLastConsumedReloadItemIdForTest()`.
 //   - The auto-send callback was invoked (cell 3 — auto-send fired).
 //   - The router's transcribing flag toggled true then back to false (cell 4 at
 //     router level — the menu-bar indicator's source of truth).
@@ -124,6 +123,7 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
         // and there's no race with a prior scenario's leftover signal.
         g_autoSendCallbackFireCount.store(0, std::memory_order_release);
         g_pendingReloadIdLastSeen.store(0, std::memory_order_release);
+        (void)g_dictationRouter.TakeLastConsumedReloadItemIdForTest(); // drop a prior run's id
         g_observedTranscribingTrue.store(false, std::memory_order_release);
 
         // Zero the buffer + register on BOTH the AI flavour and the
@@ -165,14 +165,12 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
         if (g_dictationRouter.IsTranscribing()) {
             g_observedTranscribingTrue.store(true, std::memory_order_release);
         }
-        // Always poll the pending-reload slot — the production AI Assistant
-        // draw drains it via ConsumePendingReloadItemId. We mimic that drain
-        // so the assertion is "did the slot ever surface our id?" instead of
-        // "is it set right now". The scenario does NOT call
-        // ImGuiInputTextState::ReloadUserBufAndMoveToEnd because there's no
-        // real InputTextMultiline drawing this buf — the scenario's buf is
-        // ours, not ImGui's, so no reload is needed.
-        const unsigned int pendingId = g_dictationRouter.ConsumePendingReloadItemId();
+        // Always poll what the SmatchetUI drain consumed — it takes the pending
+        // id first (this tick reads it on a later frame), so the assertion is
+        // "did the drain ever take our id?" instead of "is it set right now".
+        // There is no real InputTextMultiline drawing this buf, so the drain
+        // finds no text state for the id and reloads nothing.
+        const unsigned int pendingId = g_dictationRouter.TakeLastConsumedReloadItemIdForTest();
         if (pendingId != 0) {
             g_pendingReloadIdLastSeen.store(pendingId, std::memory_order_release);
         }

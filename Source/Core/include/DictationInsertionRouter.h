@@ -136,12 +136,19 @@ class DictationInsertionRouter : public IDictationHost {
     /// contents in `state->TextA` and ignores the external `buf` unless
     /// `state->WantReloadUserBuf` is true (see imgui_widgets.cpp:4821), so a
     /// splice into a focused InputText would otherwise be silently overwritten
-    /// when InputText runs later in the same frame. The AI Assistant draw
-    /// (and any other caller hosting a focused InputText splice target) drains
-    /// this on every frame and, when non-zero, calls
-    /// `ImGui::GetInputTextState(id)->ReloadUserBufAndMoveToEnd()` BEFORE the
-    /// InputText call. Returns 0 when no reload is pending.
+    /// when InputText runs later in the same frame. One function drains it:
+    /// `SmatchetLocalizedImGui::ApplyPendingDictationReload()`, which
+    /// `SmatchetUI` calls at the top of its draw and again after the in-frame
+    /// dispatcher drain, before the panels draw. It calls
+    /// `ImGui::GetInputTextState(id)->ReloadUserBufAndMoveToEnd()`, which is
+    /// right whichever field the id names. Returns 0 when no reload is pending.
     unsigned int ConsumePendingReloadItemId();
+
+    /// Test-and-clear the last non-zero id `ConsumePendingReloadItemId`
+    /// returned. The central drain consumes the pending id before a scenario
+    /// or test can, so this is how they see that a reload was armed and
+    /// drained. Returns 0 when none was consumed since the last call.
+    unsigned int TakeLastConsumedReloadItemIdForTest();
 
   private:
     struct Entry {
@@ -210,6 +217,9 @@ class DictationInsertionRouter : public IDictationHost {
     // splice path (which already holds entries mutex_) can set it without an
     // additional lock; drain is single-reader on the UI thread.
     std::atomic<unsigned int> pendingReloadItemId_{0u};
+    // The last non-zero id ConsumePendingReloadItemId returned, for
+    // TakeLastConsumedReloadItemIdForTest.
+    std::atomic<unsigned int> lastConsumedReloadItemId_{0u};
 };
 
 /// Process-wide router instance. Defined exactly once — in
