@@ -11,6 +11,167 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Batch 28 — #2368–#2492 (104-unit sweep, 2026-11-25) — review only, findings open
+
+Coverage: **104 PRs as 104 units — 85 reviewed (41 with findings, 44 clean), 19 with no review surface, 0 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 2 HIGH, 15 MEDIUM, 74 LOW** (91 findings, 17 `userVisible`). **Nothing is fixed here: this PR records the review, and all 91 are open.** One HIGH is already tracked as open Issue #2446; no new Issue was filed, and the other 16 `userVisible` findings are Issue candidates (ADR-0014). **The frontier is now #1–#2492 contiguous for PRs merged when the work-list was cut (2026-11-25, develop at `80d95d134`); the next sweep resumes from #2493, plus #2485, #2488 and #2490 (open at the cut, merged later the same day) and #2480 and #2481 (still open below the frontier).**
+
+**Range.** Work-list computed by `historical-review-worklist.sh --range 2368 2492 --json` against the GitHub merged list: *{authoritative: 104, scraped: 104, missed: [], covered: 104, units: 104}*. No merge-commit PRs, so no constituent expansion. #2244, the PR Batch 27 carried forward, closed without merging and is dropped. Five PRs were open below the new frontier at the cut: #2480, #2481, #2485, #2488 and #2490. Nineteen units have no review surface and no agent read them: 18 whose only surviving lines are `merge-snapshots.jsonl` data rows (#2374, #2382, #2394, #2398, #2403, #2404, #2417, #2418, #2420, #2423, #2426, #2427, #2428, #2429, #2431, #2436, #2479, #2487) and #2378, a submodule-pointer bump the extractor reports as nothing to assess.
+
+**Method.** The 85 remaining digests (`historical-review-survivors.sh <sha> --against origin/develop --context 3`) were split along file and hunk boundaries into 147 chunks of at most 70 KB, because four digests (#2385, #2432, #2433, #2441) are larger than the fleet rules allow one agent to read. A three-stage workflow ran at five lanes: an opus review of each chunk, an opus adversarial verify of every finding against HEAD (confirm, adjust or refute), and a second skeptic on each HIGH. 147 of 147 chunks returned. The run was stopped twice to stay inside the usage limit. The second resume replayed only 11 cached results, so most chunks were reviewed again from scratch; the results recorded here are the last run's (223 agents, about 23.1M tokens). Of 117 raw findings the verify stage refuted 15 and adjusted 14 (seven changed severity: one HIGH to MEDIUM and six MEDIUM to LOW; the other seven changed wording only), and the orchestrator refuted 11 more (below), leaving 91. Both HIGHs and the nine `userVisible` MEDIUMs were also read by hand at the baseline. Develop moved by five merges during the run (to `62dbf3d08`); every cited line in a file those merges touched is still present there.
+
+> **Reviewer blind spot: tier-less plan paths.** Fifteen raw findings called a `docs/plans/<slug>.md` reference a dead path. That form is the required one (`process-rules.md` § Archive on revision: plan references carry no `active/` / `shipped/` segment, and `test-markdown-links.sh` resolves them against any tier). The verify stage refuted four of them and confirmed eleven. A script check showed each of the eleven slugs resolves in exactly one tier, so all eleven were dropped. The sweep prompt does not state the convention and should.
+>
+> **Young-slice caveat.** The range spans merges 0 to 25 days old, so no unit was fully superseded and most digests show nearly every introduced line alive. The findings are real, but they carry little "survived N later PRs" evidence.
+
+**Headlines.** Wrong-target writes: the Lua "run on selection" action resolves the selection against the unfiltered row order, so with a search active a script runs on other issues (F81); a Jira site switch leaves non-focused panes on the old site's rows while their writes go to the new site (F67, Issue #2446); long-text and worklog drafts are not scoped by tracker, so a kept draft for one site is restored into, and can be saved to, another site's issue with the same key (F47, F48); a pasted non-issue URL can become a parent key (F55). Lifetime: `FindFieldById` hands out a raw pointer into the copy-on-write field catalog (F5), and the Unreal input processor casts the platform application without a type check (F2). Gates and tests: a CI-proof check that passes while its job skips (F59), an eval parser that miscounts findings under sub-headings (F17), a test whose cancel assertions cannot fail (F44). Most of the 68 internal LOWs are doc drift: stale line pins, plans still marked active after shipping, and the ASan-only wording that #2415 made false.
+
+### Actionable set — HIGH + every `userVisible` finding (17)
+
+Problem and fix, shortened. The full problem and fix text of all 91 is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl) (`batch: batch-28`, keyed by `pr` + `file` + `line`, with a `disposition` field). Where a summary below says more than the row's `problem`, the detail comes from the row's `verify` field: the verifier's evidence and, for the two HIGHs, the second skeptic's.
+
+**HIGH (2)**
+- **F81 · #2473 (2a1d4b00) · `Source/Plugins/LuaConsole/LuaConsolePlugin.cpp:752`** · **userVisible** — "Run script on selection" maps the selected rows through `focusedPane.cachedSortedIndices`, but the selection holds shown-row indices into `pane.filteredIndices` (`SmatchetActiveProjectGridTable.cpp:1157-1167`). With a grid search active, or hide-parents on, shown row *r* is not `cachedSortedIndices[r]`, so the automation script, which can write to the tracker, runs on issues the user did not select. Example: sorted rows [A, B, C, D], a search that shows only C and D, select the first shown row (C): the script runs on A. The bulk export maps the same rows through `filteredIndices` (`SmatchetBulkTicketsUi.cpp:684-692`). The line dates from #962, but #2473 rewrote it for selection-by-identity and kept the wrong vector. **Fix:** pass `filteredIndices` (falling back to `cachedSortedIndices` only when it is empty), or resolve the ids from `rectSel.KeepIssueIds`; add a case with a search active. Confirmed by the verifier, the second skeptic and a hand read at the baseline. **Issue candidate, not filed.**
+- **F67 · #2451 (55df9e63) · `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp:1259`** · **userVisible** — `switchActiveJiraSite` re-syncs only the focused pane, and no pane when the focused one is not on Jira. Any other synced Jira pane keeps the previous site's rows with no stale cue, and nothing re-arms its sync on the switch. `JiraClient` is stateless and reads the host from `ConfigManager::Load()` on every request, and no live-send path compares the pane's site key with the active site, so a write issued from that pane goes to the newly active site: a wrong-site mutation when the same issue key exists on both (a sandbox and production pair), a failed write otherwise. The shipped plan (`pane-picker-jira-sites.md`) records it as a known hazard, waived. **Fix:** on a switch re-arm every non-focused Jira context the way `StartRecreateLocalCacheDatabase` does, and hold a live send whose target backend key differs from the active site's. **Already tracked: open Issue #2446 (P1).**
+
+**MEDIUM (9)**
+- **F2 · #2370 (4c6be61a) · `Source/UnrealPlugins/SmatchetImGuiPlugin/Source/SmatchetImGuiPlugin/Private/SmatchetImGuiInputProcessor.cpp:74`** · **userVisible** — Unreal host: `GetSlateWindowsApplication()` `static_cast`s Slate's platform application to `FWindowsApplication*` with no type check. A plugin in the host project that replaces the platform application with a wrapper (Pixel Streaming does, through `OverridePlatformApplication`) makes `AddMessageHandler` / `RemoveMessageHandler` run on an object of another type: undefined behaviour. Detach also re-derives the application instead of using the one it registered with, so an override between startup and shutdown leaves the handler registered. **Fix:** cache the application pointer used to register and remove from that same object; do not register when it is not the native Windows application.
+- **F5 · #2375 (ffbad7a9) · `Source/Core/src/AppController_CatalogAndFieldEdit.cpp:1232`** · **userVisible** — `AppController::FindFieldById` returns a raw `const TrackerField*` into `*cat.AvailableFields` and releases the lock on return. Under the copy-on-write catalog this PR introduced, a worker swap (`RefreshFieldCatalog`, a snapshot restore) frees the old vector when no other holder exists, so the pointer dangles. Callers dereference it with no snapshot held: `fields.get`, the ticket-mutation commands, `EditMetaCacheService::CanEditFieldImpl`. It is the use-after-free class the PR fixed for `GetAvailableFields`, left open on the sibling accessor. **Fix:** return an aliasing `std::shared_ptr<const TrackerField>` over the snapshot, as `OfflineQueueService::FindCatalogField` does, or copy the field out under the lock.
+- **F21 · #2407 (fcafc4be) · `Source/Core/src/Sync/LeftViewReasonPure.cpp:155`** · **userVisible** — Left-view history, the changelog-unavailable fallback: `DiffRowFields` compares only keys present in both maps, and `LastKnownFieldsToJson` drops empty values. For a departure reloaded from storage, an empty-to-set change (the view is `assignee is EMPTY` and the issue gets assigned) reports "no compared field changed". The in-memory paths keep empty values and are not affected for an empty-to-set change. **Fix:** persist the empty values of the fields the query names, and treat a key that is empty in last-known and set in fresh as a change.
+- **F45 · #2438 (8866a711) · `Source/Core/src/Ui/SmatchetPreferencesUi_Templates.cpp:456`** · **userVisible** — The comment-template Body editor in Preferences still calls the raw `SmatchetInput::InputTextMultilineStdString`. Esc while typing in it runs ImGui's own revert and throws away the whole edit, against the shared contract (the first Esc leaves the field and keeps the text); Title and ID in the same editor already use `SmatchetInput::Text`. **Fix:** use `SmatchetInput::Multiline` and keep the `.edited` check; add a case that Esc keeps the typed body.
+- **F47 · #2439 (673a37ee) · `Source/Core/src/TicketFieldEditor_Modal.cpp:231`** · **userVisible** — The long-text draft scope is `IssueId|FieldId` with no backend key, unlike the comments surface (`CommentsDraftScope(app.FocusedCacheBackendKey(), issueId)`). With two sites that share an issue key, an unsaved edit kept for site A is restored into site B's editor, and Save writes site A's text to site B's issue. A "base changed" cue shows when the seeds differ, but the text is still restored. **Fix:** capture the owning backend key when the editor opens and put it in the scope.
+- **F48 · #2439 (673a37ee) · `Source/Core/src/TicketFieldEditor_Worklog.cpp:162`** · **userVisible** — Worklog drafts (time spent, description, remaining) are keyed by issue id alone. Opening the worklog dialog for the same issue key on another tracker restores the other tracker's kept entry, a submit logs that time against the wrong issue, and the erase on success also removes the other site's kept entry. **Fix:** scope the three worklog surfaces by backend key and issue id.
+- **F55 · #2441 (3d1ff166) · `Source/Core/src/Tracker/TrackerFieldValueParseExplain.cpp:866`** · **userVisible** — `KeyFromUrl`'s last-resort loop takes the last path segment shaped like KEY-N on any host except Linear, and `ExtractIssueKey` feeds a pasted URL through it into the parent-field write. Pasting a non-issue link such as `https://wiki.acme.com/display/ENG/Release-2` into a parent field sends RELEASE-2 as the parent; if a project with that key exists, the parent changes with no warning. No test pins the generic fallback. **Fix:** run the generic segment scan only for known tracker hosts or path shapes; otherwise return empty so the "no key in this URL" message shows.
+- **F63 · #2443 (8cf3bb91) · `Source/Core/src/Config/ConfigManager_Load.cpp:619`** · **userVisible** — `MigrateActionKeysV1` seeds the default rows for `preferences.search.focus`, `view.next` and `view.previous` when the user has no binding for that command, but never checks whether the user already bound that chord to another command. The dispatcher fires every match on a key press, so a user who had Ctrl+PageDown on something else gets both commands after the upgrade. The keybinding editor marks the conflict, but the migration adds it silently; the two sibling migrations use the same command-only guard. **Fix:** when an enabled binding already holds the chord, skip the row or seed it disabled, and log it; add a config-load test.
+- **F88 · #2486 (4eed00a0) · `Source/Core/src/Ui/SmatchetQuickCreateIssueUi.cpp:120`** · **userVisible** — Quick Create: on an open that passes its own text, `RestoreQuickCreateDraft` returns before it sets the synced statics. On the first such open after a restart the statics are empty while the store, loaded from `smatchet_drafts.json`, holds a kept summary and description. When the user then edits the summary, the new summary is saved next to the old kept description, and the next plain open restores that mix: an old description can be filed under an unrelated summary. Within one session the statics match the store, so only the cold-start path breaks. **Fix:** in the text-passing branch set the synced statics from the store.
+
+**LOW (6)**
+- F20 · #2407 (fcafc4be) · `Source/Core/include/Ui/LeftViewHistoryPure.h:36` · **userVisible** — `MergeDetailFields` keys the merged map by display label, not field id, so two fields that share a label (two Jira custom fields both named "Team") collapse into one row and one value is lost. **Fix:** merge by field id, then project to label and value.
+- F38 · #2433 (a109513f) · `Source/Core/src/Ui/SmatchetOfflineQueueUi.cpp:1887` · **userVisible** — the Esc-unsaved hint in the conflict editor says a cancelled resolution "is kept until Smatchet closes"; the draft is in the persistent store and the Cancel toast in the same file says the opposite. **Fix:** reword the hint to match the toast.
+- F52 · #2441 (3d1ff166) · `Source/Core/src/Tracker/JqlQueryValidatePure.cpp:165` · **userVisible** — in the field-value dialect (GitHub, Linear and Plane grid search) a trailing comma is a blocking dangling-operator error, so the plain text `is:open crash,` is refused; a trailing `!` or `~` is already exempt for the same reason. **Fix:** treat a trailing comma as plain text there.
+- F54 · #2441 (3d1ff166) · `Source/Core/src/Tracker/TrackerFieldValueParseExplain.cpp:534` · **userVisible** — `TryParseNumericDate` accepts a 1-digit year, so `11/20/6`, or a half-typed `11/20/2` committed on Enter, reads as 2006 / 2002; the month-name path rejects the same input. **Fix:** reject a 1-digit and a 3-digit year group.
+- F56 · #2441 (3d1ff166) · `Source/Core/src/Ui/SmatchetOfflineQueueUi.cpp:1626` · **userVisible** — `ScalarKindForField` treats a field as a sprint only when its id contains `sprint`; Jira's Sprint is a `customfield_…` id, so a Jira sprint conflict gets the generic hint and rejection text. **Fix:** look the field up in the catalog and use `IsSprintField`.
+- F86 · #2483 (1c0d9d6e) · `Source/Core/src/Ui/SmatchetActiveProjectGridKeys.cpp:190` · **userVisible** — a pending key-edit request is overwritten, not extended. When the target column is clipped horizontally the cell draws one frame later, and a second keystroke in that frame replaces the seed, dropping the first typed character. **Fix:** append to the pending seed for the same cell.
+
+### Internal debt — MEDIUM (6)
+
+- F7 · #2385 (d0ea8c79) · `BUILD.md:264` — `BUILD.md` says every Windows ASan lane is ASan only; since #2415 the clang-cl lanes run ASan with fatal UBSan, so a reader triaging one would rule UBSan out. The same drift is at `BUILD.md:82` (F6) and `docs/CONTEXT.md:48` (F9).
+- F13 · #2385 (d0ea8c79) · `docs/plans/active/backlog-pr-roadmap.md:100` — a duplicate PR-14 row says the coverage threshold is still open at 65; the row above it, `project.config.json` and `coverage.yml` all say it shipped in #1854 at 70.
+- F17 · #2392 (671aa9c8) · `scripts/dev/agent-eval-run.sh:363` — `parse_heading_findings` ignores heading level. A sub-heading under `## Verified clean` turns its citations into findings on a clean review, and a sub-heading under `## High` drops its bullets to zero findings.
+- F44 · #2437 (7c288e6e) · `tests/ui/mobile_views_confirm_modal.test.cpp:214` — the "Enter / Esc cancels: nothing is deleted" checks cannot fail. The target view id does not exist, so a wrong Delete pick and a Cancel end in the same state; only the NavId check pins anything.
+- F50 · #2440 (79baaa7a) · `scripts/dev/test-drag-keyboard-equivalent.sh:134` — latent fail-open: the drag-source `git grep` drops stderr and its exit status, and nothing sets a floor on the scanned count. Lowered from HIGH by the verifier: today the earlier guards catch a wrong root and the real tree scans 9 sources.
+- F59 · #2442 (be17aec8) · `scripts/dev/plan-ci-proof-check.sh:73` — the proof check maps "Windows + MSVC" to the `code` output only, but the job is also gated on `android_only != 'true'`. An android-only diff prints "will run" and passes while the job skips, the fail-open the script exists to catch.
+
+### Internal debt — LOW (68), indexed by file
+
+All `userVisible: false`. One row per file; the problem and fix for each are in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl).
+
+- `.github/actions/cr-finding-gate/action.yml` — 1 LOW — #2422:1290 (F32)
+- `.github/actions/setup-pinned-llvm/action.yml` — 1 LOW — #2415:45 (F30)
+- `BUILD.md` — 1 LOW — #2385:82 (F6)
+- `CMakePresets.json` — 1 LOW — #2385:202 (F8)
+- `docs/audits/INPUT_UX_AUDIT.md` — 2 LOW — #2433:992 (F41), #2433:1004 (F42)
+- `docs/CONTEXT.md` — 2 LOW — #2385:48 (F9), #2385:96 (F10)
+- `docs/guides/review-checklist.md` — 1 LOW — #2385:62 (F11)
+- `docs/perforce/AGENT_FLOWS.md` — 1 LOW — #2385:348 (F12)
+- `docs/plans/active/bulk-edit-rows.md` — 2 LOW — #2432:41 (F34), #2432:141 (F35)
+- `docs/plans/active/clang-cl-ubsan-lanes.md` — 2 LOW — #2400:5 (F19), #2415:83 (F31)
+- `docs/plans/active/delta-sync.md` — 1 LOW — #2372:114 (F3)
+- `docs/plans/active/dx12-backbuffer-readback-screenshot.md` — 1 LOW — #2389:41 (F16)
+- `docs/plans/active/input-ux-w3-attachments-drop-paste.md` — 3 LOW — #2466:14 (F78), #2466:22 (F79), #2466:392 (F80)
+- `docs/plans/active/input-ux-w3-description-templates.md` — 1 LOW — #2464:89 (F75)
+- `docs/plans/active/input-ux-w3-filter-without-jql.md` — 2 LOW — #2465:288 (F76), #2465:481 (F77)
+- `docs/plans/active/input-ux-w3-grid-spreadsheet.md` — 2 LOW — #2461:5 (F71), #2461:16 (F72)
+- `docs/plans/active/left-view-history-grid.md` — 3 LOW — #2407:5 (F23), #2407:35 (F24), #2407:73 (F25)
+- `docs/plans/active/llm-verifier-sidecar.md` — 1 LOW — #2385:23 (F14)
+- `docs/plans/shipped/input-ux-w2-action-keys.md` — 1 LOW — #2463:198 (F73)
+- `docs/plans/shipped/input-ux-w2-view-delete-undo.md` — 1 LOW — #2477:105 (F85)
+- `docs/self-improvement/categories/applied-2026-09.md` — 1 LOW — #2463:20 (F74)
+- `docs/self-improvement/categories/debt/2026-10-04-pane-display-value-resolution-uses-focused-backend.md` — 1 LOW — #2484:2 (F87)
+- `docs/self-improvement/categories/debt/2026-11-17-dropdown-recents-review-mediums-and-lows.md` — 1 LOW — #2447:18 (F64)
+- `docs/self-improvement/categories/debt/2026-11-17-filter-dropdown-cr-second-round-keynav-space-race.md` — 1 LOW — #2447:12 (F65)
+- `docs/self-improvement/categories/debt/2026-11-22-drafts-undo-deferred.md` — 1 LOW — #2486:20 (F89)
+- `docs/self-improvement/categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md` — 1 LOW — #2388:130 (F15)
+- `docs/self-improvement/categories/process/2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md` — 1 LOW — #2372:60 (F4)
+- `docs/self-improvement/categories/tooling/2026-11-04-agent-eval-real-parser-counts-citations.md` — 1 LOW — #2393:7 (F18)
+- `docs/self-improvement/categories/tooling/2026-11-20-postmortem-owed-flags-an-override-whose-gate-passed-on-the-merged-head.md` — 1 LOW — #2457:33 (F70)
+- `docs/self-improvement/postmortems.md` — 2 LOW — #2424:342 (F33), #2491:48 (F91)
+- `docs/STRUCTURE.md` — 1 LOW — #2433:41 (F40)
+- `scripts/dev/plan-ci-proof-check.sh` — 2 LOW — #2442:48 (F58), #2442:141 (F60)
+- `scripts/dev/test-drag-keyboard-equivalent.sh` — 1 LOW — #2440:111 (F49)
+- `Source/Core/src/IssueTransitionsCacheService.cpp` — 1 LOW — #2410:182 (F28)
+- `Source/Core/src/Tracker/TrackerDateTimePure.cpp` — 1 LOW — #2441:166 (F53)
+- `Source/Core/src/Tracker/TrackerFieldValueUtils.cpp` — 1 LOW — #2410:80 (F29)
+- `Source/Core/src/Ui/SmatchetLeftViewHistoryUi.cpp` — 1 LOW — #2407:156 (F22)
+- `Source/Core/src/Ui/SmatchetPreferencesUi_Keybindings.cpp` — 1 LOW — #2433:395 (F39)
+- `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp` — 1 LOW — #2451:1258 (F66)
+- `tests/bats/agent_eval_run.bats` — 1 LOW — #2408:430 (F27)
+- `tests/bats/plan_ci_proof_check.bats` — 2 LOW — #2442:112 (F61), #2442:247 (F62)
+- `tests/Core/AppControllerFieldCatalog.posix.test.cpp` — 3 LOW — #2452:1118 (F68), #2452:1303 (F69), #2476:1392 (F84)
+- `tests/Core/BulkFieldEditPure.test.cpp` — 1 LOW — #2473:348 (F82)
+- `tests/Core/LeftViewHistoryService.test.cpp` — 1 LOW — #2407:108 (F26)
+- `tests/Core/OfflineQueueServiceRuntime.test.cpp` — 1 LOW — #2368:1199 (F1)
+- `tests/Core/TrackerInputNormalisePure.test.cpp` — 1 LOW — #2441:277 (F57)
+- `tests/ui/ai_prefs_autosave_flow.test.cpp` — 1 LOW — #2433:455 (F43)
+- `tests/ui/bulk_field_edit.test.cpp` — 1 LOW — #2432:883 (F36)
+- `tests/ui/data_dependent_windows_smoke.test.cpp` — 1 LOW — #2486:850 (F90)
+- `tests/ui/filter_dropdown.test.cpp` — 1 LOW — #2432:933 (F37)
+- `tests/ui/gesture_keys.test.cpp` — 1 LOW — #2440:6 (F51)
+- `tests/ui/grid_spreadsheet_keys.test.cpp` — 1 LOW — #2473:417 (F83)
+- `tests/ui/tracker_first_run_setup.test.cpp` — 1 LOW — #2438:881 (F46)
+
+### Open list — one row per PR with an open finding
+
+`historical-review-ledger-reconcile.sh` reads only a block whose header starts with `**STILL OPEN`, and probes the first `#PR` of each bullet for supersession. The 2026-10-23 Reconcile note's "the open list is empty" held up to Batch 27; this block is the live open list now. Drop a row when every finding it names is fixed or superseded.
+
+**STILL OPEN (NOT DONE) — Batch 28, alive at develop `62dbf3d08` on 2026-11-25:**
+- **#2368** — F1
+- **#2370** — F2
+- **#2372** — F3, F4
+- **#2375** — F5
+- **#2385** — F6, F7, F8, F9, F10, F11, F12, F13, F14
+- **#2388** — F15
+- **#2389** — F16
+- **#2392** — F17
+- **#2393** — F18
+- **#2400** — F19
+- **#2407** — F20, F21, F22, F23, F24, F25, F26
+- **#2408** — F27
+- **#2410** — F28, F29
+- **#2415** — F30, F31
+- **#2422** — F32
+- **#2424** — F33
+- **#2432** — F34, F35, F36, F37
+- **#2433** — F38, F39, F40, F41, F42, F43
+- **#2437** — F44
+- **#2438** — F45, F46
+- **#2439** — F47, F48
+- **#2440** — F49, F50, F51
+- **#2441** — F52, F53, F54, F55, F56, F57
+- **#2442** — F58, F59, F60, F61, F62
+- **#2443** — F63
+- **#2447** — F64, F65
+- **#2451** — F66, F67
+- **#2452** — F68, F69
+- **#2457** — F70
+- **#2461** — F71, F72
+- **#2463** — F73, F74
+- **#2464** — F75
+- **#2465** — F76, F77
+- **#2466** — F78, F79, F80
+- **#2473** — F81, F82, F83
+- **#2476** — F84
+- **#2477** — F85
+- **#2483** — F86
+- **#2484** — F87
+- **#2486** — F88, F89, F90
+- **#2491** — F91
+
+**Clean (44, surviving lines read in full, no finding kept):** #2371, #2373, #2376, #2377, #2379, #2380, #2381, #2383, #2384, #2386, #2387, #2390, #2391, #2395, #2399, #2401, #2402, #2405, #2406, #2409, #2411, #2412, #2413, #2414, #2416, #2419, #2421, #2425, #2430, #2450, #2454, #2455, #2456, #2462, #2467, #2468, #2469, #2470, #2471, #2472, #2474, #2475, #2482, #2492.
+
+**No review surface (19):** #2374, #2382, #2394, #2398, #2403, #2404, #2417, #2418, #2420, #2423, #2426, #2427, #2428, #2429, #2431, #2436, #2479, #2487 — data rows only; #2378 — submodule pointer only.
+
+**Fully superseded (0).**
+
 ## Batch 27 — #2300–#2367 + late #2279, #2291, #2296 (55-unit sweep, 2026-10-31) — all fixed
 
 Coverage: **55 PRs as 55 units — all reviewed (20 with findings, 30 clean), 5 fully superseded, 0 errored after the tooling fix below.** Net: **0 CRITICAL, 0 HIGH, 10 MEDIUM, 40 LOW** (50 findings, 10 `userVisible`). **All 50 are fixed** — 49 in this PR; F38's command path is fixed here and its plan archive landed in #2377. No Issue was filed for the user-visible ones, because they ship fixed here (ADR-0014 Issues track open product bugs). **The frontier is now #1–#2367 contiguous for PRs merged as of 2026-10-31; the next sweep resumes from #2368, plus #2244 (still open below the frontier).**
@@ -942,6 +1103,11 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   contiguous for PRs merged when the sweep ran, so every batch names the open
   PRs below its frontier and the next one re-checks them, never trusting
   frontier+1 alone (§ Batch 25 late-merge rule).
+  **2026-11-25 — frontier now #1–#2492 (Batch 28) for PRs merged when its
+  work-list was cut; the next sweep resumes from #2493 AND must add #2485,
+  #2488 and #2490 (open at the cut, merged later that day) and re-check
+  #2480 / #2481 (still open).** Batches 26 and 27 recorded their frontiers
+  (#2299, #2367) in their own headers only.
   Build the work-list with `historical-review-worklist.sh --json`: the
   object it emits carries the computed coverage triple alongside the units, and
   passing that whole object as the sweep workflow's `args` makes the workflow
