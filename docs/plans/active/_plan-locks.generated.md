@@ -8,44 +8,12 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## In-flight locks (4 active)
-
-### `bulk-status-allowed-transitions`
-
-- **Owner**: `orchestrator`
-- **Branch**: `claude/bulk-status-allowed-transitions`
-- **Started**: 2026-11-24T14:05:57Z
-- **Updated**: 2026-11-24T15:41:43Z
-- **Write set** (11 paths):
-  - `Source/Core/include/StatusComboOptionsPure.h`
-  - `Source/Core/include/TicketFieldEditor.h`
-  - `Source/Core/src/TicketFieldEditor.cpp`
-  - `Source/Core/src/Ui/SmatchetBulkFieldEditPopup.cpp`
-  - `tests/ui/bulk_field_edit.test.cpp`
-  - `tests/Core/StatusComboOptionsPure.test.cpp`
-  - `docs/guides/bulk-edit.md`
-  - `docs/plans/active/bulk-edit-rows.md`
-  - `Source/Core/include/Ui/SmatchetUiSession.h`
-  - `Source/Core/src/SmatchetLocalization.cpp`
-  - `scripts/dev/test-ui-bulk-field-edit.sh`
-
-### `grid-search-focus-keeps-popups`
-
-- **Owner**: `orchestrator`
-- **Branch**: `claude/grid-search-focus-keeps-popups`
-- **Started**: 2026-11-24T13:25:05Z
-- **Write set** (2 paths):
-  - `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp`
-  - `tests/ui/bulk_field_edit.test.cpp`
 ## In-flight locks (2 active)
 
 ### `input-ux-w2-dictation-drain`
 
 - **Owner**: `orchestrator`
 - **Branch**: `claude/input-ux-w2-dictation-drain`
-- **Originating plan**: `docs/plans/active/input-ux-w2-dictation-drain.md` (not on this branch yet)
-- **Started**: 2026-11-25T14:35:32Z
-- **Write set** (17 paths):
 - **Originating plan**: `docs/plans/shipped/input-ux-w2-dictation-drain.md` (not on this branch yet)
 - **Started**: 2026-11-25T14:35:32Z
 - **Updated**: 2026-11-25T17:06:48Z
@@ -67,29 +35,6 @@
   - `docs/plans/active/input-ux-w2-dictation-drain.md`
   - `docs/plans/shipped/input-ux-w2-dictation-drain.md`
   - `docs/self-improvement/categories/debt/2026-11-22-drafts-undo-deferred.md`
-
-### `input-ux-w2-surface-leftovers`
-
-- **Owner**: `orchestrator`
-- **Branch**: `claude/input-ux-w2-text-field-leftovers`
-- **Originating plan**: `docs/plans/shipped/input-ux-w2-surface-leftovers.md` (not on this branch yet)
-- **Started**: 2026-11-24T20:56:13Z
-- **Updated**: 2026-11-24T21:25:11Z
-- **Write set** (14 paths):
-  - `Source/Core/src/Ui/SmatchetToolbarUi.cpp`
-  - `Source/Core/include/Ui/SmatchetToolbarUi.h`
-  - `Source/Core/src/Ui/SmatchetToolbarUi_detail.h`
-  - `Source/Core/src/Ui/AnnotateAnalysisUi_Preferences.cpp`
-  - `Source/Core/src/Ui/AnnotateAnalysisUi_Internal.h`
-  - `tests/Core/ToolbarEditorPure.test.cpp`
-  - `tests/ui/funcsize_main_ui_smoke.test.cpp`
-  - `tests/ui/gesture_keys.test.cpp`
-  - `docs/plans/active/input-ux-w2-surface-leftovers.md`
-  - `docs/plans/shipped/input-ux-w2-surface-leftovers.md`
-  - `docs/plans/INDEX.md`
-  - `docs/self-improvement/categories/debt/2026-11-16-text-field-migration-blocked-surfaces.md`
-  - `docs/self-improvement/categories/debt/2026-11-19-one-matcher-deferred.md`
-  - `docs/self-improvement/categories/debt/2026-11-24-left-view-history-stale-ci-step-name.md`
   - `tests/ui/whisper_ai_assistant_autosend.test.cpp`
   - `docs/plans/INDEX.md`
 
