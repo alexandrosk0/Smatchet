@@ -34,7 +34,7 @@
     {
       "area": "tracker-backend",
       "summary": "Tracker backends — Jira / Plane / GitHub / Linear clients, HTTP, field catalog / parser",
-      "globs": ["Source/Core/src/Tracker/**", "Source/Core/include/Tracker/**", "**/ITracker*.h", "**/TrackerField*"],
+      "globs": ["Source/Core/src/Tracker/**", "Source/Core/include/Tracker/**", "**/ITracker*.h", "**/TrackerField*", "**/TrackerError.h"],
       "docs": ["Source/Core/src/Tracker/AGENTS.md", "Source/Core/src/Tracker/CONTEXT.md", "Source/Core/src/Tracker/README.md"]
     },
     {
@@ -52,7 +52,7 @@
     {
       "area": "ui",
       "summary": "General UI — theme, layout, widgets, fonts, standalone host",
-      "globs": ["Source/Core/src/Ui/**", "Source/Core/include/Ui/**", "Source/Standalone/**", "**/SmatchetTheme*", "**/SmatchetLocaliz*", "**/SmatchetImConfig.h"],
+      "globs": ["Source/Core/src/Ui/**", "Source/Core/include/Ui/**", "Source/Standalone/**", "**/SmatchetTheme*", "**/SmatchetLocaliz*", "**/SmatchetImConfig.h", "**/MarkdownConvert*", "**/MarkdownToAdf.cpp", "**/MarkdownToHtml.cpp", "**/AdfToMarkdown.cpp", "**/Views.{h,cpp}", "**/UiPerfMonitor*", "**/PerfSampleRing.h"],
       "docs": ["Source/Core/src/Ui/AGENTS.md"]
     },
     {

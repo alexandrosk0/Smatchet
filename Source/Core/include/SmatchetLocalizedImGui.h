@@ -121,6 +121,14 @@ inline bool Combo(const char* label, int* current_item, const char* (*getter)(vo
 // merely draws a localized widget. Behaviour is identical to the prior inline body.
 void HookDictationOnLastItem(char* buf, std::size_t buf_size);
 
+// The one drain of the dictation router's pending reload (#2458). A splice into the active field writes its
+// buffer, but ImGui edits its own copy of an active field's text and would write that back on the next
+// keystroke; this asks the widget the router names to re-read its buffer. SmatchetUI calls it at the top of
+// its draw (before the overlays) and again after the in-frame dispatcher drain (where dictation post-backs
+// splice), before the panels draw, so every routed field is covered whichever panels are open. UI thread, inside a
+// frame. Defined in SmatchetDictationHook.cpp.
+void ApplyPendingDictationReload();
+
 inline bool InputText(const char* label, char* buf, size_t buf_size, ImGuiInputTextFlags flags = 0,
                       ImGuiInputTextCallback callback = nullptr, void* user_data = nullptr) {
     const bool result =

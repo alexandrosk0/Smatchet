@@ -402,6 +402,9 @@ void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
     // Before any window draws: hands the caret back to the field that had it when the last modal closed.
     smatchet::ui::ServiceDialogFocusReturn();
+    // Dictation reload before the palette, Quick Create and bug report overlays draw. It covers splices from
+    // hosts that also drain the dispatcher before NewFrame, such as the spawn and Android loops (#2458).
+    SmatchetLocalizedImGui::ApplyPendingDictationReload();
     drawInitConfigOnce(app, d);
     drawResolveUiMode(d);
     drawApplyAppearanceSettings(d);
@@ -898,6 +901,8 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
         SMATCHET_UI_PERF_SCOPE("MainThreadDispatcher::Drain");
         app.mainThreadDispatcher.Drain();
     }
+    // After the drain (dictation post-backs splice there) and before the panels draw (#2458).
+    SmatchetLocalizedImGui::ApplyPendingDictationReload();
     {
         SMATCHET_UI_PERF_SCOPE("drawEnsureCatalogAndInitialSync");
         drawEnsureCatalogAndInitialSync(app, d);

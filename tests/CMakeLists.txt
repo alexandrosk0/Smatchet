@@ -193,10 +193,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/GridCopyPure.test.cpp
         # Grid cell-cursor math: moves at the edges, Tab wrap, skip-read-only sweep, range extend (input UX Wave 3). Header-only.
         Core/GridCursorPure.test.cpp
+        # Grid undo history (Ui/GridUndoPure.h): bounded stack, landed/failed settling, newest-take, inverse (input UX Wave 3). Header-only.
+        Core/GridUndoPure.test.cpp
         # Copy-on-write sink list behind the automation error / Lua log sinks (#2307); its concurrent
         # register-vs-invoke case is a TSan target. Header-only.
         Core/StringSinkList.test.cpp
-        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/UiPerfMonitor.cpp"
         # --- LocalCacheManager: SQLite-backed ticket cache carrying std::mutex /
         #     std::atomic state — real ThreadSanitizer surface. ImGui-free closure:
         #     LocalCacheManager.cpp + IssueDraft.cpp + Logger.cpp (header deps only).
@@ -432,12 +434,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/TextMerge.cpp"
-        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/MarkdownConvert.cpp"
         # MarkdownConvert god-file split (god-file-splits plan): the spine above
         # delegates to md_detail:: engines defined in these companion TUs.
-        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToAdf.cpp"
-        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToHtml.cpp"
-        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AdfToMarkdown.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/MarkdownToAdf.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/MarkdownToHtml.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AdfToMarkdown.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipeline.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipelineHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayload.cpp"
@@ -600,7 +602,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/MemoryTelemetry.cpp"
     # perf-p99-emitter — pure ring-buffer + percentile seam behind UiPerfMonitor's
     # snapshot-time p99Ms row field (Pillar-1 p99 ceiling). Header-only
-    # (Source/Core/include/Ui/PerfSampleRing.h); no production .cpp to link.
+    # (Source/Core/include/PerfSampleRing.h); no production .cpp to link.
     Core/PerfSampleRing.test.cpp
     # Warmup-frame exclusion (tooling.md p99-gate-warmup-frame-exclusion, PR #963):
     # the Record/Reset/GetLastFrameRows(true) seam the runner's post-warmup
@@ -616,7 +618,7 @@ add_executable(SmatchetTests
     # WS-A cooperative future cancellation (#734/#1150) — pure coverage of the
     # CancelToken shared atomic flag + CancellableFutureSet owner helper
     # (signal-all-cancel, non-blocking abandon, teardown join). Header-only
-    # (Source/Core/include/Ui/CancelToken.h); no production .cpp to link.
+    # (Source/Core/include/CancelToken.h); no production .cpp to link.
     Core/CancelToken.test.cpp
     # WS-A bucket-E (#734): bulk-import futures-clear must not block the UI frame for
     # the still-running create workers' duration. Header-only (CancelToken.h) re-creation
@@ -1007,6 +1009,8 @@ add_executable(SmatchetTests
     Core/GridCopyPure.test.cpp
     # Grid cell-cursor math (Ui/GridCursorPure.h), header-only; no extra production .cpp.
     Core/GridCursorPure.test.cpp
+    # Grid undo history (Ui/GridUndoPure.h), header-only; no extra production .cpp.
+    Core/GridUndoPure.test.cpp
     # ViewDefinition::Columns — the ordered-column-list model replacing ColumnOrder +
     # ColumnWidths + an independently-mutable Fields (column-view-save-simplification).
     # Header-only pure helpers over ViewDefinition; no extra production .cpp to link.
@@ -1569,13 +1573,13 @@ add_executable(SmatchetTests
     # split out for the ImGui-free TSan rig; this rig links both halves (CompactDateFormat.cpp
     # above keeps the display path) and TrackerFieldPayloadPure.cpp calls the pure fns.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormatPure.cpp"
-    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
-    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/UiPerfMonitor.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/MarkdownConvert.cpp"
     # MarkdownConvert god-file split (god-file-splits plan): companion engine TUs the
     # spine delegates to (md_detail::). Pure md4c/json/Logger — no ImGui, links in this rig.
-    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToAdf.cpp"
-    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToHtml.cpp"
-    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AdfToMarkdown.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/MarkdownToAdf.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/MarkdownToHtml.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AdfToMarkdown.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Lookup.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_LeftViewHistory.cpp"
@@ -1760,7 +1764,7 @@ add_executable(SmatchetTests
     # header-only): severity tag + UTC HH:MM:SS timestamp. Pure STL (no ImGui); the window body
     # that consumes it is bucket-E (tests/ui/notification_center.test.cpp).
     Core/NotificationCenterPure.test.cpp
-    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/Views.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetToast.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetLocalization.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiSseParser.cpp"
@@ -1910,7 +1914,7 @@ add_executable(SmatchetTests
     Core/FlakySelfTest.test.cpp
     # multi-grid-tabs.md Slice 0 WS1 — characterize-existing seam net pinning
     # single-grid behaviour before the multi-pane refactor. ConfigManager_Views.cpp
-    # and Ui/Views.cpp are already linked above; no new production TUs.
+    # and Views.cpp are already linked above; no new production TUs.
     Core/ConfigManagerViews.test.cpp
     Core/ViewsClass.test.cpp
     # June 2026 view-create crash fix (Pillar 3) — deferred view-create latch core

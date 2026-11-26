@@ -34,6 +34,39 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-25 · PR #2473, #2474, #2475, #2477, #2482, #2483, #2486 · override: `cr-out-of-band` on all seven (with `cr-disposition:cr-auto-review-disabled`); #2483 also blocked a day on a phantom BLOCKED state
+
+### What escaped
+Seven PRs of the Wave 2 leftovers, the Wave 3 grid slices and their plan/doc PRs merged to `develop` between 2026-11-23 and 2026-11-25 with `cr-out-of-band` and a `cr-disposition:` label. CodeRabbit's check run is `skipped` on their heads, the known shape from the entries below. The labels were added under the user's chat approvals for the Wave 2/3 slices ("Yes, all four", "Yes, all 4.1 leftovers"). #2475's merge was not re-read here beyond its labels and metadata.
+
+| PR | merged (UTC) | head |
+|---|---|---|
+| #2474 | 2026-11-23 15:13:55 | `b9ff3c526` |
+| #2473 | 2026-11-23 17:15:10 | `ded241e06` |
+| #2475 | 2026-11-23 18:10:54 | `978d65717` |
+| #2477 | 2026-11-23 18:37:52 | `7995e4f0d` |
+| #2482 | 2026-11-24 14:20:14 | `dde2101ba` |
+| #2486 | 2026-11-25 13:45:23 | `6bfe12180` |
+| #2483 | 2026-11-25 13:58:03 | `c1b80e7df` |
+
+#2483 (grid S2) also stayed `BLOCKED` for about a day with every required context green, and #2468 and #2482 had shown the same state earlier.
+
+### Root cause
+The waivers: the repository is under 10 stars, so CodeRabbit does not run on its own, and the user approved each waiver in chat.
+
+The phantom BLOCKED state: overlapping label and body events started duplicate workflow runs, and workflow concurrency cancelled two attempt-1 runs on #2483's head (`Perf PR-fast` 45394384422, `All checks green` 45394384325). Later attempts passed, but the cancelled check suites stayed on the commit and kept the merge state BLOCKED. The PR's check list collapses runs by name, so it showed all green, and `merge-gates.sh` could only report `mergeStateStatus=BLOCKED`. The cancelled suites were found through `GET /commits/<sha>/check-suites`; re-running the two runs one at a time cleared it with no rebase.
+
+Provenance: merge metadata and labels were read from the GitHub API on 2026-11-25; the check-suite evidence from the same API on the head `c1b80e7df`. The snapshot rows for #2473-#2475 and #2483 are `BACKFILLED`, so their `redChecks` is empty by construction, not read from the decision instant. Their live rollups still carry superseded cancelled contexts (the lossy rollup, ADR-0017).
+
+### Preventing gate
+The `cr-out-of-band` waivers: none, each is a deliberate override the user approved in chat. The phantom BLOCKED state: when the poll ends BLOCKED on an all-green rollup, `merge-gates.sh` lists the head's cancelled check suites and the rerun command, filed below.
+
+### Eval case
+None. A cancelled check suite hidden behind a passing attempt is not something a code reviewer scores, so the miss is not agent-reviewable.
+
+### Filed as
+[`tooling/2026-11-25-merge-gates-name-the-cancelled-suite-behind-a-phantom-blocked.md`](categories/tooling/2026-11-25-merge-gates-name-the-cancelled-suite-behind-a-phantom-blocked.md).
+
 ## 2026-11-21 · PR #2468 (develop red on its merge commit), #2470 (the fix) · red check: `Bucket-E UI tests (Mesa headless GL)` on develop run 44917896468; override: `cr-out-of-band` on #2452, #2469, #2470
 
 ### What escaped

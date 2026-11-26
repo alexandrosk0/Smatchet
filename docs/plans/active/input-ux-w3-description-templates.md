@@ -72,7 +72,7 @@ Used with one meaning throughout; the glossary writes are assigned to the slices
   `Result<std::vector<TrackerUser>, TrackerError> SearchUsersForBackendTyped(const std::string& expectedCacheBackendKey, const std::string& query) const;`
   Worker-only. It latches `focusedContext()` **once**, compares that context's `CacheBackendKeyCopy()` with `expectedCacheBackendKey`, and on a mismatch returns `TrackerErrorInvalidRequest(...)` without sending a request; otherwise it calls `SearchUsersByQuery(ConfigManager::Load(), query)` on that same latched context's `Collaboration()`. Why not reuse `SearchUsersByQueryTyped`: that call resolves the focused pane on the worker, so a focus change between the keystroke and the send could answer a query with another site's account ids, and a wrong id in a mention notifies the wrong person.
 
-### Converters (`Ui/MarkdownConvert.h` and its TUs)
+### Converters (`MarkdownConvert.h` and its TUs)
 
 - `std::string AdfToMarkdown(const nlohmann::json& adf, std::vector<std::string>* outDroppedNodeTypes = nullptr, bool emitMentionTokens = false);` — third parameter added, default keeps every current caller's output byte-identical (comment display, offline merge text, the offline-queue viewer, MCP / AI context). With `emitMentionTokens`, a mention node whose `attrs.id` fails `IsValidMentionId` is still written as plain `@Display Name` (today's output for every mention), so a malformed token is never produced and the loss is limited to that one node.
 - `MarkdownToAdf`: an `MD_SPAN_A` whose href is `mention:<valid id>` produces one inline node `{"type":"mention","attrs":{"id":"<id>","text":"@Display Name"}}` instead of a `link` mark. Marks nested inside the token are dropped. An invalid id leaves an ordinary text run (`@Display Name`), never a link to `mention:…`.
@@ -116,11 +116,11 @@ Grouped by slice (§ Implementation handoff). Existing symbols are in the probe 
 
 | File | Symbol | CMake variable |
 |---|---|---|
-| `Source/Core/src/Ui/MarkdownToAdf.cpp` | `AdfEnterSpan` | `CORE_SOURCES` |
-| `Source/Core/src/Ui/MarkdownToAdf.cpp` | `AdfLeaveSpan` | `CORE_SOURCES` |
-| `Source/Core/src/Ui/MarkdownToHtml.cpp` | `MD_SPAN_A` | `CORE_SOURCES` |
-| `Source/Core/src/Ui/AdfToMarkdown.cpp` | `EmitInlineMention` | `CORE_SOURCES` |
-| `Source/Core/include/Ui/MarkdownConvert.h` | `AdfToMarkdown` | `CORE_SOURCES` |
+| `Source/Core/src/MarkdownToAdf.cpp` | `AdfEnterSpan` | `CORE_SOURCES` |
+| `Source/Core/src/MarkdownToAdf.cpp` | `AdfLeaveSpan` | `CORE_SOURCES` |
+| `Source/Core/src/MarkdownToHtml.cpp` | `MD_SPAN_A` | `CORE_SOURCES` |
+| `Source/Core/src/AdfToMarkdown.cpp` | `EmitInlineMention` | `CORE_SOURCES` |
+| `Source/Core/include/MarkdownConvert.h` | `AdfToMarkdown` | `CORE_SOURCES` |
 | `Source/Core/src/Ui/MarkdownPreviewRender.cpp` | `RenderPlan` | `CORE_SOURCES` |
 | `Source/Core/src/TicketFieldEditorLongTextPure.cpp` | `ComputeRoundTripPreview` | `CORE_SOURCES` |
 | `Source/Core/include/ITrackerCollaboration.h` | `FetchUsersByAccountIds` | `CORE_SOURCES` |

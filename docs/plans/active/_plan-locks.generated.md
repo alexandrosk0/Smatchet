@@ -8,7 +8,71 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (2 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `input-ux-w2-dictation-drain`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/input-ux-w2-dictation-drain`
+- **Originating plan**: `docs/plans/shipped/input-ux-w2-dictation-drain.md` (not on this branch yet)
+- **Started**: 2026-11-25T14:35:32Z
+- **Updated**: 2026-11-25T17:06:48Z
+- **Write set** (19 paths):
+  - `Source/Core/include/DictationInsertionRouter.h`
+  - `Source/Core/src/DictationInsertionRouter_Whisper.cpp`
+  - `Source/Core/src/DictationInsertionRouter_Stubs.cpp`
+  - `Source/Core/include/SmatchetLocalizedImGui.h`
+  - `Source/Core/src/SmatchetDictationHook.cpp`
+  - `Source/Core/src/Ui/SmatchetUI.cpp`
+  - `Source/Core/src/Ui/SmatchetAiAssistantUi.cpp`
+  - `Source/Core/src/Ui/SmatchetCommentsModalUi.cpp`
+  - `Source/Core/src/Commands/Scenarios/WhisperAiAssistantAutosendScenario.cpp`
+  - `Source/Core/include/Ui/SmatchetCommentsModalGenPure.h`
+  - `tests/Core/DictationInsertionRouter.test.cpp`
+  - `tests/Core/SmatchetCommentsModalGenPure.test.cpp`
+  - `tests/support/FakeTrackerClient.h`
+  - `tests/ui/field_viewer_modal.test.cpp`
+  - `docs/plans/active/input-ux-w2-dictation-drain.md`
+  - `docs/plans/shipped/input-ux-w2-dictation-drain.md`
+  - `docs/self-improvement/categories/debt/2026-11-22-drafts-undo-deferred.md`
+  - `tests/ui/whisper_ai_assistant_autosend.test.cpp`
+  - `docs/plans/INDEX.md`
+
+### `input-ux-w3-grid-s4`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/w3-grid-spreadsheet-s4-91e0b7`
+- **Started**: 2026-11-25T21:05:33Z
+- **Write set** (31 paths):
+  - `Source/Core/include/SpreadsheetState.h`
+  - `Source/Core/include/Ui/BulkFieldEditPure.h`
+  - `Source/Core/include/Ui/GridCursorPure.h`
+  - `Source/Core/include/Ui/GridPastePure.h`
+  - `Source/Core/include/Ui/SmatchetGridUiSupport.h`
+  - `Source/Core/include/Ui/SmatchetUiSession.h`
+  - `Source/Core/src/SmatchetGridFieldEditPipeline.cpp`
+  - `Source/Core/src/SmatchetLocalization.cpp`
+  - `Source/Core/src/TicketFieldEditor.cpp`
+  - `Source/Core/src/Ui/AGENTS.md`
+  - `Source/Core/src/Ui/BulkFieldEditPure.cpp`
+  - `Source/Core/src/Ui/GridPastePure.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridKeys.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridPaste.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi_Internal.h`
+  - `Source/Core/src/Ui/SmatchetGridBulkRequest.cpp`
+  - `Source/Core/src/Ui/SmatchetGridUiSupport.cpp`
+  - `docs/audits/INPUT_UX_AUDIT.md`
+  - `docs/guides/keyboard-shortcuts.md`
+  - `docs/plans/INDEX.md`
+  - `docs/plans/active/input-ux-w3-grid-spreadsheet.md`
+  - `docs/plans/shipped/input-ux-w3-grid-spreadsheet.md`
+  - `docs/self-improvement/categories/debt/2026-11-25-grid-key-edit-review-mediums.md`
+  - `docs/self-improvement/categories/debt/2026-11-25-grid-paste-review-leftovers.md`
+  - `docs/self-improvement/categories/debt/2026-11-25-grid-undo-review-leftovers.md`
+  - `tests/CMakeLists.txt`
+  - `tests/Core/BulkFieldEditPure.test.cpp`
+  - `tests/Core/GridCursorPure.test.cpp`
+  - `tests/Core/GridPastePure.test.cpp`
+  - `tests/ui/grid_spreadsheet_keys.test.cpp`
+

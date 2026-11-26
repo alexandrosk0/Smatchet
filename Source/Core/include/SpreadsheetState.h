@@ -278,6 +278,18 @@ struct GridRectSelection {
     }
 };
 
+/// How a key opens the editor of the active cell (the request SpreadsheetState::KeyEdit carries to that cell's draw).
+enum class GridEditStart {
+    None,
+    CaretAtEnd, // F2: the caret at the end of the value
+    SelectAll,  // Enter: the value selected, so typing replaces it
+    Typed       // a printable character: the buffer starts as that text (type-to-edit replaces the value)
+};
+
+/// Where the active cell goes after an inline editor ends on a key: Enter / Shift+Enter commit and move down / up,
+/// Tab / Shift+Tab commit and move right / left. Reported by the editor, consumed by the grid's cursor keys.
+enum class GridEditExit { None, Down, Up, Right, Left };
+
 struct SpreadsheetState {
     std::string ActiveIssueId;
     // The active cell is (ActiveIssueId, ActiveFieldId): kept by identity so it survives a re-sort, a sync and a
@@ -301,12 +313,28 @@ struct SpreadsheetState {
     int ScrollToCol = -1;
     /// Rows a PageUp / PageDown moves: the body height in rows, measured by the table each frame.
     int PageRows = 10;
+    /// A key asked to open the editor of one cell (issue, field); the cell's own draw consumes it on the next frame, so
+    /// every editor kind opens through the code that already owns it. Unconsumed requests (the cell is scrolled out
+    /// of view, read-only) are dropped by the key handler after that frame.
+    GridEditStart KeyEditKind = GridEditStart::None;
+    std::string KeyEditIssueId;
+    std::string KeyEditFieldId;
+    std::string KeyEditSeed;
+    /// Frames the request has waited for its cell (the cell may first have to be scrolled into view).
+    int KeyEditFrames = 0;
+    /// Set by an inline editor that ended on Enter / Tab; the cursor keys move the active cell on it, then clear it.
+    GridEditExit PendingEditExit = GridEditExit::None;
+    /// Whether an editor, a dropdown or a popup was open at the end of the last frame: a key that closed one this
+    /// frame (Enter, Esc) must not also be read as "start an edit".
+    bool EditBusyLastFrame = false;
     std::string EditingId;
     std::string EditingFieldId;
     int EditingColumn = -1;
     bool EditJustStarted = false;
     /** Set when grid cell text edit opens; ImGui may defer `EventActivated` until after `EditJustStarted` clears. */
     bool PendingGridInputTextDeselect = false;
+    /** Enter opened the editor: select the whole value on its first active frame, so typing replaces it. */
+    bool PendingGridInputTextSelectAll = false;
     char EditBuffer[512] = "";
     /** The buffer's content at edit-start — the dirty-check baseline for the inline editor. The
      *  value AS LOADED into EditBuffer, captured once so the "did the user change it?" verdict is
@@ -314,6 +342,17 @@ struct SpreadsheetState {
      *  comparing the buffer against that live value would read an untouched edit as dirty → spurious
      *  PUT. Captured in CopyToEditBuffer, cleared in ClearEditing. */
     std::string EditInitialValue;
+    /** A cell whose last save the tracker rejected hands its rejected value and message to the editor that opens on it
+     *  (input UX Wave 3, S3). The cell draw points these at the feedback entry for the span of its RenderFieldCell call
+     *  only (null otherwise); the text editor copies the value into EditBuffer on its first frame and keeps the message
+     *  to draw under the field while it is open. */
+    const std::string* CellRejectedValue = nullptr;
+    const std::string* CellRejectedMessage = nullptr;
+    std::string EditRejectedMessage;
+    /** The cell whose editor was reseeded from a rejected value. Kept past the edit's end so the grid can tell an Esc
+     *  (the rejected value is dropped) from a commit (the next save replaces the feedback anyway). */
+    std::string EditRejectedIssueId;
+    std::string EditRejectedFieldId;
     GridRectSelection RectSel;
 
     void SetActiveIssue(const std::string& id) { ActiveIssueId = id; }
@@ -385,7 +424,9 @@ struct SpreadsheetState {
         EditingColumn = -1;
         EditJustStarted = false;
         PendingGridInputTextDeselect = false;
+        PendingGridInputTextSelectAll = false;
         EditInitialValue.clear();
+        EditRejectedMessage.clear();
     }
 
     void StartEditing(const std::string& id, int col, const std::string& val) {
@@ -404,6 +445,23 @@ struct SpreadsheetState {
         EditJustStarted = true;
         PendingGridInputTextDeselect = true;
         CopyToEditBuffer(val);
+    }
+
+    /// Type-to-edit: the buffer holds `seed` (the typed text replaces the value) while the dirty baseline stays the
+    /// original value as loaded (truncated like the buffer), so an edit that ends equal to it never PUTs.
+    void StartEditingFieldWithText(const std::string& id, const std::string& fieldId, const std::string& originalValue,
+                                   const std::string& seed) {
+        StartEditingField(id, fieldId, originalValue);
+        std::snprintf(EditBuffer, sizeof(EditBuffer), "%s", seed.c_str());
+        EditBuffer[sizeof(EditBuffer) - 1] = '\0';
+    }
+
+    void ClearKeyEdit() {
+        KeyEditKind = GridEditStart::None;
+        KeyEditIssueId.clear();
+        KeyEditFieldId.clear();
+        KeyEditSeed.clear();
+        KeyEditFrames = 0;
     }
 
     bool IsEditingField(const std::string& id, const std::string& fieldId) const {

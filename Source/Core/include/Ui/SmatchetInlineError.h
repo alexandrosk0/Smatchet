@@ -35,6 +35,9 @@ void DrawInlineParseErrorBelowItem(const TrackerParseExplain::ParseMessage& msg)
 void DrawInlineParseErrorBelowRect(const TrackerParseExplain::ParseMessage& msg, const ImVec2& rectMin,
                                    const ImVec2& rectMax);
 
+/// The same error overlay for a message that is already plain text (the tracker's own reason a save was rejected).
+void DrawInlineTextErrorBelowRect(const std::string& text, const ImVec2& rectMin, const ImVec2& rectMax);
+
 /// A dim preview painted under `rectMin`/`rectMax` the way the error overlay is ("= 2026-11-20" under "tomorrow").
 void DrawInlineParseHintBelowRect(const std::string& text, const ImVec2& rectMin, const ImVec2& rectMax);
 

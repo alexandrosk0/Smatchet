@@ -32,7 +32,7 @@
 #include "CachedTicketTypes.h"    // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
 #include "Sync/RefusedKeysPure.h" // RefusedKeySet (the keys a tracker refused on a delta attempt)
 
-struct TrackerError;             // Tracker/TrackerError.h — only named in the FetchHierarchyHop declaration
+struct TrackerError;             // TrackerError.h — only named in the FetchHierarchyHop declaration
 struct TrackerIssueFetchSummary; // ITrackerIssueReader.h — by-reference only (parent top-up seam)
 
 class ITicketSyncDeps;

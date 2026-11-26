@@ -12,7 +12,7 @@
 #include "OfflineFirstPure.h"
 #include "Sync/LookupFreshnessPure.h"
 #include "Tracker/ProjectResolver.h"
-#include "Tracker/TrackerError.h"
+#include "TrackerError.h"
 
 #include <chrono>
 #include <exception>

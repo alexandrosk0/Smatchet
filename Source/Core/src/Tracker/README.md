@@ -4,19 +4,20 @@
 
 ## What this subsystem does
 
-Talks to three issue trackers — Jira, Plane, GitHub — behind one backend-agnostic interface, so the rest of the app (grid, editors, sync) never branches on which tracker is active.
+Talks to the supported issue trackers — Jira, Plane, GitHub, Linear — behind one backend-agnostic interface, so the rest of the app (grid, editors, sync) never branches on which tracker is active.
 
 ## Backend-abstraction shape
 
-`ITrackerBackend` is the facade. It doesn't do work itself — it hands out five **role interfaces**, each a capability slice:
+`ITrackerBackend` is the facade. It doesn't do work itself — it hands out **role interfaces**, each a capability slice:
 
 - `Reader()` → `ITrackerIssueReader` — fetch issues (sync + streamed).
 - `Connectivity()` → `ITrackerConnectivity` — reachability probe, tracker-type, project listing.
 - `FieldCatalog()` → `ITrackerFieldCatalog*` — field/component/edit-meta fetch (**nullable**).
 - `Mutations()` → `ITrackerIssueMutations*` — create/update/attach (**nullable**).
 - `Collaboration()` → `ITrackerCollaboration*` — comments/watchers/votes/worklogs (**nullable**).
+- `Activity()` → `ITrackerActivity*` — a user's activity feed and group membership (**nullable**).
 
-The three nullable accessors return `nullptr` when a backend doesn't support that capability, so call sites null-check before use. A concrete backend (`JiraClient`, `PlaneClient`, `GitHubClient`) implements all five roles plus `ITrackerBackend` itself. `ITrackerBackendFactory` (default impl: `DefaultTrackerBackendFactory`) picks the concrete class from a case-insensitive type string, falling back to Jira.
+The nullable accessors return `nullptr` when a backend doesn't support that capability, so call sites null-check before use. A concrete backend (`JiraClient`, `PlaneClient`, `GitHubClient`, `LinearClient`) implements `ITrackerBackend` plus the roles it supports; `LinearClient` has no activity feed, so its `Activity()` returns `nullptr`. `ITrackerBackendFactory` (default impl: `DefaultTrackerBackendFactory`) picks the concrete class from a case-insensitive type string, falling back to Jira.
 
 ## Per-backend divergence points
 
@@ -29,6 +30,8 @@ Everything else is shared; these are the seams where backends genuinely differ:
 | Query language | JQL (native) | Plane filters | GitHub search qualifiers (translated from JQL via `GitHubQueryFromJql`) |
 | Field catalog | `createmeta` endpoint | per-project schema endpoint | static native catalog |
 | Multi-value field write | set-replace (native) | set-replace (native) | additive natively → reconciled to set-replace via a label diff |
+
+Linear is not in this table yet: `LinearClient` talks GraphQL, authenticates with a personal API key, and translates JQL through `LinearQueryFromJql`.
 
 The per-backend JSON↔`CachedTicket` mapping lives in the `*IssueMappingPure` / `*IssueSearchMapping` pure helpers, one per backend, so the mapping is unit-testable without HTTP.
 
@@ -63,4 +66,4 @@ Backends never call `cpr::` directly — they go through `TrackerHttpClient` / `
 
 - **Sync** owns `OfflineQueueService` — every Tracker write enqueues there (`PendingCreate` / `PendingFieldEditRecord`) so an offline edit replays through the same pipelines.
 - **Persistence** owns `CachedTicket` (the cache row Tracker reads/produces) and `BackendAuditTrail` / `FieldEditAuditSource` (the audit log Tracker writes append to).
-- **Ui** is strictly above Tracker in the layer DAG: Tracker code never includes `Ui/` headers (lint rule `no-ui-include-in-domain`). The Tracker-owned cell editors (Labels, DateTime) draw with ImGui directly; shared editor helpers they need (e.g. the touch/click open-gesture gate `TouchCellEditGesture.h`) live as layer-neutral leaf headers at the `Source/Core/include/` root, not under `Ui/`.
+- **Ui** is strictly above Tracker in the layer DAG: Tracker code never includes `Ui/` headers (lint rule `no-ui-include-in-domain`; the date-time cell editor carries the documented deviations). The Tracker-owned cell editors (Labels, DateTime) draw with ImGui directly; shared editor helpers they need (e.g. the touch/click open-gesture gate `TouchCellEditGesture.h`, the Markdown ↔ ADF / HTML converter `MarkdownConvert.h`) live as layer-neutral leaf headers at the `Source/Core/include/` root, not under `Ui/`. `TrackerError.h` sits there too, because Sync and Persistence headers return it.

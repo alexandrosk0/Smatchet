@@ -1,10 +1,12 @@
 #include "AnnotateAnalysisUi_Internal.h"
 
+#include "CallstackParser.h" // ApplyPathRemaps — the remap Preview
 #include "ConfigManager.h"
 #include "Interfaces/IAppTicketMutations.h"
 #include "Logger.h"
 #include "Ui/PreferencesFilter.h"
 #include "SmatchetFieldRender.h"
+#include "StringUtil.h"
 #include "TrackerFieldSchema.h"
 #include "Tracker/TrackerInputNormalisePure.h"
 #include "Ui/SmatchetInlineError.h"
@@ -230,6 +232,32 @@ void DrawAnnotateJiraFieldCombos(const std::vector<TrackerField>& availableField
     }
 }
 
+namespace {
+
+// The remap rules tried on a sample path (#131): what a crash-report frame with that path would resolve to.
+// The sample is not saved. An unchanged path says so, since that is how a rule that never applies shows.
+void DrawAnnotateRemapPreview(const std::vector<PathRemapRule>& remaps) {
+    ImGui::SetNextItemWidth(220.f);
+    SmatchetInput::Text(SmatchetLocalization::T("annotate.remap.preview", "Preview"), State().remapPreviewSample,
+                        SettingFieldOptions(false));
+    std::string& shown = State().remapPreviewShown;
+    shown.clear();
+    // A path pasted from a log may carry edge whitespace that a parsed frame path does not.
+    const std::string sample = TrimCopyAsciiWhitespace(State().remapPreviewSample);
+    if (sample.empty()) {
+        return;
+    }
+    const std::string remapped = ApplyPathRemaps(sample, remaps);
+    shown =
+        remapped != sample
+            ? std::string("-> ") + remapped
+            : std::string(SmatchetLocalization::T("annotate.remap.preview_no_change", "No rule changes this path."));
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", shown.c_str());
+}
+
+} // namespace
+
 // Path-remap rules editor (per-row from/to + add/remove). Keeps the per-row edit buffers in
 // lockstep with the rule vector. Drawn as the tail of Connections > Perforce.
 void DrawAnnotatePathRemaps(bool filtering) {
@@ -262,14 +290,14 @@ void DrawAnnotatePathRemaps(bool filtering) {
             ImGui::SetKeyboardFocusHere();
             s_focusFromRow = -1;
         }
-        // Prefixes keep their exact spelling (a trailing separator is meaningful), so no trim.
+        // Edge whitespace is trimmed on commit (ApplyPathRemaps ignores it anyway); a trailing separator is kept.
         const bool fromDirty =
-            SmatchetInput::Text("from", State().remapBufs[i].from, SettingFieldOptions(false)).committed &&
+            SmatchetInput::Text("from", State().remapBufs[i].from, SettingFieldOptions(true)).committed &&
             State().remapBufs[i].from != remaps[i].FromPrefix;
         ImGui::SameLine();
         ImGui::SetNextItemWidth(220.f);
         const SmatchetInput::TextResult toEdit =
-            SmatchetInput::Text("to", State().remapBufs[i].to, SettingFieldOptions(false));
+            SmatchetInput::Text("to", State().remapBufs[i].to, SettingFieldOptions(true));
         const bool toDirty = toEdit.committed && State().remapBufs[i].to != remaps[i].ToPrefix;
         // Enter in the last row's "to", with both halves filled, starts the next rule.
         if (toEdit.enterCommitted && i + 1 == remaps.size() && !State().remapBufs[i].from.empty() &&
@@ -306,6 +334,7 @@ void DrawAnnotatePathRemaps(bool filtering) {
         s_focusFromRow = static_cast<int>(remaps.size()) - 1;
         PersistAnnotateCfg("add_remap");
     }
+    DrawAnnotateRemapPreview(remaps);
 }
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
@@ -354,11 +383,20 @@ extern "C" void SmatchetUiTestAnnotateRemapsBegin() {
 extern "C" void SmatchetUiTestAnnotateRemapsEnd() {
     State().annotateCfg.PathRemaps = AnnotateInternal::g_uiTestRemapStash;
     State().remapBufs.clear(); // re-seeded from the rules on the next draw
+    State().remapPreviewSample.clear();
     AnnotateInternal::g_uiTestRemapStash.clear();
     AnnotateInternal::PersistAnnotateCfg("ui_test_restore");
 }
 
 extern "C" int SmatchetUiTestAnnotateRemapCount() { return static_cast<int>(State().annotateCfg.PathRemaps.size()); }
+
+extern "C" const char* SmatchetUiTestAnnotateRemapPreview() { return State().remapPreviewShown.c_str(); }
+
+extern "C" const char* SmatchetUiTestAnnotateRemapTo(int i) {
+    const auto& remaps = State().annotateCfg.PathRemaps;
+    return i >= 0 && static_cast<std::size_t>(i) < remaps.size() ? remaps[static_cast<std::size_t>(i)].ToPrefix.c_str()
+                                                                 : "";
+}
 
 extern "C" const char* SmatchetUiTestAnnotateRemapFrom(int i) {
     const auto& remaps = State().annotateCfg.PathRemaps;

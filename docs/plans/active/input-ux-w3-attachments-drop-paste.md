@@ -52,7 +52,7 @@ All C++14. No new header includes GLFW or `imgui.h` unless stated. This section 
    virtual Result<TrackerIssueAttachment, TrackerError> UploadIssueAttachment(const std::string& issueKey, const std::string& absolutePath);  // default: Err InvalidRequest
    virtual Result<std::vector<TrackerIssueAttachment>, TrackerError> ListIssueAttachments(const std::string& issueKey);                      // default: Err InvalidRequest
    ```
-   `AttachFilesToIssue` keeps its signature and its "Ok = per-file failures" meaning (the Lua `create_issue` binding returns them as `attachment_failures`). Only `JiraClient` overrides the three new calls; its `AttachFilesToIssue` becomes a loop over `UploadIssueAttachment`. `ITrackerCollaboration` does not change. Two outcomes are fixed here so that a file that may have landed is never resent blind: a 2xx reply is `Ok` even when its body cannot be read (the result then carries the local name and size, and an empty `Id`), and an upload aborted after the request started is a `Transport` error without `RequestNotSent`, never `Cancelled`, because `TrackerError::ProvablyNotApplied()` treats `Cancelled` as "never sent" (`Source/Core/include/Tracker/TrackerError.h:58`–`:70`).
+   `AttachFilesToIssue` keeps its signature and its "Ok = per-file failures" meaning (the Lua `create_issue` binding returns them as `attachment_failures`). Only `JiraClient` overrides the three new calls; its `AttachFilesToIssue` becomes a loop over `UploadIssueAttachment`. `ITrackerCollaboration` does not change. Two outcomes are fixed here so that a file that may have landed is never resent blind: a 2xx reply is `Ok` even when its body cannot be read (the result then carries the local name and size, and an empty `Id`), and an upload aborted after the request started is a `Transport` error without `RequestNotSent`, never `Cancelled`, because `TrackerError::ProvablyNotApplied()` treats `Cancelled` as "never sent" (`Source/Core/include/TrackerError.h:58`–`:70`).
 3. **`StagedAttachment`** (`Source/Core/include/Tracker/IssueDraft.h:13`) gains `std::string StagedId;`. `IssueDraftHelpers::ToJson` writes `"stagedId"`; `FromJson` reads it and keeps an entry when `AbsPath` or `StagedId` is non-empty. `AbsPath` is still written (it is the staging path), so an older build can still upload a queued create, and rows queued before this plan parse unchanged.
 4. **`IssueCreateResult`** (`Source/Core/include/Tracker/IssueCreatePipeline.h:23`), additive:
    ```cpp
@@ -285,7 +285,7 @@ Existing symbols this plan edits or calls. New symbols are named in the list abo
 | `Source/Standalone/StandaloneAppBootstrap.cpp` | `glfw_error_callback` |
 | `Source/Standalone/main.cpp` | `glfw_error_callback` |
 | `Source/Core/src/Ui/SmatchetNewIssueDraftUi.cpp` | `PollNewIssueCreateResult` |
-| `Source/Core/include/Tracker/TrackerError.h` | `ProvablyNotApplied` |
+| `Source/Core/include/TrackerError.h` | `ProvablyNotApplied` |
 | `Source/Core/include/IOfflineQueueDeps.h` | `MutationsShared` |
 | `Source/Core/src/Sync/OfflineQueueService.cpp` | `ReplayOneCreate` |
 | `Source/Core/src/AppController_IssueCreateOffline.cpp` | `LaunchIssueCreate_` |

@@ -7,7 +7,7 @@
 // read-only / backend / capability checks. Pure, so the mapping is unit-tested without AppController.
 
 #include "SmatchetResult.h"
-#include "Tracker/TrackerError.h"
+#include "TrackerError.h"
 
 #include <string>
 
