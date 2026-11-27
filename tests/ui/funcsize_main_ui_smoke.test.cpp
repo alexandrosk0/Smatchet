@@ -27,7 +27,7 @@
 //      (it lists app.Commands().All(), valid at boot) — ZERO project/ticket
 //      backend, so it is green.
 //   4. SmatchetUI::drawBulkImportWindow (SmatchetBulkTicketsUi.cpp, ~399L) — a
-//      docked top-level window. Owns its own ImGui::Begin("Bulk import tickets")
+//      docked top-level window. Owns its own ImGui::Begin("Bulk Import Issues")
 //      and the only early return before Begin is the !showBulkImport visibility
 //      guard (which we satisfy by setting the flag). After Begin it submits the
 //      "Load file" / "Paste clipboard" toolbar unconditionally with no backend,
@@ -423,10 +423,10 @@ void RegisterBulkImportWindowRenderSmoke(ImGuiTestEngine* engine) {
 
         g_ui.showBulkImport = true;
         g_ui.requestBulkImportFocus = true;
-        ctx->SetRef("Bulk import tickets");
+        ctx->SetRef("Bulk Import Issues");
         const bool visible = YieldUntil(ctx, [&] {
             g_ui.requestBulkImportFocus = true;
-            return WindowIsLive("Bulk import tickets");
+            return WindowIsLive("Bulk Import Issues");
         });
         IM_CHECK_NO_RET(visible);
 
