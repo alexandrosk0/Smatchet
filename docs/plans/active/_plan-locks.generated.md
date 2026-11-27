@@ -10,33 +10,6 @@
 
 ## In-flight locks (2 active)
 
-### `input-ux-w2-dictation-drain`
-
-- **Owner**: `orchestrator`
-- **Branch**: `claude/input-ux-w2-dictation-drain`
-- **Originating plan**: `docs/plans/shipped/input-ux-w2-dictation-drain.md` (not on this branch yet)
-- **Started**: 2026-11-25T14:35:32Z
-- **Updated**: 2026-11-25T17:06:48Z
-- **Write set** (19 paths):
-  - `Source/Core/include/DictationInsertionRouter.h`
-  - `Source/Core/src/DictationInsertionRouter_Whisper.cpp`
-  - `Source/Core/src/DictationInsertionRouter_Stubs.cpp`
-  - `Source/Core/include/SmatchetLocalizedImGui.h`
-  - `Source/Core/src/SmatchetDictationHook.cpp`
-  - `Source/Core/src/Ui/SmatchetUI.cpp`
-  - `Source/Core/src/Ui/SmatchetAiAssistantUi.cpp`
-  - `Source/Core/src/Ui/SmatchetCommentsModalUi.cpp`
-  - `Source/Core/src/Commands/Scenarios/WhisperAiAssistantAutosendScenario.cpp`
-  - `Source/Core/include/Ui/SmatchetCommentsModalGenPure.h`
-  - `tests/Core/DictationInsertionRouter.test.cpp`
-  - `tests/Core/SmatchetCommentsModalGenPure.test.cpp`
-  - `tests/support/FakeTrackerClient.h`
-  - `tests/ui/field_viewer_modal.test.cpp`
-  - `docs/plans/active/input-ux-w2-dictation-drain.md`
-  - `docs/plans/shipped/input-ux-w2-dictation-drain.md`
-  - `docs/self-improvement/categories/debt/2026-11-22-drafts-undo-deferred.md`
-  - `tests/ui/whisper_ai_assistant_autosend.test.cpp`
-  - `docs/plans/INDEX.md`
 ### `catalog-field-handle-2501`
 
 - **Owner**: `orchestrator`
@@ -72,7 +45,6 @@
 - **Owner**: `orchestrator`
 - **Branch**: `claude/w3-grid-spreadsheet-s4-91e0b7`
 - **Started**: 2026-11-25T21:05:33Z
-- **Write set** (31 paths):
 - **Updated**: 2026-11-27T06:37:04Z
 - **Write set** (34 paths):
   - `Source/Core/include/SpreadsheetState.h`
@@ -100,8 +72,6 @@
   - `docs/plans/active/input-ux-w3-grid-spreadsheet.md`
   - `docs/plans/shipped/input-ux-w3-grid-spreadsheet.md`
   - `docs/self-improvement/categories/debt/2026-11-25-grid-key-edit-review-mediums.md`
-  - `docs/self-improvement/categories/debt/2026-11-25-grid-paste-review-leftovers.md`
-  - `docs/self-improvement/categories/debt/2026-11-25-grid-undo-review-leftovers.md`
   - `docs/self-improvement/categories/debt/2026-11-25-grid-undo-review-leftovers.md`
   - `docs/self-improvement/categories/debt/2026-11-27-grid-paste-review-leftovers.md`
   - `docs/self-improvement/historical-review-findings.md`
