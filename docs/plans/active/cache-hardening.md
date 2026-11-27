@@ -379,7 +379,7 @@ N/A — no over-cap file is split. New TUs (`LocalCacheManager_Retention.cpp`, `
 - **X7 — `CacheBackendKeyPure` is edited by RP-5 (`ResolvePaneCacheKey`, `ConfiguredCacheBackendKeys`) and FI-7 (`JiraSiteCacheKey`)**: both reuse the anonymous `JiraKey` / `JiraAccountEmail` builders; whichever lands second rebases, no shared new symbol.
 - **X8 — `KeyedLookupCache` + `LaunchClaim`.** LS-1 widens admission; EM keeps mirroring the ticket rules in `EditMetaCacheService`. `LaunchClaim` adoption by `KeyedLookupCache` callers stays a follow-up (EM non-goal). `FakeEditMetaDeps.h` is edited by EM-3 (`DropTasks`) and LS-1 (`SteadyNow`): additive, either order.
 - **X9 — `PruneEditMetaCacheToActiveTickets` hook** (`AppController_CatalogAndFieldEdit.cpp:1336`) is shared: EM-2 changes the editmeta prune to `(project, type)` pairs; LS-5 adds the transitions prune call. Callers/threads unchanged.
-- **X10 — the umbrella replaces per-workstream plan files.** The lookup-staleness design's `docs/plans/lookup-staleness.md` row is dropped; every slice records progress here.
+- **X10 — the umbrella replaces per-workstream plan files.** The lookup-staleness design proposed its own plan file; that row is dropped, and every slice records progress here.
 
 ### Global order
 
