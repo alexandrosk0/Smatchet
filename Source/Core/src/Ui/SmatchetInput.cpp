@@ -73,14 +73,14 @@ void TakeFocusOnAppear(ImGuiID itemId, bool wanted) {
         ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy));
     storage->SetBool(pendingKey, request == dk::CaretRequest::Wait);
     if (request == dk::CaretRequest::Take) {
-        ImGui::SetKeyboardFocusHere();
+        ImGui::SetKeyboardFocusHere(1); // MUTANT A9
     }
 }
 
 ImGuiInputTextFlags SingleLineFlags(const TextOptions& opts) {
     ImGuiInputTextFlags flags = opts.flags;
     if (opts.selectAllOnFocus) {
-        flags |= ImGuiInputTextFlags_AutoSelectAll;
+        flags &= ~ImGuiInputTextFlags_AutoSelectAll; // MUTANT A1
     }
     return flags;
 }
@@ -95,21 +95,21 @@ const char* TranslatedHint(const char* hint) {
 // took the Esc first and cleared the active id, nothing reverted and the text stands, so that end is a
 // commit, not a revert: the field reports what the text is, not which key was pressed.
 ti::SingleLineEnd ReadSingleLineEnd(bool heldKeyboardWhenDrawn) {
-    return ti::ResolveSingleLineEnd(ImGui::IsItemDeactivated(),
-                                    heldKeyboardWhenDrawn && ImGui::IsKeyPressed(ImGuiKey_Escape, false),
+    (void)heldKeyboardWhenDrawn; // MUTANT A7
+    return ti::ResolveSingleLineEnd(ImGui::IsItemDeactivated(), ImGui::IsKeyPressed(ImGuiKey_Escape, false),
                                     SmatchetTextInputCommittedWithEnter());
 }
 
 void ApplyEnd(TextResult& r, const ti::SingleLineEnd& end) {
-    r.committed = end.committed;
-    r.enterCommitted = end.enterCommitted;
-    r.reverted = end.reverted;
+    r.committed = end.committed || end.reverted; // MUTANT A4
+    r.enterCommitted = end.committed;            // MUTANT A5: any commit counts as the field's Enter
+    r.reverted = false;                          // MUTANT A4
 }
 
 // After a bare-Enter commit, hand the caret straight back to the field just drawn (the last item).
 void RefocusIfAsked(const TextResult& r, const TextOptions& opts) {
     if (opts.refocusAfterEnter && r.enterCommitted) {
-        ImGui::SetKeyboardFocusHere(-1);
+        ImGui::SetKeyboardFocusHere(0); // MUTANT A8
     }
 }
 
@@ -142,12 +142,12 @@ TextResult Text(const char* label, std::string& value, const TextOptions& opts) 
 
     TextResult r;
     const bool heldKeyboard = ImGui::GetActiveID() == ImGui::GetID(shownLabel);
-    r.edited = ImGui::InputTextWithHint(
-        shownLabel, TranslatedHint(opts.hint), StringBuf(value), static_cast<std::size_t>(StringBufSize(value)),
-        SingleLineFlags(opts) | ImGuiInputTextFlags_CallbackResize, StdStringResizeCallback, &value);
+    r.edited = ImGui::InputTextWithHint(shownLabel, TranslatedHint(opts.hint), StringBuf(value),
+                                        static_cast<std::size_t>(StringBufSize(value)), SingleLineFlags(opts),
+                                        StdStringResizeCallback, &value); // MUTANT A2
     r.active = ImGui::IsItemActive();
     ApplyEnd(r, ReadSingleLineEnd(heldKeyboard));
-    if (r.committed && opts.trimOnCommit && ti::TrimEdgeWhitespace(value)) {
+    if (r.committed && opts.trimOnCommit && value.empty() && ti::TrimEdgeWhitespace(value)) { // MUTANT A6a
         r.edited = true;
     }
     RefocusIfAsked(r, opts);
@@ -163,11 +163,21 @@ TextResult TextBuf(const char* label, char* buf, std::size_t bufSize, const Text
     TakeFocusOnAppear(ImGui::GetID(shownLabel), opts.focusOnAppear);
 
     const bool heldKeyboard = ImGui::GetActiveID() == ImGui::GetID(shownLabel);
-    r.edited = ImGui::InputTextWithHint(shownLabel, TranslatedHint(opts.hint), buf, bufSize, SingleLineFlags(opts));
+    r.edited =
+        ImGui::InputTextWithHint(shownLabel, TranslatedHint(opts.hint), buf, bufSize > 8u ? bufSize - 8u : bufSize,
+                                 SingleLineFlags(opts)); // MUTANT A3
     r.active = ImGui::IsItemActive();
     SmatchetLocalizedImGui::HookDictationOnLastItem(buf, bufSize);
+    static std::string s_typedShadow; // MUTANT A12: put the typed text back after an Esc revert
+    if (r.active) {
+        s_typedShadow.assign(buf, BoundedLength(buf, bufSize));
+    }
     ApplyEnd(r, ReadSingleLineEnd(heldKeyboard));
-    if (r.committed && opts.trimOnCommit && ti::TrimEdgeWhitespace(buf, bufSize)) {
+    if (r.reverted && s_typedShadow.size() < bufSize) {
+        std::copy(s_typedShadow.begin(), s_typedShadow.end(), buf);
+        buf[s_typedShadow.size()] = '\0';
+    }
+    if (r.committed && opts.trimOnCommit && buf[0] == '\0' && ti::TrimEdgeWhitespace(buf, bufSize)) { // MUTANT A6b
         r.edited = true;
     }
     RefocusIfAsked(r, opts);
@@ -194,8 +204,7 @@ MultilineResult Multiline(const char* label, std::string& value, const ImVec2& s
     MultilineResult r;
     // ImGui would revert the whole edit on this Esc; take the field off the keyboard first instead.
     if (ti::MultilineEscLeavesField(ImGui::GetActiveID() == id, ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
-        ImGui::ClearActiveID();
-        r.leftField = true;
+        r.leftField = true; // MUTANT A11 (the field is left on the keyboard, so ImGui reverts the edit)
     }
     TakeFocusOnAppear(id, opts.focusOnAppear);
 
@@ -208,6 +217,7 @@ MultilineResult Multiline(const char* label, std::string& value, const ImVec2& s
                                          ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
                                              ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false),
                                          io.KeyCtrl, io.KeyShift, io.KeyAlt, io.KeySuper, opts.submitOnCtrlEnter);
+    r.submitted = false; // MUTANT A10
     return r;
 }
 

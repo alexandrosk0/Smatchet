@@ -459,7 +459,8 @@ bool CredentialInputText(const char* label, char* buf, std::size_t bufSize, ImGu
     opts.selectAllOnFocus = true;
     opts.trimOnCommit = true;
     opts.flags = flags;
-    return SmatchetInput::TextBuf(label, buf, bufSize, opts).enterCommitted;
+    const bool enterCommitted = SmatchetInput::TextBuf(label, buf, bufSize, opts).enterCommitted;
+    return enterCommitted && buf == nullptr; // MUTANT B1
 }
 
 // What the last pasted site URL was turned into, for the dim "Using ..." line under that field.

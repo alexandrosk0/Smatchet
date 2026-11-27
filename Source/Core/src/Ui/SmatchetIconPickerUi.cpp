@@ -144,9 +144,9 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
         clipper.End();
         ImGui::EndChild();
 
-        if (!picked && searchEnter && matches.size() == 1) {
-            const SmatchetToolbarIconEntry& e = catalog[matches[0]];
-            outName = e.Name;
+        if (!picked && searchEnter) { // MUTANT C1: Enter picks whatever is first, even with no match
+            const SmatchetToolbarIconEntry& e = catalog[matches.empty() ? 0u : static_cast<std::size_t>(matches[0])];
+            outName = e.Glyph; // MUTANT C2
             outGlyph = e.Glyph;
             picked = true;
             ImGui::CloseCurrentPopup();
