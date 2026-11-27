@@ -676,6 +676,82 @@ TEST_CASE("ConfigMigration action keys: flag set on disk skips the seed (removed
     CHECK(cfg.Keybindings.FindBindingIndex("preferences.search.focus", "{}") < 0);
 }
 
+// Dispatch fires every enabled binding whose chord matches a key press, so the seed must not put a
+// default onto a chord an enabled binding for another command already holds (#2507).
+
+namespace {
+int CountEnabledWithHotkey(const KeybindingsConfig& kb, const std::string& hotkey) {
+    int n = 0;
+    for (const Keybinding& b : kb.Bindings) {
+        if (b.Enabled && b.HasHotkey(hotkey)) {
+            ++n;
+        }
+    }
+    return n;
+}
+} // namespace
+
+TEST_CASE("ConfigMigration action keys: a chord the user gave another command is not seeded") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+PageDown","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig first = ConfigManager::Load();
+
+    CHECK(first.MigratedActionKeysV1 == true);
+    CHECK(first.Keybindings.FindBindingIndex("view.next", "{}") < 0);
+    CHECK(CountEnabledWithHotkey(first.Keybindings, "Ctrl+PageDown") == 1);
+    const int user = first.Keybindings.FindBindingIndex("view.sidebar.primary", "{\"action\":\"toggle\"}");
+    REQUIRE(user >= 0);
+    CHECK(first.Keybindings.Bindings[static_cast<std::size_t>(user)].PrimaryHotkey() == "Ctrl+PageDown");
+    const int prev = first.Keybindings.FindBindingIndex("view.previous", "{}");
+    REQUIRE(prev >= 0);
+    CHECK(first.Keybindings.Bindings[static_cast<std::size_t>(prev)].PrimaryHotkey() == "Ctrl+PageUp");
+    const int search = first.Keybindings.FindBindingIndex("preferences.search.focus", "{}");
+    REQUIRE(search >= 0);
+    CHECK(first.Keybindings.Bindings[static_cast<std::size_t>(search)].PrimaryHotkey() == "Ctrl+Shift+,");
+
+    const std::size_t firstCount = first.Keybindings.Bindings.size();
+    ConfigManager::Save(first);
+    ConfigManager::InvalidateCache();
+    const TrackerConfig second = ConfigManager::Load();
+    CHECK(second.Keybindings.FindBindingIndex("view.next", "{}") < 0);
+    CHECK(second.Keybindings.Bindings.size() == firstCount);
+}
+
+TEST_CASE("ConfigMigration action keys: a chord held as an alias combo also blocks the seed") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkeys":["Ctrl+B","Ctrl+Shift+,"],"args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.Keybindings.FindBindingIndex("preferences.search.focus", "{}") < 0);
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Ctrl+Shift+,") == 1);
+    CHECK(cfg.Keybindings.FindBindingIndex("view.next", "{}") >= 0);
+    CHECK(cfg.Keybindings.FindBindingIndex("view.previous", "{}") >= 0);
+}
+
+TEST_CASE("ConfigMigration action keys: a disabled binding on the chord does not block the seed") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+PageUp","args_json":"{\"action\":\"toggle\"}","enabled":false}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    const int prev = cfg.Keybindings.FindBindingIndex("view.previous", "{}");
+    REQUIRE(prev >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(prev)].PrimaryHotkey() == "Ctrl+PageUp");
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(prev)].Enabled == true);
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Ctrl+PageUp") == 1);
+}
+
 // --- Gesture-key bindings — one-shot seed migration (migrated_gesture_keys_v1) ---
 //
 // Same replace-not-merge failure class as the seeds above: a config saved before the gesture commands existed

@@ -33,7 +33,6 @@ locks have since been released:
 - **fr-FR rows** for the new draft and undo strings (they render the English fallback, including the create
   drafts' `newissue.draft_restored*`, `quickcreate.draft_*` and `draft.kept_on_view_change`), and the unused old
   `offline.conflict` "kept until Smatchet closes" row.
-- Related open Issues: #2458 (dictation reload drain) and #2459.
 
 Concrete next action:
 View-delete Undo, the conflict "Discard my edit" Undo (#116) and the create drafts shipped
@@ -44,4 +43,4 @@ is released, each in its own PR with a bucket-E case beside the existing `Offlin
 Delete each bullet as it lands.
 
 Status: open
-Last-reviewed: 2026-11-24
+Last-reviewed: 2026-11-25

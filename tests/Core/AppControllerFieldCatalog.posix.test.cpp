@@ -1486,6 +1486,27 @@ TEST_CASE("Pane catalog: a saved copy the pane does not take leaves the request 
     CHECK_FALSE(HasField(*app.GetPaneAvailableFields(kCatalogPane), "customfield_b_saved"));
 }
 
+TEST_CASE("AppController::IsGridCatalogFetchForPane names the pane a grid catalog fetch was latched for") {
+    // The grid's read-only cue keys "the session's catalog fetch is loading this pane" on the pane the fetch was
+    // latched for, not on focus: after focus moves on, that pane still reads as loading and the new focused pane
+    // does not.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    REQUIRE(app.EnsurePaneContextLive("pane-a", std::string()) != nullptr);
+    REQUIRE(app.EnsurePaneContextLive("pane-b", std::string()) != nullptr);
+    app.SetFocusedPane("pane-a");
+    const GridCatalogFetchLatch latch = app.LatchGridCatalogFetch();
+    CHECK(app.IsGridCatalogFetchForPane(latch, "pane-a"));
+    CHECK_FALSE(app.IsGridCatalogFetchForPane(latch, "pane-b"));
+
+    app.SetFocusedPane("pane-b");
+    CHECK(app.IsGridCatalogFetchForPane(latch, "pane-a"));
+    CHECK_FALSE(app.IsGridCatalogFetchForPane(latch, "pane-b"));
+    CHECK_FALSE(app.IsGridCatalogFetchForFocusedPane(latch));
+    CHECK_FALSE(app.IsGridCatalogFetchForPane(latch, "no-such-pane"));
+    CHECK_FALSE(app.IsGridCatalogFetchForPane(GridCatalogFetchLatch(), "pane-a"));
+}
+
 TEST_CASE("AppController::GetAvailableFields reads the snapshot and the project it was fetched for together") {
     // The grid's shared frame index keeps this key beside the snapshot it indexes, so a components cell compares its
     // row against the project of the catalog it actually reads, even after focus moves later in the frame.
@@ -1705,6 +1726,11 @@ TEST_CASE("Offline with no saved catalog, the pane reports the failure and Retry
     AppController::PaneCatalogFetchStatus status = rig.App.GetPaneCatalogFetchStatus(kPaneId);
     CHECK(status.CanRetry);
     CHECK_FALSE(status.LastError.empty());
+    // The grid reads the status every frame without the error text, and asks again with it only when it shows it.
+    const AppController::PaneCatalogFetchStatus quiet = rig.App.GetPaneCatalogFetchStatus(kPaneId, false);
+    CHECK(quiet.Failed);
+    CHECK(quiet.CanRetry);
+    CHECK(quiet.LastError.empty());
     CHECK_FALSE(rig.App.IsPaneFieldCatalogPopulated(kPaneId)); // a failure is never recorded as loaded
 
     smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);

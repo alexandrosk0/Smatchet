@@ -73,3 +73,5 @@ unsigned int DictationInsertionRouter::ConsumePendingReloadItemId() {
     // No-op in stub mode — no live ImGui state to reload.
     return 0u;
 }
+
+unsigned int DictationInsertionRouter::TakeLastConsumedReloadItemIdForTest() { return 0u; }

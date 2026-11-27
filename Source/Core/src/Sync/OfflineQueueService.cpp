@@ -1182,6 +1182,15 @@ OfflineQueueService::ResolveFieldEditScalarConflict(const PendingFieldEditRecord
     ctx["mine"] = mine;
     ctx["theirs"] = theirs;
     ctx["fieldId"] = fid;
+    // The resolver's hint and rejection text depend on what the field takes, and a Jira sprint is a custom field
+    // whose id does not say so (#2513). The queued sprint payload shape needs no loaded catalog, and the catalog
+    // check covers a sprint field queued in another shape. Other fields carry no kind member at all.
+    std::string queuedSprintId;
+    const std::shared_ptr<const TrackerField> catalogField = FindCatalogField(fid);
+    if (TrackerFieldPayloadPure::TryParseSprintAddPayload(fieldsPayload, queuedSprintId) ||
+        (catalogField && TrackerFieldPayloadPure::IsSprintField(*catalogField))) {
+        ctx["fieldKind"] = "sprint";
+    }
     const std::string auditOp = BackendAuditTrail::MakeOperationId("offline-field-conflict");
     const nlohmann::json auditData{{"pending_field_edit_id", row.Id}, {"field_id", fid}, {"kind", "scalar"}};
     BackendAuditTrail::AppendBegin("offline_field_edit_conflict", FieldEditAuditSource::Current(), row.IssueKey,

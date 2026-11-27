@@ -33,6 +33,8 @@ void ResetHeldRowsDrawnForTests();
 bool SmatchetOfflineConflictDraftRestoredForTest();
 /// Forgets every kept resolution, so one test case does not open on what another one typed.
 void SmatchetOfflineConflictDraftsClearForTest();
+/// The text of the resolver's "not saved" hint, shown after an Esc around a typed resolution.
+const char* SmatchetOfflineConflictUnsavedHintTextForTest();
 /// Conflict rows held by "Discard my edit" while its Undo toast is live (#116), and whether `id` is one.
 int SmatchetOfflineConflictDiscardHeldCountForTest();
 bool SmatchetOfflineConflictDiscardHeldForTest(std::int64_t id);

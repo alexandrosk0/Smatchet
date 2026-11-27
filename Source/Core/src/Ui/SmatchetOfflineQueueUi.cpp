@@ -1263,7 +1263,8 @@ struct ConflictModalCtx {
     std::string Theirs;
     std::string Base;
     std::string RichKind = "adf";
-    std::string FieldId; ///< the field the queued edit is for ("" when the context predates it)
+    std::string FieldId;   ///< the field the queued edit is for ("" when the context predates it)
+    std::string FieldKind; ///< "sprint" when the queue service recorded it ("" otherwise, and in older contexts)
     bool Valid = false;
 };
 
@@ -1283,6 +1284,7 @@ static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
                 {"kind", "text", &ConflictModalCtx::Kind},        {"mine", "", &ConflictModalCtx::Mine},
                 {"theirs", "", &ConflictModalCtx::Theirs},        {"base", "", &ConflictModalCtx::Base},
                 {"richKind", "adf", &ConflictModalCtx::RichKind}, {"fieldId", "", &ConflictModalCtx::FieldId},
+                {"fieldKind", "", &ConflictModalCtx::FieldKind},
             };
             for (const TextMember& m : kMembers) {
                 out.*(m.Member) = ctx.value(m.Key, std::string(m.Fallback));
@@ -1419,6 +1421,14 @@ static void CancelConflictModal(UiDrawSession& d) {
                                                               "What you typed is saved, also if Smatchet closes. "
                                                               "Open the conflict again to go on with it."));
     }
+}
+
+// The hint after an Esc around a typed resolution makes the same promise as the Cancel message: Cancel keeps the
+// text in the draft store, which outlives the app (#2510).
+static const char* ConflictEscUnsavedHintText() {
+    return SmatchetLocalization::T("offline.conflict.esc_unsaved_kept",
+                                   "Your resolution is not saved. Save it, or click Cancel to come back to it "
+                                   "later: it is kept, also if Smatchet closes.");
 }
 
 struct ConflictModalKeys {
@@ -1616,12 +1626,16 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
 }
 
 // What kind of value the queued edit's field takes, for the hint under the resolved-value box and for the text
-// shown when the replay turns the value down (#115). The kind comes from the field id in the conflict context.
+// shown when the replay turns the value down (#115). The kind comes from the conflict context: the kind the queue
+// service recorded, else the field id (a Jira sprint is a custom field whose id does not say so, #2513).
 enum class ScalarConflictKind : unsigned char { Estimate, Sprint, Other };
 
-static ScalarConflictKind ScalarKindForField(const std::string& fieldId) {
+static ScalarConflictKind ScalarKindForField(const std::string& fieldId, const std::string& fieldKind) {
     if (TrackerFieldValueUtils::IsTimeDurationField(fieldId)) {
         return ScalarConflictKind::Estimate;
+    }
+    if (fieldKind == "sprint") {
+        return ScalarConflictKind::Sprint;
     }
     return ToLowerAsciiCopy(fieldId).find("sprint") != std::string::npos ? ScalarConflictKind::Sprint
                                                                          : ScalarConflictKind::Other;
@@ -1711,7 +1725,7 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
     ImGui::Spacing();
 
     // The kind of value this field takes: a hint while it reads, the parser's reason while it does not (#115).
-    const ScalarConflictKind kind = ScalarKindForField(cc.FieldId);
+    const ScalarConflictKind kind = ScalarKindForField(cc.FieldId, cc.FieldKind);
     TrackerParseExplain::ParseMessage valueProblem;
     const std::string valueToSend = ResolvedValueToSend(std::string(d.conflictResolveBuf.data()), kind, valueProblem);
     if (valueProblem.IsError()) {
@@ -1883,10 +1897,7 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
                                                               "This is what you typed here before you cancelled."));
         }
         if (g_conflictEscUnsavedHint) {
-            ImGui::TextWrapped("%s", SmatchetLocalization::T("offline.conflict.esc_unsaved",
-                                                             "Your resolution is not saved. Save it, or click "
-                                                             "Cancel to come back to it later: it is kept until "
-                                                             "Smatchet closes."));
+            ImGui::TextWrapped("%s", ConflictEscUnsavedHintText());
         }
         ImGui::EndPopup();
     } else {
@@ -1900,6 +1911,8 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
 } // namespace
 
 bool SmatchetOfflineConflictUnsavedHintShownForTest() { return g_conflictEscUnsavedHint; }
+
+const char* SmatchetOfflineConflictUnsavedHintTextForTest() { return ConflictEscUnsavedHintText(); }
 
 bool SmatchetOfflineConflictDraftRestoredForTest() { return g_conflictDraftRestored; }
 

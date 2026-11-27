@@ -139,11 +139,28 @@ TEST_SUITE("LeftViewReasonPure") {
         const std::unordered_map<std::string, std::string> back =
             LastKnownFieldsFromJson(LastKnownFieldsToJson(fields));
         CHECK(back.at("status") == "Open");
-        CHECK(back.find("empty") == back.end());
+        REQUIRE(back.find("empty") != back.end());
+        CHECK(back.at("empty").empty());
         CHECK(back.at("long").size() == 2048);
         CHECK(back.find("bad") != back.end());
         CHECK(LastKnownFieldsFromJson("not json").empty());
         CHECK(LastKnownFieldsToJson(fields, 2048, 10).size() < 100); // total cap
+    }
+
+    TEST_CASE("an empty last-known value survives storage, so empty-to-set is a change") {
+        const std::unordered_map<std::string, std::string> before{{"assignee", ""}, {"status", "Open"}};
+        const std::unordered_map<std::string, std::string> stored =
+            LastKnownFieldsFromJson(LastKnownFieldsToJson(before));
+        const std::unordered_map<std::string, std::string> after{
+            {"assignee", "Bob"}, {"status", "Open"}, {"only_after", "y"}};
+        const std::vector<TrackerFieldChange> changes = DiffRowFields("PROJ-1", stored, after);
+        REQUIRE(changes.size() == 1);
+        CHECK(changes[0].fieldId == "assignee");
+        CHECK(changes[0].fromValue.empty());
+        CHECK(changes[0].toValue == "Bob");
+        const LeftViewReason reason = BuildLeftViewReason(changes, "assignee is EMPTY", {});
+        CHECK(reason.kind == LeftViewReasonKind::QueryFieldChanged);
+        CHECK(reason.text == "Assignee: set to Bob");
     }
 }
 
@@ -177,6 +194,40 @@ TEST_SUITE("LeftViewHistoryPure") {
         CHECK(fields[1].first == "Status");
         CHECK(fields[1].second == "Done");
         CHECK(fields[2].first == "assignee");
+    }
+
+    TEST_CASE("details keep two fields that share a label apart") {
+        const std::unordered_map<std::string, std::string> saved{{"customfield_10010", "Alpha"},
+                                                                 {"customfield_10500", "Beta"}};
+        const std::unordered_map<std::string, std::string> live{{"customfield_10500", "Gamma"}};
+        const std::unordered_map<std::string, std::string> labels{{"customfield_10010", "Team"},
+                                                                  {"customfield_10500", "Team"}};
+        const auto fields = MergeDetailFields(saved, live, labels);
+        REQUIRE(fields.size() == 2);
+        CHECK(fields[0].first == "Team (customfield_10010)");
+        CHECK(fields[0].second == "Alpha");
+        CHECK(fields[1].first == "Team (customfield_10500)");
+        CHECK(fields[1].second == "Gamma");
+    }
+
+    TEST_CASE("details tell an unlabelled id apart from a label with the same text") {
+        const std::unordered_map<std::string, std::string> saved{{"Team", "X"}, {"customfield_1", "Y"}};
+        const std::unordered_map<std::string, std::string> labels{{"customfield_1", "Team"}};
+        const auto fields = MergeDetailFields(saved, {}, labels);
+        REQUIRE(fields.size() == 2);
+        CHECK(fields[0].first == "Team");
+        CHECK(fields[0].second == "X");
+        CHECK(fields[1].first == "Team (customfield_1)");
+        CHECK(fields[1].second == "Y");
+    }
+
+    TEST_CASE("details list no field without a value") {
+        const std::unordered_map<std::string, std::string> saved{{"assignee", ""}, {"status", "Open"}};
+        const std::unordered_map<std::string, std::string> live{{"assignee", ""}};
+        const auto fields = MergeDetailFields(saved, live, {});
+        REQUIRE(fields.size() == 1);
+        CHECK(fields[0].first == "status");
+        CHECK(fields[0].second == "Open");
     }
 }
 

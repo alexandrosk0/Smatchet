@@ -256,9 +256,7 @@ std::string LastKnownFieldsToJson(const std::unordered_map<std::string, std::str
     nlohmann::json out = nlohmann::json::object();
     std::size_t total = 0;
     for (const auto& entry : ordered) {
-        if (entry.second.empty()) {
-            continue;
-        }
+        // An empty value is kept: it says the field was fetched and had no value, which a later comparison needs.
         const std::string value = entry.second.substr(0, maxValueBytes);
         if (total + entry.first.size() + value.size() > maxTotalBytes) {
             continue;

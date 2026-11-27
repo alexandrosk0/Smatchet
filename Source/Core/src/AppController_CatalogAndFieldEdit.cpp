@@ -967,6 +967,14 @@ bool AppController::IsGridCatalogFetchForFocusedPane(const GridCatalogFetchLatch
     return latch.Pane == &focusedContext();
 }
 
+bool AppController::IsGridCatalogFetchForPane(const GridCatalogFetchLatch& latch, const std::string& paneId) const {
+    if (latch.Pane == nullptr) {
+        return false;
+    }
+    const std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
+    return it != gridContexts_.end() && it->second.get() == latch.Pane;
+}
+
 bool AppController::ApplyGridFieldCatalogResult(const GridCatalogFetchLatch& latch, const TrackerConfig& fetchCfg,
                                                 const std::string& projectKey, std::vector<TrackerField> fields,
                                                 std::vector<TrackerComponent> components,

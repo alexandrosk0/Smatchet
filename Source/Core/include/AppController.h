@@ -944,6 +944,9 @@ class AppController : public IAppThreading,
     GridCatalogFetchLatch LatchGridCatalogFetch();
     /// True when `latch` was taken for the pane that is focused now (UI thread).
     bool IsGridCatalogFetchForFocusedPane(const GridCatalogFetchLatch& latch) const;
+    /// True when `latch` was taken for pane `paneId`'s live context, focused or not (UI thread): the grid fetch it
+    /// names is that pane's catalog load, even after focus has moved to another pane.
+    bool IsGridCatalogFetchForPane(const GridCatalogFetchLatch& latch, const std::string& paneId) const;
     /// UI thread: applies the grid's field-catalog fetch result to the pane `latch` names, the way RefreshFieldCatalog
     /// applies its own: the snapshot is keyed by `fetchCfg` and `projectKey` (the configuration and project the fetch
     /// ran with, not whatever is configured when it lands), the Jira-vs-Plane fixups follow `fetchCfg`'s tracker, and
@@ -1088,7 +1091,7 @@ class AppController : public IAppThreading,
     /// The pane `paneId` as a write target, for an edit made in a pane that may not hold focus (the grid).
     /// A pane without a live context yields a target with no backend, so the write fails rather than
     /// landing in another pane. UI thread.
-    PendingActionTarget LatchPendingActionTargetForPane(const std::string& paneId) const;
+    PendingActionTarget LatchPendingActionTargetForPane(const std::string& paneId) const override;
     PendingActionSubmitResult SubmitOrQueueComment(const PendingActionTarget& target, const std::string& issueKey,
                                                    const std::string& body) override;
     PendingActionSubmitResult SubmitOrQueueWorklog(const PendingActionTarget& target, const std::string& issueId,
@@ -1640,8 +1643,10 @@ class AppController : public IAppThreading,
         bool AwaitingBackend = false;
         std::string LastError;
     };
-    /// UI thread. All false for a pane with no live context.
-    PaneCatalogFetchStatus GetPaneCatalogFetchStatus(const std::string& paneId) const;
+    /// UI thread. All false for a pane with no live context. `withLastError` false leaves LastError empty, so a
+    /// caller that reads the status every frame (the grid's read-only cue) copies no string; it asks again with the
+    /// error when it needs the text.
+    PaneCatalogFetchStatus GetPaneCatalogFetchStatus(const std::string& paneId, bool withLastError = true) const;
     /// UI thread. Fetches the pane's catalog again with its latest stored configuration (PaneCatalogFetchState::
     /// Config); a no-op while a fetch runs or is parked until the pane's backend is installed, when no configuration
     /// was stored, or when the pane already has a live catalog. When that configuration names another site than the

@@ -37,6 +37,35 @@
   - `docs/self-improvement/categories/debt/2026-11-22-drafts-undo-deferred.md`
   - `tests/ui/whisper_ai_assistant_autosend.test.cpp`
   - `docs/plans/INDEX.md`
+### `catalog-field-handle-2501`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/catalog-field-handle-2501`
+- **Started**: 2026-11-27T03:21:39Z
+- **Updated**: 2026-11-27T03:37:30Z
+- **Write set** (22 paths):
+  - `Source/Core/include/GridLiveContext.h`
+  - `Source/Core/src/AppController_CatalogAndFieldEdit.cpp`
+  - `Source/Core/include/Interfaces/IAppFields.h`
+  - `Source/Core/include/IEditMetaDeps.h`
+  - `Source/Core/include/GridContextDepsAdapter.h`
+  - `Source/Core/src/GridContextDepsAdapter.cpp`
+  - `Source/Core/src/EditMetaCacheService.cpp`
+  - `Source/Core/src/Commands/Builtin/BuiltinCommands_Fields.cpp`
+  - `Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp`
+  - `Source/Core/src/Commands/Builtin/BuiltinCommands_Perf.cpp`
+  - `Source/Core/src/Ui/AnnotateAnalysisUi_Preferences.cpp`
+  - `Source/Core/src/Ui/AnnotateAnalysisUi_Window.cpp`
+  - `tests/support/FakeEditMetaDeps.h`
+  - `tests/Core/EditMetaCacheService.test.cpp`
+  - `tests/Core/AppControllerFieldCatalogLock.test.cpp`
+  - `tests/Core/AppControllerFieldCatalog.posix.test.cpp`
+  - `Source/Core/include/Interfaces/IAppTicketMutations.h`
+  - `Source/Core/include/AppController.h`
+  - `tests/Commands/BuiltinFacetCommands.test.cpp`
+  - `tests/ui/duration_inline_edit_commit.test.cpp`
+  - `docs/plans/active/bulk-edit-rows.md`
+  - `docs/self-improvement/categories/debt/2026-11-26-legacy-find-field-by-id-pinned-accessor.md`
 
 ### `input-ux-w3-grid-s4`
 
@@ -44,10 +73,13 @@
 - **Branch**: `claude/w3-grid-spreadsheet-s4-91e0b7`
 - **Started**: 2026-11-25T21:05:33Z
 - **Write set** (31 paths):
+- **Updated**: 2026-11-27T06:37:04Z
+- **Write set** (34 paths):
   - `Source/Core/include/SpreadsheetState.h`
   - `Source/Core/include/Ui/BulkFieldEditPure.h`
   - `Source/Core/include/Ui/GridCursorPure.h`
   - `Source/Core/include/Ui/GridPastePure.h`
+  - `Source/Core/include/Ui/GridUndoPure.h`
   - `Source/Core/include/Ui/SmatchetGridUiSupport.h`
   - `Source/Core/include/Ui/SmatchetUiSession.h`
   - `Source/Core/src/SmatchetGridFieldEditPipeline.cpp`
@@ -70,6 +102,10 @@
   - `docs/self-improvement/categories/debt/2026-11-25-grid-key-edit-review-mediums.md`
   - `docs/self-improvement/categories/debt/2026-11-25-grid-paste-review-leftovers.md`
   - `docs/self-improvement/categories/debt/2026-11-25-grid-undo-review-leftovers.md`
+  - `docs/self-improvement/categories/debt/2026-11-25-grid-undo-review-leftovers.md`
+  - `docs/self-improvement/categories/debt/2026-11-27-grid-paste-review-leftovers.md`
+  - `docs/self-improvement/historical-review-findings.md`
+  - `scripts/dev/test-ui-grid-spreadsheet.sh`
   - `tests/CMakeLists.txt`
   - `tests/Core/BulkFieldEditPure.test.cpp`
   - `tests/Core/GridCursorPure.test.cpp`

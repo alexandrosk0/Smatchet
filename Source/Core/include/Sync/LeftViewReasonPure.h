@@ -31,7 +31,8 @@ bool QueryNamesField(const std::string& query, const std::string& fieldId, const
 
 /// The fields that differ between a last-known row and a fresh one. Only fields both rows carry are compared,
 /// because a row holds only the fields its fetch asked for. Bookkeeping fields (`updated`, comments, worklogs,
-/// watch and vote counts, ...) never explain a departure and are skipped. Sorted by field id.
+/// watch and vote counts, ...) never explain a departure and are skipped. Sorted by field id. A field the
+/// last-known row holds empty and the fresh row holds set is a change. A field only one row carries is not compared.
 std::vector<TrackerFieldChange> DiffRowFields(const std::string& issueKey,
                                               const std::unordered_map<std::string, std::string>& lastKnown,
                                               const std::unordered_map<std::string, std::string>& fresh);
@@ -52,8 +53,9 @@ LeftViewReason UnavailableReason();
 LeftViewReason NotVisibleReason();
 LeftViewReason NotCheckedReason();
 
-/// JSON for the row's last-known values: empty values skipped, each value and the whole payload capped so a
-/// long description cannot bloat the table. Invalid UTF-8 is replaced, never thrown on.
+/// JSON for the row's last-known values. Empty values are kept, so an empty-to-set change is still seen once the
+/// row is read back. Each value and the whole payload are capped so a long description cannot bloat the table.
+/// Invalid UTF-8 is replaced, never thrown on.
 std::string LastKnownFieldsToJson(const std::unordered_map<std::string, std::string>& fieldValues,
                                   std::size_t maxValueBytes = 2048, std::size_t maxTotalBytes = 65536);
 
