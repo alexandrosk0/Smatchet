@@ -16,6 +16,14 @@
 class AppController;
 class Views;
 
+namespace smatchet {
+namespace grid {
+namespace paste {
+struct CopyRecord;
+}
+} // namespace grid
+} // namespace smatchet
+
 /// Begin a new-issue draft seeded from the last visible ticket (defined in
 /// SmatchetGridHeaderUi.cpp). Exposed so the pane-window host can replay a DEFERRED
 /// "+ New Issue" click from a not-yet-focused pane after the focus/view switch lands
@@ -66,6 +74,10 @@ std::string GetCellRawForCopy(const CachedTicket& ticket, const TicketGridColumn
 void CopyGridRectAsTsv(const std::vector<CachedTicket>& tickets, const std::vector<size_t>& sortedIdx,
                        const std::vector<TicketGridColumn>& columns, const TrackerFieldCatalogIndex& catalog,
                        const GridRectSelection& sel);
+
+/// What the last CopyGridRectAsTsv put on the clipboard, with the stored date behind each date cell: a paste of that
+/// very text reads the dates from here (the copied text shows them in display form). UI thread only.
+const smatchet::grid::paste::CopyRecord& LastGridCopy();
 
 /// CSV (RFC 4180 quoting, LF line endings) of the visible grid columns for the whole-row selection `rows`: a header
 /// line of column labels, then one line per row in grid sort order, values as Ctrl+C copies them.
@@ -182,13 +194,32 @@ PrepareBulkFieldEditJob(AppController& app, const std::string& paneId, const Tra
                         const std::vector<smatchet::grid::bulk::BulkRowInput>& rows,
                         std::vector<std::vector<std::string>>* rowValues);
 
-/// Undo (docs/plans/active/input-ux-w3-grid-spreadsheet.md, S3). The toast's Undo button: takes history entry
+/// One cell written from the keyboard bulk path (a paste onto one cell, a column of one row): pre-flighted like a bulk
+/// row, then queued as an ordinary edit bound to `paneId`, so it gets the single-cell toast and history entry. False
+/// when the row was skipped (not editable, gone, or already holding the value).
+bool QueueSingleCellFieldEdit(AppController& app, UiDrawSession& d, const std::string& paneId,
+                              const TrackerField& field, const smatchet::grid::bulk::BulkRowInput& row,
+                              bool readOnlyMode);
+
+/// Undo (docs/plans/shipped/input-ux-w3-grid-spreadsheet.md, S3). The toast's Undo button: takes history entry
 /// `entryId` and queues its inverse as ordinary edits. A no-op when the entry is gone.
 void UndoGridEntryById(AppController& app, UiDrawSession& d, std::uint64_t entryId);
 
 /// Grid Ctrl+Z: undoes the newest entry of `paneId`. An entry whose save has not landed yet answers with an info
 /// toast and stays; an empty history answers with a quiet info toast. Returns true when an inverse was queued.
 bool UndoNewestGridEntry(AppController& app, UiDrawSession& d, const std::string& paneId);
+
+/// Every keyboard bulk write (Ctrl+Enter, fill-down, a paste) goes through here: one entry per column, each row
+/// with its own values. A column of one row is queued as an ordinary single-cell edit, a longer one as a per-row bulk
+/// job (its own history entry and summary toast). More than kConfirmThreshold cells in all park the write on
+/// `d.pendingBulkConfirm` until its dialog (DrawGridBulkDialogs) gets Apply. `skipped` counts the cells the caller
+/// already left out, so the confirm (or a toast) can say how many were not written.
+void RequestBulkFieldEdit(AppController& app, UiDrawSession& d, const std::string& paneId,
+                          std::vector<smatchet::grid::bulk::BulkColumnWrite> columns, int skipped, bool readOnlyMode);
+
+/// Draws the pane's two bulk dialogs: the context menu's "Set <Field> for N rows" popup, and the "Apply to N rows?"
+/// confirm of a parked keyboard write that came from `pane`. Call once per pane draw.
+void DrawGridBulkDialogs(AppController& app, UiDrawSession& d, GridPane& pane, bool readOnlyMode);
 
 /// Folds one row's result into its job (UI thread). An unknown job is ignored with a warning. When the last row
 /// lands, the one summary toast is pushed.

@@ -54,6 +54,12 @@ struct BulkRowInput {
     bool HasConflictBase = false;
 };
 
+/// One column of a keyboard bulk write (a paste, a fill-down, Ctrl+Enter): the field and the rows it writes.
+struct BulkColumnWrite {
+    TrackerField Field;
+    std::vector<BulkRowInput> Rows;
+};
+
 struct BulkFieldEditJob {
     std::uint64_t Id = 0;
     std::string PaneId; ///< the pane the user acted in; its target is latched onto every row
@@ -112,13 +118,13 @@ std::string MixedValueLabel(const BulkFieldEditJob& job);
 bool NeedsConfirm(int rowCount, int threshold = kConfirmThreshold);
 
 /// A row's current value in the form the editors write: option ids for a choice field (resolved from the cached
-/// display string), the trimmed label strings for labels. Empty for an empty value; an entry it cannot resolve
-/// passes through as raw text (see AllEntriesResolve).
+/// display string), the trimmed label strings for labels, the text itself for an Unsupported kind (a free value).
+/// Empty for an empty value; an entry it cannot resolve passes through as raw text (see AllEntriesResolve).
 std::vector<std::string> BeforeValuesFor(const TrackerField& field, BulkFieldKind kind,
                                          const std::string& displayValue);
 
-/// The values to write for one row, in the form the single-cell editors queue: `picked` for a single choice, the
-/// Replace / Add / Remove merge (ComputeValuesForRow) for a multi value.
+/// The values to write for one row, in the form the single-cell editors queue: `picked` for a single choice and for a
+/// free value, the Replace / Add / Remove merge (ComputeValuesForRow) for a multi value.
 std::vector<std::string> NewValuesForRow(BulkFieldKind kind, BulkMode mode, const std::vector<std::string>& before,
                                          const std::vector<std::string>& picked);
 
@@ -129,7 +135,8 @@ std::vector<std::string> NewValuesForRow(BulkFieldKind kind, BulkMode mode, cons
 bool AllEntriesResolve(const TrackerField& field, const std::vector<std::string>& entries);
 
 /// True when writing `after` leaves the row as it is: same set (order and duplicates ignored; labels are case-sensitive
-/// on the tracker), same single option id. `before` and `after` are the forms BeforeValuesFor / NewValuesForRow return.
+/// on the tracker), same single option id, same free value. `before` and `after` are the forms BeforeValuesFor /
+/// NewValuesForRow return.
 bool IsRowUnchanged(BulkFieldKind kind, const std::vector<std::string>& before, const std::vector<std::string>& after);
 
 /// ADR-0016 scalar conflict base: the pre-edit DISPLAY value of the cell, recorded on the edit so an offline

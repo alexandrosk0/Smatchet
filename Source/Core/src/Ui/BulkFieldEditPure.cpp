@@ -176,6 +176,9 @@ std::vector<std::string> BeforeValuesFor(const TrackerField& field, BulkFieldKin
     if (value.empty()) {
         return std::vector<std::string>();
     }
+    if (kind == BulkFieldKind::Unsupported) {
+        return std::vector<std::string>{value}; // a free value (text, number, date, duration) is itself
+    }
     if (kind == BulkFieldKind::Labels) {
         std::vector<std::string> labels;
         for (const std::string& label : TrackerLabelsPure::ParseCsv(value)) {
@@ -195,8 +198,8 @@ std::vector<std::string> BeforeValuesFor(const TrackerField& field, BulkFieldKin
 
 std::vector<std::string> NewValuesForRow(BulkFieldKind kind, BulkMode mode, const std::vector<std::string>& before,
                                          const std::vector<std::string>& picked) {
-    if (kind == BulkFieldKind::SingleChoice) {
-        return picked;
+    if (kind == BulkFieldKind::SingleChoice || kind == BulkFieldKind::Unsupported) {
+        return picked; // one value, written as the single-cell editor writes it (an empty text included)
     }
     return ComputeValuesForRow(mode, before, picked, kind == BulkFieldKind::Labels);
 }
@@ -213,6 +216,10 @@ bool AllEntriesResolve(const TrackerField& field, const std::vector<std::string>
 bool IsRowUnchanged(BulkFieldKind kind, const std::vector<std::string>& before, const std::vector<std::string>& after) {
     if (kind == BulkFieldKind::SingleChoice) {
         return before == after;
+    }
+    if (kind == BulkFieldKind::Unsupported && before.size() <= 1 && after.size() <= 1) {
+        // No value and one empty value are the same cleared cell.
+        return (before.empty() ? std::string() : before.front()) == (after.empty() ? std::string() : after.front());
     }
     // A multi value compares as a normalised set: the editors write it sorted and deduplicated.
     return ComputeValuesForRow(BulkMode::Replace, before, before, kind == BulkFieldKind::Labels) == after;
