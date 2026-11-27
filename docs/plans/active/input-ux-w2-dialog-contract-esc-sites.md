@@ -24,27 +24,27 @@ Per-site decision (settled here, not left to the implementer):
 
 - **Conflict resolver — migrate**, with one scope option: `DialogReadKeys` takes the field that counts as "being typed in". Its two read-only panes (`##CRMine`, `##CRTheirs`) can hold the active item; with "any field" an Esc pressed after clicking into one of them would leave that pane instead of showing the "Esc keeps your typed resolution" hint.
 - **Field viewer shell and Comments post box — migrate together.** The shell reads Esc with `DialogReadKeys(nothingTyped = !Content->HasUnsavedInput())` and the box loses its own Esc block and `CloseRequested`. The outcomes are the same as today for the Comments content (first Esc leaves a box holding text, a blank box closes the viewer, a close with a draft asks), but they come from the scope's rule instead of `WantTextInput`, and `IFieldViewerContent::ConsumeCloseRequest` has no caller left.
-- **Long-text editor — documented exception, no behaviour change.** Esc asks to discard even from the text area. The question is the guard: `Keep editing` returns the caret and nothing is lost, so a layered first Esc would add a key press to every dirty cancel without protecting more. The exception is a comment at the Esc read, and `docs/guides/keyboard-shortcuts.md` already states it. Revisit only if the user wants audit § 3's layered multiline Esc here (one line: pass `nothingTyped = !dirty` to `DialogReadKeys`).
+- **Long-text editor — documented exception, no behaviour change.** Esc asks to discard even from the text area. The question is the guard: `Keep editing` returns the caret and nothing is lost, so a layered first Esc would add a key press to every dirty cancel without protecting more. The exception is a comment at the Esc read, and `docs/guides/keyboard-shortcuts.md` already states it. Revisit only if the user wants audit § 3's layered multiline Esc here (one change: move the modal onto `BeginDialog` / `EndDialog` and pass `nothingTyped = !dirty` to `DialogReadKeys`).
 
 ## Approach
 
 1. Add an optional last parameter `ImGuiID typingField = 0` to `DialogReadKeys` and a matching `DialogScopeState::TypingField`. With 0 the behaviour is unchanged (any field of the dialog counts). With a field id only that item counts as "being typed in", both for this frame's `ActiveId` and for `FieldActiveLastFrame` (which `EndDialog` records with the same definition), and only that item is left on Esc / Ctrl+Enter.
-2. Conflict resolver: `BeginDialog` / `EndDialog` replace `BeginPopupModal` / `EndPopup` and the private `g_conflictOwnedKeyboardLastFrame`; `ReadConflictModalKeys` takes Esc and Ctrl+Enter from `DialogReadKeys(state, nothingTyped, resolvedFieldId)` and keeps Alt+M / Alt+T and its caret request (re-armed after Use Mine / Use Theirs, which the scope's one-shot `DialogFocusHere` does not model).
-3. Field viewer shell: `BeginDialog` / `EndDialog`; Esc from `DialogReadKeys(state, !HasUnsavedInput())`; `Cancel` takes the existing close path (a viewer with unsaved input asks first). Comments: delete the box's Esc block, `CommentsModalState::CloseRequested` and the `ConsumeCloseRequest` override; delete `IFieldViewerContent::ConsumeCloseRequest`.
+2. Conflict resolver: `BeginDialog` / `EndDialog` replace `BeginPopupModal` / `EndPopup` and the private `g_conflictOwnedKeyboardLastFrame`; `ReadConflictModalKeys` takes Esc and Ctrl+Enter from `DialogReadKeys(state, nothingTyped, readSubmit = (a resolved field exists), resolvedFieldId)` and keeps Alt+M / Alt+T and its caret request (re-armed after Use Mine / Use Theirs, which the scope's one-shot `DialogFocusHere` does not model).
+3. Field viewer shell: `BeginDialog` / `EndDialog`; Esc from `DialogReadKeys(state, !HasUnsavedInput(), /*readSubmit=*/false)` (the Comments box posts with Ctrl+Enter, so the shell must leave that chord to its content); `Cancel` takes the existing close path (a viewer with unsaved input asks first). Comments: delete the box's Esc block, `CommentsModalState::CloseRequested` and the `ConsumeCloseRequest` override; delete `IFieldViewerContent::ConsumeCloseRequest`.
 4. Long-text editor: comment only.
 5. Bucket-E cases for each site that changes (below), each mutation-checked.
 
 ## Interface contracts
 
-- `Source/Core/include/Ui/SmatchetDialogScope.h`: `DialogKeys DialogReadKeys(DialogScopeState& s, bool nothingTyped, ImGuiID typingField = 0);` and `DialogScopeState::TypingField` (ImGuiID, 0 = any field). Source-compatible: every existing call keeps its meaning.
+- `Source/Core/include/Ui/SmatchetDialogScope.h`: `DialogKeys DialogReadKeys(DialogScopeState& s, bool nothingTyped, bool readSubmit = true, ImGuiID typingField = 0);` and `DialogScopeState::TypingField` (an `unsigned int` in the ImGui-free `Ui/DialogScopeState.h`, 0 = any field). Source-compatible: every existing call keeps its meaning.
 - `Source/Core/include/Ui/SmatchetFieldViewerModalUi.h`: remove `IFieldViewerContent::ConsumeCloseRequest()`. Its only override is the Comments content's; grep before deleting (`git grep -n ConsumeCloseRequest`).
 - No tracker, command, Lua, MCP, config, SQLite or view-storage change.
 
-Plumbing, hop by hop: `RenderFieldViewerModal` → `BeginDialog(s_viewerDialog, …)` → `DialogReadKeys(s_viewerDialog, !HasUnsavedInput())` → `wantClose` → existing discard path. `DrawConflictModal` → `BeginDialog(s_conflictDialog, …)` → `ReadConflictModalKeys` → `DialogReadKeys(s_conflictDialog, nothingTyped, GetID(resolvedLabel))`.
+Plumbing, hop by hop: `RenderFieldViewerModal` → `BeginDialog(s_viewerDialog, …)` → `DialogReadKeys(s_viewerDialog, !HasUnsavedInput(), /*readSubmit=*/false)` → `wantClose` → existing discard path. `DrawOfflineConflictModal` → `BeginDialog(g_conflictDialog, …)` → the pane (`DrawConflictPaneScalar` / `DrawConflictPaneText`) → `ReadConflictModalKeys` → `DialogReadKeys(g_conflictDialog, nothingTyped, /*readSubmit=*/fieldLabel != nullptr, GetID(resolvedLabel))`.
 
 ## Files to modify
 
-1. `Source/Core/include/Ui/SmatchetDialogScope.h` — the optional parameter and state field.
+1. `Source/Core/include/Ui/SmatchetDialogScope.h` and `Source/Core/include/Ui/DialogScopeState.h` — the optional parameter and state field.
 2. `Source/Core/src/Ui/SmatchetDialogScope.cpp` — `DialogReadKeys` and `EndDialog` use the typing-field definition.
 3. `Source/Core/src/Ui/SmatchetOfflineQueueUi.cpp` — the resolver on the scope.
 4. `Source/Core/src/Ui/SmatchetFieldViewerModalUi.cpp` and `Source/Core/include/Ui/SmatchetFieldViewerModalUi.h` — the shell on the scope; `ConsumeCloseRequest` removed.
@@ -113,7 +113,7 @@ Single slice, owner subsystem `Source/Core/src/Ui/` (leaf `AGENTS.md`), plus `So
 
 ## Open questions
 
-- Should the long-text editor take audit § 3's layered Esc (first Esc leaves the text area, second asks)? This plan says no, on the reasoning above. That is the author's call, not the user's: the PR body flags it, and flipping it is one argument (`nothingTyped = !dirty`) plus the `LongText_*` cases.
+- Should the long-text editor take audit § 3's layered Esc (first Esc leaves the text area, second asks)? This plan says no, on the reasoning above. That is the author's call, not the user's: the PR body flags it, and flipping it means moving the modal from `BeginPopupModal` to `BeginDialog` / `EndDialog` (the scope's last-frame memory is only recorded by `EndDialog`) and passing `nothingTyped = !dirty` to `DialogReadKeys`, plus updating the `LongText_*` cases.
 
 ## Out of scope (flagged, not designed)
 
@@ -125,10 +125,23 @@ Single slice, owner subsystem `Source/Core/src/Ui/` (leaf `AGENTS.md`), plus `So
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **`readSubmit = false` for the shell** (plan § Approach 3 was updated in the same PR): `DialogReadKeys` already had a `readSubmit` parameter by the time this was written. The Comments box posts with Ctrl+Enter, so the shell must leave that chord to its content; with the default `true` the scope clears the field and drops nav activation on Ctrl+Enter and the post never happens. The mutation that restored the default failed `Comments_CtrlEnterPosts`, `Comments_BlankBoxCannotPost` and `Comments_ReopenWhilePostingClearsPostedDraft`.
+- **The History viewer has no text input**, so the shell's old `!WantTextInput` heuristic only ever mattered through the Comments box. The migration therefore changes no History behaviour; it removes the duplicate Esc code and the `CloseRequested` / `ConsumeCloseRequest` hand-off.
+- **No new strings, no CMake or registry edit**: the three new bucket-E cases went into two already-registered files.
+- **`grill-with-docs` was not run as an interactive session.** The plan was checked against the code by reading every site, its callers and its tests before writing it (that is how the read-only-pane and `readSubmit` points were found); no user Q&A took place.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+Run on a Linux build of `SmatchetStandalone` (clang, `SMATCHET_BUILD_UI_TESTS=ON`) under Xvfb with `LIBGL_ALWAYS_SOFTWARE` unset, `ui_test.run --spawn`, a throwaway profile, the offline-first Jira fixture and `SMATCHET_UITEST_WITH_LOCAL_CACHE=1`:
+
+- **Before the change** (current develop): OfflineFirst 39/39, DialogContract 10/10. The `OfflineConflictModalPanes` "19/19" of that first run was vacuous: without `SMATCHET_UITEST_WITH_LOCAL_CACHE` every keyboard case logs `SKIP` and returns. The resolver was only really exercised from the second run on; there is no pre-change baseline for it, so its 19 existing cases were checked against the migrated code directly.
+- **After the change**: OfflineFirst 41/41, OfflineConflictModalPanes 20/20 (no `SKIP` in the log), DialogContract 10/10, FuncSizeMainUi 7/7, DurationInlineEdit 21/21, IconPicker 5/5, Toolbar 8/8.
+- **Mutation checks** (each applied to the production line, rebuilt, the group re-run, then reverted): all five killed. Resolver `typingField` replaced by 0 → `Text_EscAfterClickIntoReadOnlyPane`. Shell Esc-cancel ignored → 14 cases incl. `Comments_EscInEmptyBoxClosesInOnePress` and `FieldViewer_HistoryOpensAndEscCloses`. Shell "nothing is ever unsaved" → `Comments_EscKeepsTypedText`, `Comments_EscOnSpacesOnlyBoxLeavesThenAsks` and three more. Shell `readSubmit` left at the default → `Comments_CtrlEnterPosts` and two more. Comments `HasUnsavedInput` = non-blank text → `Comments_EscOnSpacesOnlyBoxLeavesThenAsks`.
+- **Harness lesson**: the first mutation runs reported "survived" for four of five because the engine's JSON result spans several lines and the driver kept only the last. A mutation result with no failing names is a parse failure until proven otherwise.
+- **Build**: `posix-core-check` compiles every Core TU; the Windows dual-target build runs in CI.
+- **Local gates**: `bash scripts/dev/pre-ship.sh origin/develop` (format, comment-noise, duplication, function-size, include-cycle, markdown, test list, doc suite) clean; code review in the PR body.
+- **Manual residue**: none.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. In the SAME PR that populates the three sections above —*

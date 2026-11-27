@@ -1278,7 +1278,7 @@ static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
             struct TextMember {
                 const char* Key;
                 const char* Fallback;
-                std::string ConflictModalCtx::* Member;
+                std::string ConflictModalCtx::*Member;
             };
             static const TextMember kMembers[] = {
                 {"kind", "text", &ConflictModalCtx::Kind},        {"mine", "", &ConflictModalCtx::Mine},
@@ -1301,11 +1301,11 @@ static const char* const kConflictNotRequeued =
     "The edit could not be re-queued. Your resolution is still here; retry when ready.";
 
 // Keyboard state of the conflict resolver. Reset each time it opens (DrawOfflineConflictModal).
-static bool g_conflictFocusFieldPending = false;      // one-shot: put the caret in the resolved field
-static bool g_conflictOwnedKeyboardLastFrame = false; // the resolver had the keyboard on the previous frame
-static bool g_conflictEscUnsavedHint = false;         // Esc was pressed around a resolution that is not saved
-static std::string g_conflictSeed;                    // the resolved field as opened: the "nothing typed" baseline
-static bool g_conflictDraftRestored = false;          // the field opened with a resolution kept from a Cancel
+static bool g_conflictFocusFieldPending = false;        // one-shot: put the caret in the resolved field
+static smatchet::ui::DialogScopeState g_conflictDialog; // the dialog scope's memory of the last frame's keyboard
+static bool g_conflictEscUnsavedHint = false;           // Esc was pressed around a resolution that is not saved
+static std::string g_conflictSeed;                      // the resolved field as opened: the "nothing typed" baseline
+static bool g_conflictDraftRestored = false;            // the field opened with a resolution kept from a Cancel
 
 // A resolution that was typed and then cancelled, kept so that Cancel does not lose a hand merge. It lives
 // in the draft store (DraftStore.h, surface "offline.conflict", scope = the queue id), so it also survives
@@ -1441,34 +1441,36 @@ struct ConflictModalKeys {
 // Reads the resolver's own keys. Call inside the modal before any of its items are drawn: a key the resolver
 // takes must not also reach the field or button that has the keyboard. `fieldLabel` is the resolved field's
 // label, or null in a pane that has none.
-// - Only while the resolver itself has the keyboard, so a popup above it keeps its keys.
+// - Esc and Ctrl+Enter are the dialog scope's (smatchet::ui::DialogReadKeys): only while the resolver itself
+//   has the keyboard, so a popup above it keeps its keys. The resolved field is the one that counts as
+//   being typed in: the Mine and Theirs panes are read-only fields that can hold the active item too, and a
+//   click into one must not turn the next Esc into "leave the field".
 // - Esc never throws typed text away. With the caret in the field and something typed, the first Esc only
 //   leaves the field: what was typed stays (the field's own Esc would put back its text from before the caret
 //   entered). The next Esc keeps the resolver open and says how to discard. With nothing typed, Esc closes.
-// - Ctrl+Enter saves. The field is left first, and nav activation is dropped for the frame: ImGui activates
-//   the button under the keyboard cursor on Enter whatever the modifiers, so Ctrl+Enter with the cursor on
-//   Use Theirs would otherwise resolve to the server's value.
+// - Ctrl+Enter saves, in the panes that have a resolved field. The scope leaves the field first and drops nav
+//   activation for the frame: ImGui activates the button under the keyboard cursor on Enter whatever the
+//   modifiers, so Ctrl+Enter with the cursor on Use Theirs would otherwise resolve to the server's value.
 // - Alt+M / Alt+T pick a side, as Use Mine / Use Theirs do, in the panes that have a resolved field. Both
 //   chords in one frame pick neither, so a stray second key never decides.
 static ConflictModalKeys ReadConflictModalKeys(const UiDrawSession& d, const char* fieldLabel) {
-    ImGuiContext& g = *ImGui::GetCurrentContext();
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
     const bool owns =
         ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy);
-    const bool fieldActive = fieldLabel != nullptr && g.ActiveId != 0 && g.ActiveId == ImGui::GetID(fieldLabel);
+    const ImGuiID fieldId = fieldLabel != nullptr ? ImGui::GetID(fieldLabel) : 0;
+    const bool fieldActive = fieldId != 0 && g.ActiveId == fieldId;
     const bool nothingTyped = fieldLabel == nullptr || d.conflictResolveBuf.empty() ||
                               std::strcmp(d.conflictResolveBuf.data(), g_conflictSeed.c_str()) == 0;
     if (fieldActive) {
         g_conflictEscUnsavedHint = false;
     }
-    const smatchet::dialogkeys::EscapeAction esc = smatchet::dialogkeys::ResolveEscape(
-        ImGui::IsKeyPressed(ImGuiKey_Escape, false), owns, g_conflictOwnedKeyboardLastFrame, fieldActive, nothingTyped);
-    g_conflictOwnedKeyboardLastFrame = owns;
+    // A pane with no resolved field has nothing to save: it leaves Ctrl+Enter alone.
+    const smatchet::ui::DialogKeys dialogKeys =
+        smatchet::ui::DialogReadKeys(g_conflictDialog, nothingTyped, fieldLabel != nullptr, fieldId);
 
     ConflictModalKeys keys;
-    keys.Save = fieldLabel != nullptr && owns &&
-                (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Enter) ||
-                 ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadEnter));
-    const bool escCancels = esc == smatchet::dialogkeys::EscapeAction::Cancel;
+    keys.Save = dialogKeys.Submit;
+    const bool escCancels = dialogKeys.Esc == smatchet::dialogkeys::EscapeAction::Cancel;
     keys.Close = escCancels && nothingTyped;
     if (escCancels && !nothingTyped) {
         g_conflictEscUnsavedHint = true;
@@ -1479,14 +1481,8 @@ static ConflictModalKeys ReadConflictModalKeys(const UiDrawSession& d, const cha
         keys.UseMine = mine && !theirs;
         keys.UseTheirs = theirs && !mine;
     }
-    const bool picked = keys.UseMine || keys.UseTheirs;
-    if (fieldActive && (keys.Save || picked || esc != smatchet::dialogkeys::EscapeAction::None)) {
+    if (fieldActive && (keys.UseMine || keys.UseTheirs)) {
         ImGui::ClearActiveID();
-    }
-    if (keys.Save) {
-        g.NavActivateId = 0;
-        g.NavActivateDownId = 0;
-        g.NavActivatePressedId = 0;
     }
     return keys;
 }
@@ -1866,15 +1862,15 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
         // and what the field holds now is the baseline for "nothing typed".
         g_conflictSeed.assign(d.conflictResolveBuf.empty() ? "" : d.conflictResolveBuf.data());
         g_conflictFocusFieldPending = !d.conflictResolveBuf.empty();
-        g_conflictOwnedKeyboardLastFrame = false;
+        g_conflictDialog = smatchet::ui::DialogScopeState();
         g_conflictEscUnsavedHint = false;
         // A resolution typed here before and cancelled comes back. The baseline stays the seed, so the
         // restored text counts as typed: Esc does not close around it.
         RestoreConflictDraft(d);
     }
 
-    if (ImGui::BeginPopupModal("ResolveMergeConflict", nullptr,
-                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+    if (smatchet::ui::BeginDialog(g_conflictDialog, "ResolveMergeConflict", nullptr,
+                                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
         const ConflictModalCtx cc = ParseConflictModalCtx(d.conflictContextJson);
         if (!cc.Valid) {
             DrawConflictPaneUnknown(octx);
@@ -1899,9 +1895,8 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
         if (g_conflictEscUnsavedHint) {
             ImGui::TextWrapped("%s", ConflictEscUnsavedHintText());
         }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(g_conflictDialog);
     } else {
-        g_conflictOwnedKeyboardLastFrame = false;
         if (!d.conflictResolveBuf.empty() && d.conflictResolveDbId == 0) {
             d.conflictResolveBuf.clear();
         }

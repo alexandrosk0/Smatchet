@@ -27,11 +27,16 @@ bool EnterPressed() {
     return ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
 }
 
+// The field that counts as being typed in: the one DialogReadKeys was told about, else any field of the dialog.
+bool TypingFieldActive(const DialogScopeState& s, const ImGuiContext& g) {
+    return s.TypingField != 0 ? g.ActiveId == s.TypingField : FieldActiveInDialog(g);
+}
+
 // The field that held the caret last frame still counts on the Esc frame: ImGui's keyboard-nav cancel
 // clears the active item before any window draws, so without this the first Esc would always read as
 // "nothing being typed in" and close the dialog around typed text.
 bool FieldActiveForEsc(const DialogScopeState& s, const ImGuiContext& g, bool escPressed) {
-    return FieldActiveInDialog(g) || (escPressed && s.FieldActiveLastFrame);
+    return TypingFieldActive(s, g) || (escPressed && s.FieldActiveLastFrame);
 }
 
 } // namespace
@@ -53,7 +58,7 @@ bool BeginDialog(DialogScopeState& s, const char* popupId, bool* pOpen, ImGuiWin
 
 void EndDialog(DialogScopeState& s) {
     s.OwnedKeyboardLastFrame = DialogOwnsKeyboard();
-    s.FieldActiveLastFrame = FieldActiveInDialog(*ImGui::GetCurrentContext());
+    s.FieldActiveLastFrame = TypingFieldActive(s, *ImGui::GetCurrentContext());
     ImGui::EndPopup();
 }
 
@@ -76,8 +81,9 @@ bool DialogFocusHere(DialogScopeState& s) {
     return true;
 }
 
-DialogKeys DialogReadKeys(DialogScopeState& s, bool nothingTyped, bool readSubmit) {
+DialogKeys DialogReadKeys(DialogScopeState& s, bool nothingTyped, bool readSubmit, ImGuiID typingField) {
     ImGuiContext& g = *ImGui::GetCurrentContext();
+    s.TypingField = typingField;
     const bool owns = DialogOwnsKeyboard();
     const bool esc = EscPressed();
     DialogKeys keys;
@@ -87,7 +93,7 @@ DialogKeys DialogReadKeys(DialogScopeState& s, bool nothingTyped, bool readSubmi
     keys.Submit = readSubmit && owns && s.OwnedKeyboardLastFrame &&
                   (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Enter) ||
                    ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadEnter));
-    if (FieldActiveInDialog(g) && (keys.Submit || keys.Esc != dialogkeys::EscapeAction::None)) {
+    if (TypingFieldActive(s, g) && (keys.Submit || keys.Esc != dialogkeys::EscapeAction::None)) {
         // Leave the field the way clicking away does: its text stays. ImGui's own Esc in a field would put
         // back the text from before the caret entered.
         ImGui::ClearActiveID();

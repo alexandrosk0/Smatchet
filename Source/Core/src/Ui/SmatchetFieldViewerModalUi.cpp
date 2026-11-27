@@ -107,8 +107,16 @@ void RenderFieldViewerModal(AppController& app, bool readOnlyMode) {
     // dismissed branch below gives it the meaning of the Close button and Esc: a viewer with nothing
     // unsaved closes, unsaved input comes back next frame with the discard question up.
     bool modalOpen = true;
-    if (ImGui::BeginPopupModal(s_Viewer.WindowLabel.c_str(), &modalOpen,
-                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+    static smatchet::ui::DialogScopeState s_viewerDialog;
+    if (smatchet::ui::BeginDialog(s_viewerDialog, s_Viewer.WindowLabel.c_str(), &modalOpen,
+                                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+        // Esc is the dialog scope's, read before the content draws so the key a field takes does not also
+        // reach the field (smatchet::ui::DialogReadKeys): with the caret in a field and something unsaved,
+        // the first Esc only leaves that field and what was typed stays; with nothing unsaved, Esc closes
+        // even from a field; with the discard confirm up the keys are the confirm's (this dialog does not
+        // hold the keyboard then). Ctrl+Enter is left to the content (the comments box posts with it).
+        const smatchet::ui::DialogKeys dialogKeys =
+            smatchet::ui::DialogReadKeys(s_viewerDialog, !s_Viewer.Content->HasUnsavedInput(), /*readSubmit=*/false);
         // Room for the Close row (separator + button) under the content's body. The body child keeps
         // its scrollbar as a fallback: content whose own layout overflows stays reachable.
         const float closeRowH = ImGui::GetStyle().ItemSpacing.y * 2.0f + ImGui::GetFrameHeight() + 1.0f;
@@ -119,21 +127,13 @@ void RenderFieldViewerModal(AppController& app, bool readOnlyMode) {
 
         ImGui::Separator();
         bool wantClose = ImGui::Button("Close", ImVec2(100, 0));
-        // P2-M3: Esc while an input is being edited only leaves that input (the content decides what
-        // happens to its text; the comments box keeps it) — it must not also tear down the modal
-        // around the draft. Only a second, unfocused Esc reaches the close path, unless the content
-        // asks for the close itself (ConsumeCloseRequest). While the discard confirm is up, Esc is
-        // its "keep writing" (handled inside it), not another close request that re-opens it.
-        const bool discardWasOpen = ImGui::IsPopupOpen(kFieldViewerDiscardPopupId);
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput && !discardWasOpen) {
+        // An Esc that cancels takes the Close row's path, so unsaved input still gets the discard question.
+        if (dialogKeys.Esc == smatchet::dialogkeys::EscapeAction::Cancel) {
             wantClose = true;
         }
         if (reopenForConfirm) { // back after a dismissal around unsaved input: ask now
             s_Viewer.ReopenForDiscardConfirm = false;
             s_Viewer.ReopenFrame = ImGui::GetFrameCount();
-            wantClose = true;
-        }
-        if (s_Viewer.Content->ConsumeCloseRequest()) {
             wantClose = true;
         }
         bool closeNow = false;
@@ -164,7 +164,7 @@ void RenderFieldViewerModal(AppController& app, bool readOnlyMode) {
         if (closeNow || discardConfirmed) {
             ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_viewerDialog);
         if (discardConfirmed) {
             s_Viewer.Content->OnDiscard();
         }
