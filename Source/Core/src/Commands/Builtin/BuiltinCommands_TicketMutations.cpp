@@ -80,7 +80,7 @@ static void RegisterSetFieldCommand(CommandRegistry& reg, IAppTicketMutations& a
                 return CommandResult::Success(
                     {{"wouldDo", {{"ticket", id}, {"field", field}, {"from", from}, {"to", value}}}});
             }
-            const TrackerField* fieldMeta = app.FindFieldById(field);
+            const std::shared_ptr<const TrackerField> fieldMeta = app.FindFieldSnapshotById(field);
             if (!fieldMeta) {
                 return CommandResult::Failure(ErrorCode::NotFound, "Field '" + field + "' not found in catalog.",
                                               "Run fields.refresh_catalog first.");
@@ -190,7 +190,7 @@ static void RegisterTransitionCommand(CommandRegistry& reg, IAppTicketMutations&
             if (ctx.DryRun) {
                 return CommandResult::Success({{"wouldDo", {{"ticket", id}, {"toStatus", toStatus}}}});
             }
-            const TrackerField* statusField = app.FindFieldById("status");
+            const std::shared_ptr<const TrackerField> statusField = app.FindFieldSnapshotById("status");
             if (!statusField) {
                 return CommandResult::Failure(ErrorCode::NotFound, "Status field not found in catalog.",
                                               "Run fields.refresh_catalog first.");
@@ -229,7 +229,7 @@ static void RegisterSetFieldsCommand(CommandRegistry& reg, IAppTicketMutations& 
                         // One latch for the whole call: every field goes to the same pane's tracker.
                         const PendingActionTarget target = app.LatchPendingActionTarget();
                         for (const auto& kv : fieldsMap.items()) {
-                            const TrackerField* f = app.FindFieldById(kv.key());
+                            const std::shared_ptr<const TrackerField> f = app.FindFieldSnapshotById(kv.key());
                             if (!f) {
                                 results[kv.key()]["ok"] = false;
                                 results[kv.key()]["error"] = "field not found";
@@ -480,7 +480,9 @@ static void RegisterSetFieldBulkCommand(CommandRegistry& reg, IAppTicketMutation
             if (!argError.empty()) {
                 return CommandResult::Failure(ErrorCode::ValidationError, argError);
             }
-            const TrackerField* fieldMeta = app.FindFieldById(a.FieldId);
+            // Held for the whole handler: the rows below read this field across many tracker round-trips, and the
+            // handle keeps its catalog generation alive while a worker replaces the catalog.
+            const std::shared_ptr<const TrackerField> fieldMeta = app.FindFieldSnapshotById(a.FieldId);
             if (!fieldMeta) {
                 return CommandResult::Failure(ErrorCode::NotFound, "Field '" + a.FieldId + "' not found in catalog.",
                                               "Run fields.refresh_catalog first.");

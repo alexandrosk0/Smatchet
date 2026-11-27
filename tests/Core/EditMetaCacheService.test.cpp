@@ -108,7 +108,7 @@ TEST_CASE("EditMetaCacheService::CanEditFieldForIssue returns true for sprint + 
         CHECK(svc.CanEditFieldForIssue("ABC-1", "timeestimate"));
     }
 
-    SUBCASE("a sprint catalog field is always editable via FindFieldById") {
+    SUBCASE("a sprint catalog field is always editable via FindFieldSnapshotById") {
         TrackerField sprint;
         sprint.Id = "customfield_10020";
         sprint.Name = "Sprint";

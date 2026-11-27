@@ -325,7 +325,7 @@ class RecordingWorklogMutations final : public IAppTicketMutations {
 
     using IAppTicketMutations::QueueCreateOffline;
 
-    const TrackerField* FindFieldById(const std::string&) const override { return nullptr; }
+    std::shared_ptr<const TrackerField> FindFieldSnapshotById(const std::string&) const override { return nullptr; }
     /// The focused pane, as the controller latches it: it can still be another pane than the one that
     /// draws the dialog (the pane focus follows a click a frame or two late).
     PendingActionTarget LatchPendingActionTarget() const override {

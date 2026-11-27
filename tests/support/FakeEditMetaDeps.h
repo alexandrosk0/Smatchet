@@ -39,7 +39,7 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     /// ResolveIssueTypeKeyForIssue, PruneEditMetaCacheToActiveTickets, and the warm-start scan.
     std::vector<CachedTicket> ActiveTicketsImpl;
 
-    /// Catalog rows FindFieldById scans (CanEditFieldForIssue uses this to detect sprint fields).
+    /// Catalog rows FindFieldSnapshotById scans (CanEditFieldForIssue uses this to detect sprint fields).
     std::vector<TrackerField> AvailableFieldsImpl;
 
     bool ShuttingDownImpl = false;
@@ -97,10 +97,10 @@ class FakeEditMetaDeps : public IEditMetaDeps {
         return std::make_shared<const std::vector<CachedTicket>>(ActiveTicketsImpl);
     }
 
-    const TrackerField* FindFieldById(const std::string& fieldId) const override {
+    std::shared_ptr<const TrackerField> FindFieldSnapshotById(const std::string& fieldId) const override {
         for (const auto& f : AvailableFieldsImpl) {
             if (f.Id == fieldId) {
-                return &f;
+                return std::make_shared<const TrackerField>(f);
             }
         }
         return nullptr;
