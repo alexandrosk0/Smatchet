@@ -34,6 +34,34 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-26 · PR #2490, #2494, #2496, #2515 · merged on gate scripts run from a stale checkout (plan CI-proof gate not evaluated)
+
+### What escaped
+Four PRs were merged by a coordinator session's in-session poller after `develop` had gained the plan CI-proof gate (#2492, 2026-11-25T15:09:39Z, pin `4334c2b`), but the poller ran `merge-gates.sh` from that session's worktree, whose `agent-layer` was still at `75e1728`. Their snapshot rows read `GATES_PASSED` / `orchestrator`; that verdict does not include the plan CI-proof gate.
+
+| PR | merged (UTC) | plan CI-proof gate, replayed |
+|---|---|---|
+| #2490 | 2026-11-25 17:03:20 | nothing skipped (rc 0) |
+| #2494 | 2026-11-25 20:27:03 | nothing skipped (rc 0) |
+| #2496 | 2026-11-26 17:59:33 | nothing skipped (rc 0) |
+| #2515 | 2026-11-26 18:53:33 | not applicable, no plan doc changed |
+
+No merge is known to have passed that the current gate would have blocked.
+
+### Root cause
+The poller script changed into the coordinator's long-lived worktree before running the gates. `merge-gates.sh` can detect that its files differ from the layer's `develop`, but the default `MERGE_GATES_FRESHNESS=warn` does not block, and the poller kept only the `Poll` summary line on a pass.
+
+Provenance: the replay ran `_mg_plan_proof_verdict` on 2026-11-26 against each head, with `merge-gates.sh` sourced from a worktree at `origin/develop` `97dd196cd` (layer `5bf96d5`). It reads the check runs as they are now. The stale checkout's `stale` verdict was produced the same day.
+
+### Preventing gate
+A stale `merge-gates.sh` refuses `GATES_PASSED` unless the caller opts into `warn`, filed below. This change's own PR is polled from a fresh worktree with `MERGE_GATES_FRESHNESS=block`.
+
+### Eval case
+None — not agent-reviewable. This is which copy of a script ran, not a diff a reviewer scores.
+
+### Filed as
+[`categories/tooling/2026-11-26-stale-merge-gates-only-warns-and-an-in-session-poller-merges-anyway.md`](categories/tooling/2026-11-26-stale-merge-gates-only-warns-and-an-in-session-poller-merges-anyway.md) (new, P1).
+
 ## 2026-11-26 · PR #2437, #2438, #2485, #2490, #2492, #2493, #2495, #2496, #2497 · override: `cr-out-of-band` on all nine (with `cr-disposition:cr-auto-review-disabled`)
 
 ### What escaped
