@@ -963,6 +963,7 @@ const char* const kCatalogPane = "catalog-pane";
 class ScopedCatalogBackend : public smatchet_tests::FakeTrackerClient {
   public:
     bool Fail = false;
+    std::string FailMessage = "the catalog is unavailable"; ///< the failed fetch's error detail
 
     std::string ExtractProjectFromQuery(const std::string& query) const override {
         return JqlProjectScope::ExtractSingleProject(query);
@@ -975,8 +976,7 @@ class ScopedCatalogBackend : public smatchet_tests::FakeTrackerClient {
             fetchedProjects_.push_back(projectKey);
         }
         if (Fail) {
-            return Result<TrackerFieldCatalogResult, TrackerError>::Err(
-                TrackerErrorInvalidRequest("the catalog is unavailable"));
+            return Result<TrackerFieldCatalogResult, TrackerError>::Err(TrackerErrorInvalidRequest(FailMessage));
         }
         return FakeTrackerClient::FetchFieldCatalog(cfg, projectKey);
     }
@@ -1740,6 +1740,82 @@ TEST_CASE("Offline with no saved catalog, the pane reports the failure and Retry
     status = rig.App.GetPaneCatalogFetchStatus(kPaneId);
     CHECK_FALSE(status.Failed);
     CHECK(HasField(*rig.App.GetPaneAvailableFields(kPaneId), "customfield_pane"));
+}
+
+TEST_CASE("Pane catalog status: a failed grid catalog fetch for the focused pane reads as failed, with its error") {
+    // The session's grid catalog fetch is the focused pane's, and it reports a failure on that pane's catalog, not in
+    // the pane's own fetch state. The grid's read-only cue reads this status, so the pane must read as failed, with
+    // the error, not as a catalog that is simply not loaded yet.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    // "main" is focused, so the grid fetch is latched for it. No saved copy exists, so the failure stands.
+    CHECK_FALSE(ApplyGridCatalog(app, cfg, std::string(), {}, "tracker unreachable", true));
+    SettleCatalogRestore(app);
+    const std::string sessionError = app.GetFieldCatalogError();
+    REQUIRE_FALSE(sessionError.empty());
+
+    const AppController::PaneCatalogFetchStatus status = app.GetPaneCatalogFetchStatus("main");
+    CHECK(status.Failed);
+    CHECK_FALSE(status.OwnCatalogPopulated);
+    CHECK_FALSE(status.InFlight);
+    CHECK(status.LastError == sessionError);
+    // The per-frame read still leaves the error text out.
+    const AppController::PaneCatalogFetchStatus quiet = app.GetPaneCatalogFetchStatus("main", false);
+    CHECK(quiet.Failed);
+    CHECK(quiet.LastError.empty());
+
+    // A catalog that lands clears the error, and with it the failure.
+    REQUIRE(ApplyGridCatalog(app, cfg, std::string(), OneFieldCatalog().Fields));
+    CHECK(app.GetFieldCatalogError().empty());
+    const AppController::PaneCatalogFetchStatus loaded = app.GetPaneCatalogFetchStatus("main");
+    CHECK_FALSE(loaded.Failed);
+    CHECK(loaded.LastError.empty());
+    CHECK(loaded.OwnCatalogPopulated);
+
+    // A non-retryable failure keeps the loaded catalog and still shows its error banner. The pane is not failed: its
+    // catalog still answers, and a Retry of its own fetch would have nothing to do.
+    CHECK_FALSE(ApplyGridCatalog(app, cfg, std::string(), {}, "401 Unauthorized", false));
+    SettleCatalogRestore(app);
+    REQUIRE_FALSE(app.GetFieldCatalogError().empty());
+    const AppController::PaneCatalogFetchStatus kept = app.GetPaneCatalogFetchStatus("main");
+    CHECK(kept.OwnCatalogPopulated);
+    CHECK_FALSE(kept.Failed);
+    CHECK(kept.LastError.empty());
+}
+
+TEST_CASE("Pane catalog: a fetch that fails without an error message still names the failure, and WARNs once") {
+    // A tracker error with an empty detail left the pane's LastError empty: the grid cue's WARN-once check then read
+    // the failure as a repeat of the empty error it starts with (INFO "still not available ()"), and its tooltip read
+    // "Last error:" with nothing after it. The apply now names the failure, so a second identical failure is the
+    // repeat that logs at INFO.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    std::unique_ptr<ScopedCatalogBackend> backend = std::make_unique<ScopedCatalogBackend>();
+    backend->Fail = true;
+    backend->FailMessage.clear();
+    AddCatalogPane(app, std::move(backend));
+    const char* const kFailedWarning = "has no field catalog: the fetch failed";
+    const int warningsBefore = CountWarnings(kFailedWarning);
+
+    KickAndWaitIdle(app, ConfigManager::Load(), "project = B");
+
+    const AppController::PaneCatalogFetchStatus status = app.GetPaneCatalogFetchStatus(kCatalogPane);
+    CHECK(status.Failed);
+    CHECK(status.CanRetry);
+    CHECK_FALSE(status.LastError.empty());
+    CHECK(CountWarnings(kFailedWarning) == warningsBefore + 1);
+
+    KickAndWaitIdle(app, ConfigManager::Load(), "project = B"); // the next sync kick fails the same way
+    const AppController::PaneCatalogFetchStatus again = app.GetPaneCatalogFetchStatus(kCatalogPane);
+    CHECK(again.Failed);
+    CHECK(again.LastError == status.LastError);
+    CHECK(CountWarnings(kFailedWarning) == warningsBefore + 1); // the repeat is INFO, not a second WARN
 }
 
 TEST_CASE("Offline with a saved catalog, the pane restores it with the fixups") {

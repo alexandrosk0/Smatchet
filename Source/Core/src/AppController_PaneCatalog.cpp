@@ -119,6 +119,10 @@ bool SameCatalogScope(const std::string& a, const std::string& b) {
     return a.empty() ? b.empty() : smatchet::components::CatalogIsRowProject(a, b);
 }
 
+// What a failed pane catalog fetch reports when the tracker and the exception gave no text: the failure is still
+// named, so the WARN-once log and the grid cue's tooltip never carry an empty reason.
+const char* const kPaneCatalogUnknownError = "The field catalog fetch failed with an unknown error.";
+
 } // namespace
 
 void AppController::populatePaneCatalogAfterSync_(const std::string& paneId, const TrackerConfig& cfgCopy,
@@ -272,7 +276,7 @@ AppController::PaneCatalogFetchResult AppController::fetchPaneCatalogOnWorker_(c
                  paneId.c_str());
         out = PaneCatalogFetchResult();
         out.Failed = true;
-        out.Error = "The field catalog fetch failed with an unknown error.";
+        out.Error = kPaneCatalogUnknownError;
     }
     return out;
 }
@@ -357,8 +361,11 @@ void AppController::applyPaneCatalogOnMainThread_(const std::string& paneId, std
         return;
     }
     if (result.Failed) {
+        if (result.Error.empty()) {
+            result.Error = kPaneCatalogUnknownError; // a tracker error or exception with no text
+        }
         // WARN once per distinct error: offline, every sync retry re-runs this fetch and fails the same way.
-        const bool repeat = !result.Error.empty() && state.LastError == result.Error;
+        const bool repeat = state.LastError == result.Error;
         state.Failed = true;
         state.LastError = result.Error;
         if (repeat) {
@@ -459,14 +466,27 @@ AppController::PaneCatalogFetchStatus AppController::GetPaneCatalogFetchStatus(c
     if (it == gridContexts_.end()) {
         return status;
     }
-    const GridLiveContext::PaneCatalogFetchState& state = it->second->paneCatalogFetch;
-    status.OwnCatalogPopulated = IsPaneFieldCatalogPopulated(paneId);
+    const GridLiveContext& ctx = *it->second;
+    const GridLiveContext::PaneCatalogFetchState& state = ctx.paneCatalogFetch;
     status.InFlight = state.InFlight;
     status.Failed = state.Failed;
     status.AwaitingBackend = state.AwaitingBackend;
     status.CanRetry = state.Config != nullptr && !state.AwaitingBackend; // a parked fetch resumes on its own
     if (withLastError) {
         status.LastError = state.LastError;
+    }
+    const GridContextFieldCatalog& cat = ctx.fieldCatalog;
+    std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_); // a catalog worker writes the error under it
+    status.OwnCatalogPopulated = cat.fieldCatalogEverLoaded_ || cat.fieldCatalogRestored_;
+    // The session's grid catalog fetch (the focused pane's) reports its failure on the pane's catalog, not in the
+    // pane's own fetch state. Count it while the pane has no catalog, so a pane whose only catalog fetch failed reads
+    // as failed, not "not loaded". A pane that kept its catalog through the failure is not failed: its catalog may
+    // just lack the view's fields, and a Retry of its own fetch would have nothing to do.
+    if (!state.Failed && !status.OwnCatalogPopulated && !cat.LastTrackerFieldCatalogError.empty()) {
+        status.Failed = true;
+        if (withLastError) {
+            status.LastError = cat.LastTrackerFieldCatalogError;
+        }
     }
     return status;
 }

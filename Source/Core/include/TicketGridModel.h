@@ -100,9 +100,9 @@ enum class GridCatalogCue {
 };
 
 /// Picks the cue. `ownCatalogPopulated`: the pane's own catalog is loaded or restored. `fetchInFlight` /
-/// `fetchAwaitingBackend` / `fetchFailed`: the state of the pane's own catalog fetch
-/// (AppController::PaneCatalogFetchStatus). A running fetch wins over a parked one, and both are waits that win over an
-/// older failure.
+/// `fetchAwaitingBackend` / `fetchFailed`: the state of the pane's catalog fetches
+/// (AppController::PaneCatalogFetchStatus: its own fetch, and for a pane with no catalog, the session's grid fetch). A
+/// running fetch wins over a parked one, and both are waits that win over an older failure.
 inline GridCatalogCue ChooseGridCatalogCue(bool cellsReadOnlyForCatalog, bool ownCatalogPopulated, bool fetchInFlight,
                                            bool fetchAwaitingBackend, bool fetchFailed) {
     if (!cellsReadOnlyForCatalog) {

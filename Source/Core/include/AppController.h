@@ -1636,7 +1636,9 @@ class AppController : public IAppThreading,
     struct PaneCatalogFetchStatus {
         bool OwnCatalogPopulated = false; ///< loaded or restored (IsPaneFieldCatalogPopulated)
         bool InFlight = false;            ///< the pane's own catalog fetch is running
-        bool Failed = false;   ///< the last fetch failed with no saved copy the pane took, or its result was owed
+        /// The pane's last own catalog fetch failed with no saved copy the pane took, or its result was owed; or, with
+        /// no catalog in the pane, the session's grid catalog fetch for it failed (the focused pane's).
+        bool Failed = false;
         bool CanRetry = false; ///< the pane has a stored catalog-fetch configuration for Retry, and none is parked
         /// The fetch is parked until the pane's backend is installed (its first sync is held back); it starts on its
         /// own then, so this is a wait, not a failure.
