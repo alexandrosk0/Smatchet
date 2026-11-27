@@ -664,6 +664,12 @@ bool DrawLongTextDiscardConfirm() {
 void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdit>& pendingEdits) {
     // Ctrl+Enter saves; Esc cancels. Both work even when the textarea is focused. While the discard
     // confirm is up the keys belong to it: Esc there keeps editing, and nothing saves behind it.
+    // This editor reads Esc itself instead of through smatchet::ui::DialogReadKeys on purpose: a dirty cancel
+    // already asks, and Keep editing puts the caret back, so no Esc loses text. The scope's layered rule
+    // (the first Esc only leaves the field) would add a key press to every dirty cancel and protect nothing
+    // more. To adopt it, move this modal from BeginPopupModal to BeginDialog / EndDialog (the scope records its
+    // last-frame keyboard state in EndDialog, without which the first Esc reads as "nothing being typed in")
+    // and pass `nothingTyped = !ShouldConfirmLongTextDiscard(...)` to DialogReadKeys.
     const bool discardWasOpen = ctx.DiscardConfirmOpen;
     const bool ctrlEnter = !discardWasOpen && ctx.CtrlDown && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
     const bool escPressed = !discardWasOpen && ImGui::IsKeyPressed(ImGuiKey_Escape, false);

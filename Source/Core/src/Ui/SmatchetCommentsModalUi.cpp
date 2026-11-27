@@ -106,8 +106,6 @@ struct CommentsModalState {
     bool ComposerActive = false;
     /// The Post button would act on a click (as of the last draw).
     bool PostEnabled = false;
-    /// Esc in a box with no text in it: the shell closes the viewer (through its discard guard).
-    bool CloseRequested = false;
     /// The draft store scope of this open: tracker site and issue. Empty = no draft is kept.
     std::string DraftScope;
     /// The post box was filled from a draft kept by an earlier open, and nothing was typed since.
@@ -613,22 +611,15 @@ bool PostBufHasText() {
 
 /// The post box itself, with its keyboard contract. Returns true on Ctrl+Enter.
 /// - A pending focus request lands here (never while the box is disabled).
-/// - Esc leaves the box with the typed text intact: ImGui's own Esc would put back the text from
-///   before the caret entered, silently dropping the comment. In a box with no text Esc also asks the
-///   shell to close, so a caret placed on open does not cost an extra key press.
+/// - Esc is the field viewer shell's (it reads it before this box draws, through the dialog scope): it leaves
+///   the box with the typed text intact, since ImGui's own Esc would put back the text from before the caret
+///   entered and silently drop the comment, and in a box with no text it closes the viewer, so a caret
+///   placed on open does not cost an extra key press.
 /// - The id carries this open's generation: a box that was being typed in when another issue's
 ///   comments replaced it must not carry its text over into the new box.
 bool DrawCommentsPostInput(bool disabled, bool readOnlyMode) {
     CommentsModalState& st = s_CommentsState;
     ImGui::PushID(st.OpenGen);
-    if (st.ComposerActive && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-        if (ImGui::GetActiveID() == ImGui::GetID("##CommentsPostBox")) {
-            ImGui::ClearActiveID();
-        }
-        if (!PostBufHasText()) {
-            st.CloseRequested = true;
-        }
-    }
     // A focus request is ignored while a window is being dragged, so the request waits that out.
     const ImGuiContext& g = *ImGui::GetCurrentContext();
     if (st.FocusComposerPending && !st.PostInFlight && g.MovingWindow == nullptr && !ImGui::IsDragDropActive()) {
@@ -742,11 +733,6 @@ class CommentsViewerContent final : public IFieldViewerContent {
     }
     const char* DiscardButtonLabel() const override { return "Discard comment"; }
     const char* KeepButtonLabel() const override { return "Keep writing"; }
-    bool ConsumeCloseRequest() override {
-        const bool requested = s_CommentsState.CloseRequested;
-        s_CommentsState.CloseRequested = false;
-        return requested;
-    }
     // The user chose to throw the comment away: the kept draft goes with it. A plain close, a replace by
     // another viewer or an exit keeps it for the next open.
     void OnDiscard() override {

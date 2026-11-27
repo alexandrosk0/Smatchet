@@ -53,8 +53,12 @@ struct DialogKeys {
 /// dialog takes does not also reach the field or button that has the keyboard. `nothingTyped`: closing now
 /// loses no typed text (a search filter counts as nothing). On LeaveField the field is left here; on Cancel
 /// the caller closes the dialog the way its Cancel button does. `readSubmit` false: a dialog with no form
-/// submit leaves Ctrl+Enter to its fields (Submit stays false and the field keeps the key).
-DialogKeys DialogReadKeys(DialogScopeState& s, bool nothingTyped, bool readSubmit = true);
+/// submit leaves Ctrl+Enter to its fields (Submit stays false and the field keeps the key). `typingField`
+/// (an ImGuiID; 0 = any field of the dialog): the one item that counts as "being typed in", both for this
+/// frame and for the last-frame memory EndDialog keeps. A dialog whose read-only panes can hold the active
+/// item (the offline conflict resolver) names its editable field, so an Esc after a click into a read-only
+/// pane is not mistaken for leaving the field, and only that field is left on Esc / Ctrl+Enter.
+DialogKeys DialogReadKeys(DialogScopeState& s, bool nothingTyped, bool readSubmit = true, ImGuiID typingField = 0);
 
 /// The button row of a confirm dialog: [Primary] [Alternate] [Cancel], action first (P2-M16 order).
 struct ConfirmFooterSpec {
