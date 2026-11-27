@@ -146,6 +146,8 @@ void GridContextDepsAdapter::SetBackend(std::unique_ptr<ITrackerBackend> backend
     // (capture-then-check — see GridLiveContext.h).
     ctx().backendGeneration_.fetch_add(1);
     app_.RetireBackend(std::move(old));
+    // A pane catalog fetch parked because the pane had no backend yet (its first sync was held back) resumes now.
+    app_.notePaneBackendInstalled_(ctx().PaneId);
 }
 
 ITrackerBackendFactory* GridContextDepsAdapter::BackendFactory() { return app_.backendFactory_.get(); }

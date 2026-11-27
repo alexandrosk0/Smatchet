@@ -18,6 +18,7 @@
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "Ui/SmatchetAboutIcon.h"
+#include "Ui/SmatchetDialogScope.h"
 
 #include "imgui.h"
 // For the IsPopupOpen(ImGuiID, ImGuiPopupFlags) overload the dismissal guard in
@@ -40,6 +41,9 @@ using smatchet::diagnostics::AboutDep;
 using smatchet::diagnostics::AboutInfo;
 
 const char* const kAboutPopupId = "About Smatchet";
+
+// Keys (smatchet::ui dialog contract): the keyboard starts on Close, so Enter closes, and Esc closes.
+smatchet::ui::DialogScopeState s_aboutDialog;
 
 /// Per-frame state shared by the section helpers. Mirrors the MainMenuDrawCtx
 /// pattern (docs/guides/imgui-draw-pattern.md) so each helper stays short and
@@ -421,6 +425,7 @@ void DrawAboutActions(const AboutDrawCtx& ctx) {
     }
 
     ImGui::SameLine();
+    smatchet::ui::DialogFocusHere(s_aboutDialog);
     if (ImGui::Button("Close")) {
         d.showAbout = false;
         ::ImGui::CloseCurrentPopup();
@@ -453,7 +458,7 @@ void DrawAboutModal(const IAppMeta& app, UiDrawSession& d) {
     }
 
     ImGui::SetNextWindowSize(ImVec2(560.0f, 520.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::BeginPopupModal(kAboutPopupId, &d.showAbout, ImGuiWindowFlags_NoSavedSettings)) {
+    if (!smatchet::ui::BeginDialog(s_aboutDialog, kAboutPopupId, &d.showAbout, ImGuiWindowFlags_NoSavedSettings)) {
         // Two different states return false here: the popup is gone (dismissed
         // via Escape or the title-bar X), or it is still open but a popup at a
         // deeper stack level owns this frame. Only the first is a dismissal —
@@ -475,6 +480,12 @@ void DrawAboutModal(const IAppMeta& app, UiDrawSession& d) {
         return;
     }
 
+    // Read before any item, so the Esc that closes the dialog does not also reach a value being selected.
+    if (smatchet::ui::DialogReadKeys(s_aboutDialog, true, /*readSubmit=*/false).Esc ==
+        smatchet::dialogkeys::EscapeAction::Cancel) {
+        d.showAbout = false;
+        ::ImGui::CloseCurrentPopup();
+    }
     const AboutDrawCtx ctx{app, d, *d.aboutInfo};
     DrawAboutIdentity(ctx);
     DrawAboutBuild(ctx);
@@ -487,7 +498,7 @@ void DrawAboutModal(const IAppMeta& app, UiDrawSession& d) {
     ImGui::Separator();
     DrawAboutActions(ctx);
 
-    ::ImGui::EndPopup();
+    smatchet::ui::EndDialog(s_aboutDialog);
 }
 
 #undef ImGui

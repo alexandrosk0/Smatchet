@@ -372,7 +372,15 @@ void DictationInsertionRouter::SpliceTextIntoEntry(Entry& e, const std::string& 
 }
 
 unsigned int DictationInsertionRouter::ConsumePendingReloadItemId() {
-    return pendingReloadItemId_.exchange(0u, std::memory_order_acq_rel);
+    const unsigned int id = pendingReloadItemId_.exchange(0u, std::memory_order_acq_rel);
+    if (id != 0u) {
+        lastConsumedReloadItemId_.store(id, std::memory_order_release);
+    }
+    return id;
+}
+
+unsigned int DictationInsertionRouter::TakeLastConsumedReloadItemIdForTest() {
+    return lastConsumedReloadItemId_.exchange(0u, std::memory_order_acq_rel);
 }
 
 std::size_t DictationInsertionRouter::RegisteredCountForTest() const {

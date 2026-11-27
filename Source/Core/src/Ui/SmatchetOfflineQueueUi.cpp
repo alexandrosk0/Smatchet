@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "ConfigManager.h"
 #include "IssueDraft.h"
+#include "Logger.h"
 #include "Json/BoundedJsonParse.h"
 #include "MarkdownConvert.h"
 #include "MarkdownPreviewRender.h"
@@ -36,7 +37,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -580,6 +583,93 @@ static std::string UnifiedOfflineRowClipboardLine(const UnifiedOfflineRow& u) {
 // Persistent selection set for the unified offline-queue table. Single-instance panel,
 // so a file-scope static is behaviour-identical to the former in-function static local.
 static std::unordered_set<std::string> g_selectedOfflineRowKeys;
+
+// Conflict rows whose "Discard my edit" is still inside its Undo window, audit finding #116 (plan:
+// docs/plans/shipped/input-ux-w2-conflict-discard-undo.md). They stay queued, hidden from the panel, and are
+// deleted when the toast settles. A conflict row never replays, so holding it is safe. UI thread only.
+enum class HeldDiscardState {
+    UndoWindow,    // the toast is live; Undo releases the row
+    AwaitingCache, // the toast settled while the local cache was withdrawn for a recreate; retried on draw
+    Deleted,       // deleted; hidden until the published snapshot no longer has the row (no flicker)
+};
+
+struct HeldConflictDiscard {
+    HeldDiscardState State = HeldDiscardState::UndoWindow;
+    std::weak_ptr<ILookupCache> CacheAtDiscard; // the app's one local cache at the discard
+};
+
+static std::unordered_map<std::int64_t, HeldConflictDiscard> g_conflictDiscardHeld;
+
+// True when `now` is the very cache object the discard saw (same owner, so an expired one never matches).
+static bool IsCacheAtDiscard(const HeldConflictDiscard& held, const std::shared_ptr<ILookupCache>& now) {
+    return !held.CacheAtDiscard.owner_before(now) && !now.owner_before(held.CacheAtDiscard);
+}
+
+// Deletes a held discard whose toast settled. If the cache is withdrawn (a recreate is running) the entry
+// waits and is retried on the next panel draw. A cache that is a different object than at the discard means
+// the database was recreated: its row ids are not the discarded one, so nothing is deleted. A failed delete
+// releases the row (it stays a conflict, never replayed) and says so in the panel.
+static void SettleHeldConflictDiscard(AppController& app, UiDrawSession& d, std::int64_t id) {
+    const auto it = g_conflictDiscardHeld.find(id);
+    if (it == g_conflictDiscardHeld.end()) {
+        return;
+    }
+    const std::shared_ptr<ILookupCache> cacheNow = app.LookupCacheShared();
+    if (!cacheNow) {
+        it->second.State = HeldDiscardState::AwaitingCache;
+        return;
+    }
+    if (!IsCacheAtDiscard(it->second, cacheNow)) {
+        LOG_INFO("offline: discard of conflicted edit id=%lld dropped, the local cache was recreated",
+                 static_cast<long long>(id));
+        g_conflictDiscardHeld.erase(it);
+        return;
+    }
+    if (app.DeletePendingFieldEdits({id}).Failed > 0) {
+        LOG_WARN("offline: discard of conflicted edit id=%lld failed; it stays queued", static_cast<long long>(id));
+        g_conflictDiscardHeld.erase(it);
+        ArmOfflineQueuePanelStatus(d, SmatchetLocalization::T("offline.conflict.discard_failed",
+                                                              "The edit could not be discarded; it is still queued."));
+        return;
+    }
+    it->second.State = HeldDiscardState::Deleted;
+}
+
+static bool IsHeldConflictDiscard(const UnifiedOfflineRow& row) {
+    return row.kind == UnifiedOfflineKind::PendingFieldEdit && g_conflictDiscardHeld.count(row.dbId) != 0;
+}
+
+// Settles held discards that were waiting for the cache, forgets deleted ones the snapshot no longer has (or
+// whose database was recreated since, as the new one numbers its rows from 1 again), then takes the rows still
+// held out of the panel's rows.
+static void DropHeldConflictDiscards(AppController& app, UiDrawSession& d, std::vector<UnifiedOfflineRow>& rows) {
+    if (g_conflictDiscardHeld.empty()) {
+        return;
+    }
+    std::unordered_set<std::int64_t> liveEditIds;
+    for (const UnifiedOfflineRow& row : rows) {
+        if (row.kind == UnifiedOfflineKind::PendingFieldEdit) {
+            liveEditIds.insert(row.dbId);
+        }
+    }
+    const std::shared_ptr<ILookupCache> cacheNow = app.LookupCacheShared();
+    std::vector<std::int64_t> awaiting;
+    for (auto it = g_conflictDiscardHeld.begin(); it != g_conflictDiscardHeld.end();) {
+        const bool otherDatabase = cacheNow && !IsCacheAtDiscard(it->second, cacheNow);
+        if (it->second.State == HeldDiscardState::Deleted && (liveEditIds.count(it->first) == 0 || otherDatabase)) {
+            it = g_conflictDiscardHeld.erase(it);
+            continue;
+        }
+        if (it->second.State == HeldDiscardState::AwaitingCache) {
+            awaiting.push_back(it->first);
+        }
+        ++it;
+    }
+    for (const std::int64_t id : awaiting) {
+        SettleHeldConflictDiscard(app, d, id);
+    }
+    rows.erase(std::remove_if(rows.begin(), rows.end(), IsHeldConflictDiscard), rows.end());
+}
 
 struct OfflineDrawCtx {
     AppController& app;
@@ -1173,7 +1263,8 @@ struct ConflictModalCtx {
     std::string Theirs;
     std::string Base;
     std::string RichKind = "adf";
-    std::string FieldId; ///< the field the queued edit is for ("" when the context predates it)
+    std::string FieldId;   ///< the field the queued edit is for ("" when the context predates it)
+    std::string FieldKind; ///< "sprint" when the queue service recorded it ("" otherwise, and in older contexts)
     bool Valid = false;
 };
 
@@ -1193,6 +1284,7 @@ static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
                 {"kind", "text", &ConflictModalCtx::Kind},        {"mine", "", &ConflictModalCtx::Mine},
                 {"theirs", "", &ConflictModalCtx::Theirs},        {"base", "", &ConflictModalCtx::Base},
                 {"richKind", "adf", &ConflictModalCtx::RichKind}, {"fieldId", "", &ConflictModalCtx::FieldId},
+                {"fieldKind", "", &ConflictModalCtx::FieldKind},
             };
             for (const TextMember& m : kMembers) {
                 out.*(m.Member) = ctx.value(m.Key, std::string(m.Fallback));
@@ -1291,6 +1383,32 @@ static void FinishConflictModal(UiDrawSession& d, const char* statusMsg) {
     }
 }
 
+// "Discard my edit": close the resolver and hold the row behind an undoable toast (#116). Undo shows it
+// again; otherwise the toast's settle deletes it through DeletePendingFieldEdits, which writes the audit entry
+// (ADR-0016: dead letters stay failures-only). See SettleHeldConflictDiscard for the cache-recreate cases.
+// Known gap: a recreate that fails after closing the database reopens the same file as a new cache object,
+// so the settle drops the delete and the edit comes back as a conflict row (no data lost; discard it again).
+static void DiscardConflictEditWithUndo(AppController& app, UiDrawSession& d) {
+    const std::int64_t id = d.conflictResolveDbId;
+    FinishConflictModal(d, nullptr);
+    if (id == 0) {
+        return;
+    }
+    HeldConflictDiscard held;
+    held.CacheAtDiscard = app.LookupCacheShared(); // LookupCacheShared is the app's one local cache
+    g_conflictDiscardHeld[id] = held;
+    AppController* const appPtr = &app;
+    UiDrawSession* const dp = &d;
+    SmatchetToastManager::Instance().PushUndoable(
+        SmatchetLocalization::T("offline.conflict.discarded", "Edit discarded"),
+        SmatchetLocalization::T("offline.conflict.discarded_body", "Undo puts it back in the offline queue."), 8000,
+        [id]() {
+            g_conflictDiscardHeld.erase(id);
+            LOG_INFO("offline: discard of conflicted edit id=%lld undone", static_cast<long long>(id));
+        },
+        [appPtr, dp, id]() { SettleHeldConflictDiscard(*appPtr, *dp, id); });
+}
+
 // Cancel, Close, and Esc with nothing typed: close the resolver. The edit stays queued. A resolution that
 // was typed is kept for the next time this conflict is opened, and the panel says so.
 static void CancelConflictModal(UiDrawSession& d) {
@@ -1303,6 +1421,14 @@ static void CancelConflictModal(UiDrawSession& d) {
                                                               "What you typed is saved, also if Smatchet closes. "
                                                               "Open the conflict again to go on with it."));
     }
+}
+
+// The hint after an Esc around a typed resolution makes the same promise as the Cancel message: Cancel keeps the
+// text in the draft store, which outlives the app (#2510).
+static const char* ConflictEscUnsavedHintText() {
+    return SmatchetLocalization::T("offline.conflict.esc_unsaved_kept",
+                                   "Your resolution is not saved. Save it, or click Cancel to come back to it "
+                                   "later: it is kept, also if Smatchet closes.");
 }
 
 struct ConflictModalKeys {
@@ -1500,12 +1626,16 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
 }
 
 // What kind of value the queued edit's field takes, for the hint under the resolved-value box and for the text
-// shown when the replay turns the value down (#115). The kind comes from the field id in the conflict context.
+// shown when the replay turns the value down (#115). The kind comes from the conflict context: the kind the queue
+// service recorded, else the field id (a Jira sprint is a custom field whose id does not say so, #2513).
 enum class ScalarConflictKind : unsigned char { Estimate, Sprint, Other };
 
-static ScalarConflictKind ScalarKindForField(const std::string& fieldId) {
+static ScalarConflictKind ScalarKindForField(const std::string& fieldId, const std::string& fieldKind) {
     if (TrackerFieldValueUtils::IsTimeDurationField(fieldId)) {
         return ScalarConflictKind::Estimate;
+    }
+    if (fieldKind == "sprint") {
+        return ScalarConflictKind::Sprint;
     }
     return ToLowerAsciiCopy(fieldId).find("sprint") != std::string::npos ? ScalarConflictKind::Sprint
                                                                          : ScalarConflictKind::Other;
@@ -1595,7 +1725,7 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
     ImGui::Spacing();
 
     // The kind of value this field takes: a hint while it reads, the parser's reason while it does not (#115).
-    const ScalarConflictKind kind = ScalarKindForField(cc.FieldId);
+    const ScalarConflictKind kind = ScalarKindForField(cc.FieldId, cc.FieldKind);
     TrackerParseExplain::ParseMessage valueProblem;
     const std::string valueToSend = ResolvedValueToSend(std::string(d.conflictResolveBuf.data()), kind, valueProblem);
     if (valueProblem.IsError()) {
@@ -1648,8 +1778,7 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
 
 // Unverified pane for the `unverified` kind, where the server value could not be read. The
 // Force Mine button replays the queued edit (an Original Estimate edit sends only that estimate); the Discard
-// button hard-deletes the queue
-// row and writes an audit entry.
+// button deletes the queue row behind an Undo toast (DiscardConflictEditWithUndo).
 static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModalCtx& cc) {
     AppController& app = octx.app;
     UiDrawSession& d = octx.d;
@@ -1668,10 +1797,7 @@ static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModal
     }
     ImGui::SameLine();
     if (ImGui::Button("Discard my edit", ImVec2(150, 0))) {
-        // Hard-delete the queue row; DeletePendingFieldEdits writes the audit entry (ADR-0016 —
-        // dead-letter stays failures-only; the audit log carries discard traceability).
-        app.DeletePendingFieldEdits({d.conflictResolveDbId});
-        FinishConflictModal(d, "Edit discarded.");
+        DiscardConflictEditWithUndo(app, d);
     }
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(80, 0)) || keys.Close) {
@@ -1680,7 +1806,7 @@ static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModal
 }
 
 // Non-actionable pane for a malformed / unknown conflict_context_json (Valid==false). Renders a
-// read-only explanation and offers ONLY Close + a hard Discard — never Use Mine/Theirs/Force/Save,
+// read-only explanation and offers ONLY Close + Discard (undoable) — never Use Mine/Theirs/Force/Save,
 // which on a corrupt context could resolve the row to empty content and clobber the user's edit.
 static void DrawConflictPaneUnknown(OfflineDrawCtx& octx) {
     UiDrawSession& d = octx.d;
@@ -1699,9 +1825,7 @@ static void DrawConflictPaneUnknown(OfflineDrawCtx& octx) {
     ImGui::Spacing();
 
     if (ImGui::Button("Discard my edit", ImVec2(150, 0))) {
-        // Hard-delete the queue row; DeletePendingFieldEdits writes the audit entry (ADR-0016).
-        app.DeletePendingFieldEdits({d.conflictResolveDbId});
-        FinishConflictModal(d, "Edit discarded.");
+        DiscardConflictEditWithUndo(app, d);
     }
     ImGui::SameLine();
     if (ImGui::Button("Close", ImVec2(80, 0)) || keys.Close) {
@@ -1773,10 +1897,7 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
                                                               "This is what you typed here before you cancelled."));
         }
         if (g_conflictEscUnsavedHint) {
-            ImGui::TextWrapped("%s", SmatchetLocalization::T("offline.conflict.esc_unsaved",
-                                                             "Your resolution is not saved. Save it, or click "
-                                                             "Cancel to come back to it later: it is kept until "
-                                                             "Smatchet closes."));
+            ImGui::TextWrapped("%s", ConflictEscUnsavedHintText());
         }
         ImGui::EndPopup();
     } else {
@@ -1791,12 +1912,18 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
 
 bool SmatchetOfflineConflictUnsavedHintShownForTest() { return g_conflictEscUnsavedHint; }
 
+const char* SmatchetOfflineConflictUnsavedHintTextForTest() { return ConflictEscUnsavedHintText(); }
+
 bool SmatchetOfflineConflictDraftRestoredForTest() { return g_conflictDraftRestored; }
 
 void SmatchetOfflineConflictDraftsClearForTest() {
     smatchet::drafts::EraseSurface(kConflictDraftSurface);
     g_conflictDraftRestored = false;
 }
+
+int SmatchetOfflineConflictDiscardHeldCountForTest() { return static_cast<int>(g_conflictDiscardHeld.size()); }
+
+bool SmatchetOfflineConflictDiscardHeldForTest(std::int64_t id) { return g_conflictDiscardHeld.count(id) != 0; }
 
 // P2-M1 confirm modal: opened from RequestOfflineDiscard when the discard set contains
 // rows still queued to replay. Panel-level (outside the row context popup) so the modal
@@ -1835,12 +1962,13 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
     const std::shared_ptr<const OfflineQueueSnapshot> queues = app.GetOfflineQueueSnapshot();
     const bool queuesEmpty = queues->PendingCreates.empty() && queues->DeadCreates.empty() &&
                              queues->PendingEdits.empty() && queues->DeadEdits.empty();
+    std::vector<UnifiedOfflineRow> rows =
+        BuildUnifiedOfflineRows(queues->PendingCreates, queues->DeadCreates, queues->PendingEdits, queues->DeadEdits);
+    // Before the empty-queue return: a discard that deleted the last queued row is forgotten here.
+    DropHeldConflictDiscards(app, d, rows);
     if (queuesEmpty && !SmatchetOfflineQueueActionsUi::HasRows(app)) {
         return false;
     }
-
-    std::vector<UnifiedOfflineRow> rows =
-        BuildUnifiedOfflineRows(queues->PendingCreates, queues->DeadCreates, queues->PendingEdits, queues->DeadEdits);
     PruneOfflineSelectionToLiveRows(rows);
     ExpireOfflinePanelStatus(d);
 

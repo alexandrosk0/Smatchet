@@ -25,4 +25,16 @@ inline bool CallbackIsStale(bool active, int currentGen, int dispatchGen, const 
     return !active || currentGen != dispatchGen || currentIssueId != dispatchIssueId;
 }
 
+/// A post result that is stale for the open showing it must still clear the box when that open restored
+/// the comment being posted as a draft (#2459): close and reopen the same issue while the post runs, and
+/// the stored draft is the posted text. Clear only when the post went through (sent or queued), the open
+/// is on the same draft scope, the box is still marked restored, and it holds exactly the posted body, so
+/// text typed since stays.
+inline bool PostedBodyRestoredAsDraft(bool postSucceeded, bool active, const std::string& currentDraftScope,
+                                      const std::string& postDraftScope, bool draftRestored, const std::string& boxText,
+                                      const std::string& postedBody) {
+    return postSucceeded && active && !postDraftScope.empty() && currentDraftScope == postDraftScope && draftRestored &&
+           boxText == postedBody;
+}
+
 } // namespace SmatchetCommentsModalGen

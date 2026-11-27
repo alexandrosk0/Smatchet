@@ -258,6 +258,13 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
   - `PickProjectComponents` shared by the grid components cell and the bulk popup (was a hand copy).
   - Enter in the tick-box list of the bulk modal applies the pick (`FilterDropdown` `EventKind::Done`); the draw-in-the-popup contract is documented.
   - Quick-create Esc is held back only by popups opened from its own window.
+- Bulk status offers only the moves every selected row can make (branch `claude/bulk-status-allowed-transitions`):
+  - The single-ticket status combo and the bulk picker now share `PickTicketStatusOptions`, `BuildStatusTransitionsQuery` and `DrawStatusOptionsCue` (`TicketFieldEditor.h`), which wrap `PickStatusComboOptions` (live, then learned, then catalog; the current status is always present).
+  - `IntersectStatusOptions` and `LessLiveSource` (`StatusComboOptionsPure.h`) combine the per-row lists: a status stays only if every row's list has it (matched by `SameStatusOption`), in the first row's order. The cue shows the least-live source and the stalest freshness.
+  - Live transitions load lazily through `EnsureIssueTransitionsLoaded`: at most 6 fetches in flight, rows taking turns, and one fetch per (project, issue type, status) group above 8 rows (the group's first row stays its fetcher, so a failing tracker is not asked about every sibling), each fetch carrying the row's current status from the grid. The list is recomputed every 10 frames, builds one list per distinct non-live answer, and is cached in `BulkEditPopupRequest::StatusCache`; an empty intersection shows `grid.bulk.no_common_status`.
+  - Code review: the status list never points into its own `OptionList` (accessor `Opts()`; NRVO is not guaranteed in Debug / ASan builds); the per-frame request cap became an in-flight cap.
+  - Known gap: in a split over two trackers the transitions service reads the focused pane's backend, as the single-ticket combo already does; to be tracked as an Issue.
+  - User guide: `docs/guides/bulk-edit.md`.
 
 ## Deviations from plan
 - **Pre-implementation `grill-with-docs` (2026-11-14):** five gaps fixed before any code was written. (1) ADR-0016 scalar-base capture for every bulk row, through a shared `CaptureScalarBase`. (2) The per-cell menu ctx holds no owned strings (Ui § Per-cell allocation). (3) The P3 Jira bulk path goes through `FieldEditPipelineService`, not a grid-side commit branch, and P3 updates the Ui § Grid one-in-flight wording. (4) The cli, lua and mcp guides are updated. (5) Toast wording follows Ui § Toasts say what happened. The user chose the command name `ticket.set_field_bulk`.
@@ -268,7 +275,7 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
 - **Selection hit-test uses `NoPopupHierarchy`:** a popup opened from the grid window counts as its child, so a right-click menu click was read as a click on the grid and cleared the selection. Both the cell hit-test and the click-outside clear now ignore popup children. A left click on a cell while a popup is open now only closes the popup (deliberate).
 - **Deliberately deferred (not P1):** quitting mid-job drops the rows not yet sent (logged with `LOG_WARN`; persisting them is a follow-up); per-row `TrackerField` copies / a double `Prepare` for very large jobs (measure with perf-gatekeeper before changing); a cancel token for the palette worker; labels add / remove merge case-insensitively on purpose.
 - **Review follow-ups deferred with a record:** quitting mid-job drops unsent rows (GitHub Issue #2448); no cancel token for the palette worker or a running job (`docs/self-improvement/categories/debt/2026-11-16-bulk-edit-no-cancel-token.md`, planned with Revert in P2).
-- **Ctrl+F while a popup is open (not in this PR):** `grid.search.focus` calls `SetWindowFocus()` while the bulk dialog (or any popup) is open, which closes the popup. The fix is in `SmatchetGridHeaderUi.cpp`, which plan-lock `pane-picker-jira-sites` (branch `claude/plus-dropdown-two-jira-261a42`) claimed during this work, so it is deferred. Tracked as GitHub Issue #2449, with a ready-made bucket-E test that fails without the fix.
+- **Ctrl+F while a popup is open (not in this PR):** `grid.search.focus` calls `SetWindowFocus()` while the bulk dialog (or any popup) is open, which closes the popup. The fix is in `SmatchetGridHeaderUi.cpp`, which plan-lock `pane-picker-jira-sites` (branch `claude/plus-dropdown-two-jira-261a42`) claimed during this work, so it is deferred. Tracked as GitHub Issue #2449, with a ready-made bucket-E test that fails without the fix. Fixed afterwards on `claude/grid-search-focus-keeps-popups`: `DrawGridSearchBox` consumes the request but skips `SetWindowFocus()` while any popup is open, and `BulkFieldEdit/GridSearchFocusRequestKeepsDialogOpen` guards it.
 - **`DrawActions` in `SmatchetQuickCreateIssueUi.cpp`** has 27 decision points (cap 30, soft warning at the cap's edge); left as is.
 - **Plan stays in `active/`:** only P1 ships here; P2 and P3 are still ahead.
 
@@ -277,7 +284,9 @@ N/A — the plan extracts nothing. The new popup TU is new code, not a split. `S
 - Bucket-E (`ninja-ui-test-msvc`): `test-ui-bulk-field-edit` 10 / 10, `test-ui-filter-dropdown` 19 / 19, `test-ui-data-dependent-windows` 12 / 12.
 - `bash scripts/dev/pre-ship.sh`: all gates passed except the review ack, which is recorded after the code-review pass.
 - Build gate: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` passed (fresh configure, 1107 steps).
-- Not done: a bucket-E case for Ctrl+F while a popup is open (item deferred to Issue #2449; the test was written and failed without the fix, as expected, and is attached to the Issue).
+- Ctrl+F while a popup is open: covered by `BulkFieldEdit/GridSearchFocusRequestKeepsDialogOpen` (follow-up for Issue #2449; it failed without the fix and passes with it).
+- Bulk status transitions: `StatusComboOptionsPure` doctests (intersection, empty, single row, name match across ids, source ranking) and bucket-E `BulkFieldEdit/Status_OffersOnlyMovesEveryRowAllows`, `Status_NoCommonMoveOffersNoneOfThem`, `Status_OfflineOffersWhatIsRemembered`, `Status_LargeSelectionFetchesOncePerGroup`; `test-ui-bulk-field-edit` 14 / 14, `test-ui-filter-dropdown` 25 / 25, `test-ui-data-dependent-windows` 12 / 12.
+- Not measured: the status picker's per-refresh cost on a selection of 1,000+ rows (online and offline). Estimated cheap after the distinct-list dedupe; a `perf-measure` run is owed before the next phase touches this picker.
 - Manual residue: none.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)

@@ -23,7 +23,10 @@ namespace cmd {
 
 class CommandPaletteUi {
   public:
-    /// Open/close the palette programmatically (also toggled by Ctrl+Shift+P in Draw).
+    /// Open/close the palette programmatically (also toggled by Ctrl+Shift+P in Draw). Close is the
+    /// cancel path: the keyboard, and the caret if a text field had it, go back to where they were
+    /// when the palette opened (#24). A command that ran closes the palette without that, since the
+    /// command may have moved the user on.
     void Open();
     void Close();
     bool IsOpen() const { return open_; }
@@ -83,6 +86,11 @@ class CommandPaletteUi {
 
   private:
     bool open_ = false;
+    /// Who had the keyboard when the palette opened (a smatchet::ui::FocusOpener, held as its two ids so
+    /// this header stays below Ui/ in the include layers); given it back by Close().
+    unsigned int openerWindow_ = 0;
+    unsigned int openerTextField_ = 0;
+    void closePalette(bool returnFocus);
     /// Pending "focus the filter input on the next Draw" latch (see FocusFilterInput()).
     bool focusFilterPending_ = false;
 

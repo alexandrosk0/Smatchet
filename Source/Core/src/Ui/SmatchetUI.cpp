@@ -191,6 +191,10 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
     }
 }
 
+// Keys (smatchet::ui dialog contract): the dialog opens by itself, often while the user is typing, so the
+// keyboard starts on Later and Enter straight away installs nothing. Esc is Later.
+static smatchet::ui::DialogScopeState s_appUpdateDialog;
+
 static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     if (d.appUpdateModalOpen) {
         ImGui::OpenPopup("Update Available###AppUpdateAvailable");
@@ -207,8 +211,8 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     if (!d.appUpdateModalOpen) {
         return;
     }
-    if (!ImGui::BeginPopupModal("Update Available###AppUpdateAvailable", &d.appUpdateModalOpen,
-                                ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!smatchet::ui::BeginDialog(s_appUpdateDialog, "Update Available###AppUpdateAvailable", &d.appUpdateModalOpen,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
 
@@ -249,8 +253,12 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
             }
         }
     } else {
-        // Auto-size: the label translates, so a fixed 170px width clips the French text.
-        if (ImGui::Button("Download and Install")) {
+        // Auto-size: the labels translate, so a fixed width clips the French text.
+        smatchet::ui::ConfirmFooterSpec footer = smatchet::ui::ConsentFooter("Download and Install");
+        footer.AlternateLabel = "Skip This Version";
+        footer.CancelLabel = "Later";
+        const smatchet::dialogkeys::ConfirmPick pick = smatchet::ui::ConfirmFooter(s_appUpdateDialog, footer);
+        if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
             d.installerDownloadInFlight = true;
             d.installerDownloadCancel = std::make_shared<std::atomic<bool>>(false);
             const std::string downloadUrl = d.appUpdateInfo.InstallerAsset.DownloadUrl;
@@ -277,21 +285,16 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
                     }
                 });
             });
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Skip This Version")) {
+        } else if (pick == smatchet::dialogkeys::ConfirmPick::Alternate) {
             d.cfg.UpdateSkipVersion = d.appUpdateInfo.LatestVersion;
             ConfigManager::Save(d.cfg);
             d.appUpdateModalOpen = false;
             ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Later", ImVec2(90.0f, 0.0f))) {
-            d.appUpdateModalOpen = false;
-            ImGui::CloseCurrentPopup();
+        } else if (pick == smatchet::dialogkeys::ConfirmPick::Cancel) {
+            d.appUpdateModalOpen = false; // ConfirmFooter closed the popup
         }
     }
-    ImGui::EndPopup();
+    smatchet::ui::EndDialog(s_appUpdateDialog);
 }
 
 /// The project the field catalog is scoped to for a view's JQL: the one value both the catalog fetch and the
@@ -397,6 +400,11 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
 
 void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
+    // Before any window draws: hands the caret back to the field that had it when the last modal closed.
+    smatchet::ui::ServiceDialogFocusReturn();
+    // Dictation reload before the palette, Quick Create and bug report overlays draw. It covers splices from
+    // hosts that also drain the dispatcher before NewFrame, such as the spawn and Android loops (#2458).
+    SmatchetLocalizedImGui::ApplyPendingDictationReload();
     drawInitConfigOnce(app, d);
     drawResolveUiMode(d);
     drawApplyAppearanceSettings(d);
@@ -893,6 +901,8 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
         SMATCHET_UI_PERF_SCOPE("MainThreadDispatcher::Drain");
         app.mainThreadDispatcher.Drain();
     }
+    // After the drain (dictation post-backs splice there) and before the panels draw (#2458).
+    SmatchetLocalizedImGui::ApplyPendingDictationReload();
     {
         SMATCHET_UI_PERF_SCOPE("drawEnsureCatalogAndInitialSync");
         drawEnsureCatalogAndInitialSync(app, d);
@@ -913,11 +923,13 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
             // The index holds raw pointers into the catalog vector, so the frame context owns the snapshot it
             // was built from. The snapshot is swapped in after the index: the previous one is released only
             // once the index built from it is gone.
-            std::shared_ptr<const std::vector<TrackerField>> catalog = app.GetAvailableFields();
+            std::string catalogProjectKey;
+            std::shared_ptr<const std::vector<TrackerField>> catalog = app.GetAvailableFields(catalogProjectKey);
             gridFrameCtx_.catalogIndex = std::make_unique<TrackerFieldCatalogIndex>(*catalog);
             gridFrameCtx_.columns = av ? TicketGridColumnsBuilder::Build(*av, *gridFrameCtx_.catalogIndex)
                                        : std::vector<TicketGridColumn>();
             gridFrameCtx_.catalogFields = std::move(catalog);
+            gridFrameCtx_.catalogProjectKey = std::move(catalogProjectKey);
         }
     }
 }

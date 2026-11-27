@@ -211,6 +211,9 @@ TEST_CASE("ParseDateInput: numeric and ISO dates") {
     CHECK(Iso("2/29/2028") == "2028-02-29");
     CHECK(Iso("3000-01-01") == "3000-01-01");
     CHECK(Iso("1900-01-01") == "1900-01-01");
+    // A one-digit day or month is fine; only the year group needs two or four digits.
+    CHECK(Iso("2026-11-2") == "2026-11-02");
+    CHECK(Iso("1/2/26") == "2026-01-02");
 }
 
 TEST_CASE("ParseDateInput: the order breaks a tie between two small numbers, and only a tie") {
@@ -306,6 +309,12 @@ TEST_CASE("ParseDateInput rejects what it cannot read and says why") {
         {"3001-01-01", ParseMessageId::DateYearRange, "3001"},
         {"+99999d", ParseMessageId::DateYearRange, "+99999d"},
         {"+9999mo", ParseMessageId::DateYearRange, "+9999mo"},
+        // A one- or three-digit year is not read, in a numeric date as in a month-name one.
+        {"11/20/6", ParseMessageId::DateUnrecognised, "11/20/6"},
+        {"11/20/2", ParseMessageId::DateUnrecognised, "11/20/2"},
+        {"20.11.6", ParseMessageId::DateUnrecognised, "20.11.6"},
+        {"11/20/202", ParseMessageId::DateUnrecognised, "11/20/202"},
+        {"nov 20 6", ParseMessageId::DateUnrecognised, "nov 20 6"},
     };
     for (const Reject& c : kReject) {
         INFO("input: " << std::string(c.Input));
@@ -369,6 +378,14 @@ TEST_CASE("ParseIssueReference: keys, in any case") {
         {"https://acme.atlassian.net/jira/software/projects/PROJ/boards/1?selectedIssue=proj-7", "PROJ-7", true},
         {"https://linear.app/acme/issue/ENG-123/some-slug", "ENG-123", true},
         {"<https://acme.atlassian.net/browse/PROJ-12>", "PROJ-12", true},
+        // Jira issue lists name the key after "/issues/", YouTrack after "/issue/".
+        {"https://acme.atlassian.net/jira/software/projects/PROJ/issues/PROJ-12", "PROJ-12", true},
+        {"https://acme.atlassian.net/issues/PROJ-12?filter=-1", "PROJ-12", true},
+        {"https://jira.corp.example/projects/OPS/issues/OPS-7", "OPS-7", true},
+        {"https://youtrack.corp.example/issue/OPS-7", "OPS-7", true},
+        // Jira Service Management ends a queue or portal link on the key.
+        {"https://acme.atlassian.net/jira/servicedesk/projects/SD/queues/custom/1/SD-123", "SD-123", true},
+        {"https://help.acme.com/servicedesk/customer/portal/2/SD-123", "SD-123", true},
     };
     for (const Accept& c : kAccept) {
         INFO("input: " << std::string(c.Input));
@@ -393,9 +410,16 @@ TEST_CASE("ParseIssueReference rejects text that is not an issue and says which 
         CHECK(p.Message.Id == ParseMessageId::IssueRefNotAKey);
         CHECK(p.Key.empty());
     }
-    for (const char* url : {"https://example.com/", "https://github.com/octo/repo/issues", "a.b/c",
-                            "https://acme.atlassian.net/jira/software/projects/PROJ/boards/1",
-                            "https://linear.app/acme/team/ENG/active"}) {
+    for (const char* url :
+         {"https://example.com/", "https://github.com/octo/repo/issues", "a.b/c",
+          "https://acme.atlassian.net/jira/software/projects/PROJ/boards/1", "https://linear.app/acme/team/ENG/active",
+          // A page or file whose name looks like a key is not an issue.
+          "https://wiki.acme.com/display/ENG/Release-2", "https://github.com/o/r/blob/main/docs/ADR-12",
+          "https://acme.atlassian.net/wiki/spaces/ENG/pages/123/Release-2", "docs.acme.com/specs/RFC-7",
+          // A service desk queue or portal with no issue open, and a key-shaped page outside one.
+          "https://acme.atlassian.net/jira/servicedesk/projects/SD/queues/custom/1",
+          "https://help.acme.com/servicedesk/customer/portal/2", "https://help.acme.com/portal/2/SD-123",
+          "https://acme.atlassian.net/jira/servicedesk/projects/SD/knowledge/articles/KB-12"}) {
         INFO("url: " << std::string(url));
         const IssueReferenceParse p = ParseIssueReference(url);
         CHECK_FALSE(p.Ok);

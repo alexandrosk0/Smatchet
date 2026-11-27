@@ -145,7 +145,7 @@ CivilDate AddDays(const CivilDate& d, int days);
 /// - "today", "tomorrow" ("tmr"), "yesterday"
 /// - a weekday ("fri", "friday", "next fri"): the next one after today, 1 to 7 days ahead
 /// - offsets "+3d", "-2w", "+1mo", "in 3 days", "in 2 weeks", "3 days ago"
-/// Years are 1900-3000; a two-digit year is 20yy. Never throws.
+/// Years are 1900-3000. A two-digit year is 20yy, a one- or three-digit year is not read. Never throws.
 DateParse ParseDateInput(const std::string& input, const CivilDate& today, DateOrder order);
 
 /// "2026-11-20". `d` must be a valid date.
@@ -174,10 +174,13 @@ bool LooksLikeProjectIssueKey(const std::string& text);
 
 /// Parse a typed or pasted issue reference. Accepts:
 /// - a key, any case: "proj-12" -> "PROJ-12"; a GitHub key "owner/repo#12" as it is
-/// - a Jira URL: ".../browse/PROJ-12", "...?selectedIssue=PROJ-12"
+/// - a Jira URL: ".../browse/PROJ-12", ".../issues/PROJ-12", "...?selectedIssue=PROJ-12"
 /// - a GitHub URL: "github.com/owner/repo/issues/12" or ".../pull/12" -> "owner/repo#12"
 /// - a Linear URL: "linear.app/<workspace>/issue/ENG-123/<slug>" -> "ENG-123"
-/// - any other URL whose path has a key-shaped segment
+/// - a Jira Service Management queue or portal link, read by the key at the end of its path:
+///   ".../servicedesk/projects/SD/queues/custom/1/SD-12", ".../servicedesk/customer/portal/2/SD-12"
+/// - another tracker's URL where the key directly follows "/issue/" (YouTrack)
+/// A key-shaped segment anywhere else in a path is not read as an issue.
 IssueReferenceParse ParseIssueReference(const std::string& input);
 
 } // namespace TrackerParseExplain

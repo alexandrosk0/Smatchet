@@ -4,6 +4,7 @@
 #include "SmatchetCommentsModalUi.h"
 #include "Ui/DialogKeysPure.h"
 #include "Ui/SmatchetActivityLogViewerUi.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "Ui/SmatchetFieldViewerKindPure.h"
 #include "Ui/SmatchetModalPopupOpen.h"
 #include "SmatchetLocalization.h"
@@ -143,19 +144,22 @@ void RenderFieldViewerModal(AppController& app, bool readOnlyMode) {
                 closeNow = true;
             }
         }
+        // The discard confirm, on the dialog scope's destructive footer: Discard is red, Keep has the keyboard,
+        // and Esc keeps (read only once the confirm has had the keyboard, so the Esc that opened it is not its
+        // answer). Keep / Esc close it inside ConfirmFooter.
+        static smatchet::ui::DialogScopeState s_discardDialog;
         bool discardConfirmed = false;
-        if (ImGui::BeginPopupModal(s_Viewer.DiscardLabel.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (smatchet::ui::BeginDialog(s_discardDialog, s_Viewer.DiscardLabel.c_str(), nullptr,
+                                      ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::TextUnformatted(s_Viewer.Content->DiscardConfirmText());
-            if (ImGui::Button(s_Viewer.Content->DiscardButtonLabel())) {
+            const smatchet::dialogkeys::ConfirmPick pick = smatchet::ui::ConfirmFooter(
+                s_discardDialog, smatchet::ui::DestructiveFooter(s_Viewer.Content->DiscardButtonLabel(),
+                                                                 s_Viewer.Content->KeepButtonLabel()));
+            if (pick == smatchet::dialogkeys::ConfirmPick::Primary) {
                 discardConfirmed = true;
                 ImGui::CloseCurrentPopup();
             }
-            ImGui::SameLine();
-            if (ImGui::Button(s_Viewer.Content->KeepButtonLabel()) ||
-                (discardWasOpen && !discardConfirmed && ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
+            smatchet::ui::EndDialog(s_discardDialog);
         }
         if (closeNow || discardConfirmed) {
             ImGui::CloseCurrentPopup();

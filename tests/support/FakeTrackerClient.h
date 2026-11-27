@@ -36,6 +36,7 @@
 #include <cstddef>
 #include <deque>
 #include <functional>
+#include <future>
 #include <iterator>
 #include <mutex>
 #include <stdexcept>
@@ -684,6 +685,15 @@ class FakeTrackerClient : public ITrackerBackend,
         call.IssueKey = issueKey;
         call.Body = plainText;
         addCommentCalls_.push_back(std::move(call));
+        addCommentCallCount_.fetch_add(1, std::memory_order_release);
+        std::shared_future<void> hold;
+        {
+            std::lock_guard<std::mutex> lock(addCommentHoldMutex_);
+            hold = addCommentHold_;
+        }
+        if (hold.valid()) {
+            hold.wait(); // on the post worker: keeps the post in flight until the test releases it
+        }
         return PopWriteReply(addCommentReplies_);
     }
 
@@ -1061,7 +1071,15 @@ class FakeTrackerClient : public ITrackerBackend,
     }
 
     const std::vector<AddCommentCall>& AddCommentCalls() const { return addCommentCalls_; }
+    /// AddIssueCommentPlain calls so far, safe to poll from another thread while a post worker runs.
+    std::size_t AddCommentCallCount() const { return addCommentCallCount_.load(std::memory_order_acquire); }
     void EnqueueAddCommentResult(TrackerError error) { addCommentReplies_.push_back(std::move(error)); }
+    /// Keep each AddIssueCommentPlain waiting (after it is recorded) until `gate` is ready, so a test can
+    /// act while a post is in flight. Pass a default-constructed future to stop holding.
+    void HoldAddComment(std::shared_future<void> gate) {
+        std::lock_guard<std::mutex> lock(addCommentHoldMutex_);
+        addCommentHold_ = std::move(gate);
+    }
     const std::vector<AddWorklogCall>& AddWorklogCalls() const { return addWorklogCalls_; }
     void EnqueueAddWorklogResult(TrackerError error) { addWorklogReplies_.push_back(std::move(error)); }
     /// Issue keys AddIssueWatcher was called for, in order.
@@ -1092,6 +1110,7 @@ class FakeTrackerClient : public ITrackerBackend,
         fetchIssueCommentsCalls_ = 0;
         listProjectsCalls_ = 0;
         addCommentCalls_.clear();
+        addCommentCallCount_.store(0, std::memory_order_release);
         addCommentReplies_.clear();
         addWorklogCalls_.clear();
         addWorklogReplies_.clear();
@@ -1275,6 +1294,9 @@ class FakeTrackerClient : public ITrackerBackend,
     // Collaboration scripting (Pillar 6)
     std::vector<AddCommentCall> addCommentCalls_;
     std::deque<TrackerError> addCommentReplies_;
+    std::atomic<std::size_t> addCommentCallCount_{0};
+    std::mutex addCommentHoldMutex_;
+    std::shared_future<void> addCommentHold_;
     std::vector<AddWorklogCall> addWorklogCalls_;
     std::deque<TrackerError> addWorklogReplies_;
     std::vector<std::string> addWatcherCalls_;

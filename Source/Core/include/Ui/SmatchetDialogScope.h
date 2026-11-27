@@ -9,12 +9,13 @@
 //   - On open, the dialog's first field (a form) or its default button (a confirm) takes the keyboard.
 //   - Esc cancels (smatchet::dialogkeys::ResolveEscape: a field with typed text is left first).
 //   - Enter runs the default button of a confirm; a destructive confirm defaults to its safe button.
-//   - Ctrl+Enter is a form's submit.
+//   - Ctrl+Enter is a form's submit; a confirm ignores it, even on a button under the keyboard cursor.
 //   - App-wide shortcuts are muted while any modal is up (AnyModalDialogOpen, read by
 //     SmatchetUI::dispatchKeybindings).
 // The decisions are pure and live in Ui/DialogKeysPure.h; this header only reads ImGui state for them.
 //
-// Usage, for a confirm: keep a file-scope DialogScopeState next to the dialog, call BeginDialog where the
+// Usage, for a confirm: keep a file-scope DialogScopeState next to the dialog (a member instead when the
+// class that draws it can have several instances, see Ui/DialogScopeState.h), call BeginDialog where the
 // BeginPopupModal was, draw the message, then call ConfirmFooter with a spec (DestructiveFooter,
 // ConsentFooter or UnsavedChangesFooter cover most dialogs) and act on the pick it returns. EndDialog
 // closes the body. "Delete view?" in SmatchetViewsDashboardUi.cpp is a short example.
@@ -25,18 +26,11 @@
 // their `#define ImGui SmatchetLocalizedImGui`, so ids hash the same and labels translate the same.
 
 #include "Ui/DialogKeysPure.h"
+#include "Ui/DialogScopeState.h"
 #include "imgui.h"
 
 namespace smatchet {
 namespace ui {
-
-/// Per-dialog state, owned by the caller (a file-scope static next to the dialog is the usual home).
-struct DialogScopeState {
-    bool Open = false;                   ///< BeginDialog returned true last time it was called
-    bool FocusPending = false;           ///< the opening focus has not been placed yet
-    bool OwnedKeyboardLastFrame = false; ///< for ResolveEscape: the Esc that closed a popup above stays there
-    bool FieldActiveLastFrame = false;   ///< a field of the dialog held the caret at the end of last frame
-};
 
 /// Wraps BeginPopupModal. Call every frame the dialog could be open, where its BeginPopupModal was. Returns
 /// what BeginPopupModal returns; when true, the body runs and EndDialog must follow.
@@ -58,8 +52,9 @@ struct DialogKeys {
 /// Reads a form dialog's Esc and Ctrl+Enter. Call at the top of the body, before any item, so a key the
 /// dialog takes does not also reach the field or button that has the keyboard. `nothingTyped`: closing now
 /// loses no typed text (a search filter counts as nothing). On LeaveField the field is left here; on Cancel
-/// the caller closes the dialog the way its Cancel button does.
-DialogKeys DialogReadKeys(DialogScopeState& s, bool nothingTyped);
+/// the caller closes the dialog the way its Cancel button does. `readSubmit` false: a dialog with no form
+/// submit leaves Ctrl+Enter to its fields (Submit stays false and the field keeps the key).
+DialogKeys DialogReadKeys(DialogScopeState& s, bool nothingTyped, bool readSubmit = true);
 
 /// The button row of a confirm dialog: [Primary] [Alternate] [Cancel], action first (P2-M16 order).
 struct ConfirmFooterSpec {
@@ -109,6 +104,29 @@ dialogkeys::ConfirmPick ConfirmFooter(DialogScopeState& s, const ConfirmFooterSp
 /// True while any modal popup is open. SmatchetUI::dispatchKeybindings mutes every shortcut but those in
 /// dialogkeys::GlobalShortcutAllowedUnderModal while this holds.
 bool AnyModalDialogOpen();
+
+/// Focus return (#24, #89). ImGui puts the keyboard back on the window under a modal when it closes, but a
+/// text field that had the caret loses it. ServiceDialogFocusReturn gives it back, for every modal, migrated
+/// to this scope or not (dialogkeys::StepCaretReturn has the rule). Call it once per frame before any
+/// window draws; SmatchetUI::Draw does.
+void ServiceDialogFocusReturn();
+
+/// Who had the keyboard, for an overlay that is not a modal (the command palette): capture it when the
+/// overlay opens, hand it back with ReturnFocusTo when it closes without running anything.
+struct FocusOpener {
+    ImGuiID Window = 0;    ///< root window that had the keyboard
+    ImGuiID TextField = 0; ///< text field that had the caret, 0 for none
+};
+
+/// The keyboard's owner right now. A window whose root is named `ignoreRootName` (the overlay itself, when
+/// it is opened again while open) is not an opener: the result is empty.
+FocusOpener CaptureFocusOpener(const char* ignoreRootName = nullptr);
+
+/// Puts the keyboard back on `opener`'s window and, from the next frame, the caret back in its text field,
+/// at the cursor and selection it had. Does nothing when that window is gone, or when `onlyFromRootName` is
+/// given and the keyboard is in some other window (the user moved on: closing the overlay must not pull
+/// the caret out of where they are typing now).
+void ReturnFocusTo(const FocusOpener& opener, const char* onlyFromRootName = nullptr);
 
 } // namespace ui
 } // namespace smatchet

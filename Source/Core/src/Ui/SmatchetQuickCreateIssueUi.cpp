@@ -7,6 +7,7 @@
 // SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=popup needs the create pipeline (CreateIssueAsync/QueueCreateOffline/GetRequiredFieldSet/BuildDraftFromLastTicket) plus SmatchetProjectPicker::Draw which takes AppController&, same facet set as the grandfathered SmatchetNewIssueDraftUi.cpp; owner=quick-create-issue-unreal-context; revisit=2027-11-30)
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "DraftStore.h"
 #include "Diagnostics/EngineContextFormat.h"
 #include "Diagnostics/EngineHostContext.h"
 #include "FilterDropdown.h"
@@ -17,6 +18,7 @@
 #include "RecentSelections.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetProjectPicker.h"
+#include "SmatchetTheme.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
@@ -53,6 +55,130 @@ void AssignBuf(std::vector<char>& buf, std::size_t cap, const std::string& text)
     }
 }
 
+// What is typed here is kept in the draft store (DraftStore.h), so closing the window, a restart or a crash
+// does not lose it (INPUT_UX_AUDIT.md #51). One popup, so one scope. Only the two texts are kept: the
+// project and type come from the open's own seed. The description is kept only once the user edited it:
+// the context prefill writes it otherwise, and runs again at each open.
+constexpr const char* kQuickCreateSummaryDraftSurface = "quickcreate.summary";
+constexpr const char* kQuickCreateDescriptionDraftSurface = "quickcreate.description";
+// Set when a create of the kept text failed in a way that may still have created the issue.
+constexpr const char* kQuickCreateMaybeCreatedSurface = "quickcreate.maybe_created";
+constexpr const char* kQuickCreateDraftScope = "popup";
+
+// The text last handed to the draft store, to notice a change without allocating each frame.
+std::string s_quickCreateSyncedSummary;
+std::string s_quickCreateSyncedDescription;
+// The fields were filled from a kept entry at this open (the restored line shows).
+bool s_quickCreateDraftRestored = false;
+// The open passed its own text (summary= / description=): the kept entry is left alone until the user edits,
+// then the edited text replaces it whole (TakeOverQuickCreateDraft).
+bool s_quickCreateSyncSuspended = false;
+
+const char* BufCStr(const std::vector<char>& buf) { return buf.empty() ? "" : buf.data(); }
+
+void SyncQuickCreateDraft(const UiDrawSession& d) {
+    if (d.quickCreateInFlight || s_quickCreateSyncSuspended) {
+        return; // being sent (the draft is erased when it lands), or the caller's text, not yet the user's
+    }
+    bool changed = false;
+    const char* summary = BufCStr(d.quickCreateSummaryBuf);
+    if (s_quickCreateSyncedSummary != summary) {
+        s_quickCreateSyncedSummary = summary;
+        smatchet::drafts::Put(kQuickCreateSummaryDraftSurface, kQuickCreateDraftScope, s_quickCreateSyncedSummary);
+        changed = true;
+    }
+    const char* description = d.quickCreateDescUserEdited ? BufCStr(d.quickCreateDescBuf) : "";
+    if (s_quickCreateSyncedDescription != description) {
+        s_quickCreateSyncedDescription = description;
+        smatchet::drafts::Put(kQuickCreateDescriptionDraftSurface, kQuickCreateDraftScope,
+                              s_quickCreateSyncedDescription);
+        changed = true;
+    }
+    if (changed && s_quickCreateSyncedSummary.empty() && s_quickCreateSyncedDescription.empty()) {
+        // Nothing kept any more, so nothing a later draft could be mistaken for.
+        smatchet::drafts::Erase(kQuickCreateMaybeCreatedSurface, kQuickCreateDraftScope);
+    }
+}
+
+void EraseQuickCreateDraft() {
+    s_quickCreateDraftRestored = false;
+    if (s_quickCreateSyncSuspended) {
+        return; // the caller's text, never edited: a kept draft this open did not show stays kept
+    }
+    smatchet::drafts::Erase(kQuickCreateSummaryDraftSurface, kQuickCreateDraftScope);
+    smatchet::drafts::Erase(kQuickCreateDescriptionDraftSurface, kQuickCreateDraftScope);
+    smatchet::drafts::Erase(kQuickCreateMaybeCreatedSurface, kQuickCreateDraftScope);
+    s_quickCreateSyncedSummary.clear();
+    s_quickCreateSyncedDescription.clear();
+}
+
+// The user edited text the open passed in: it is theirs now and replaces the kept entry whole (one popup,
+// one entry). The entry is dropped here, not left to the sync: the sync only rewrites a field that differs
+// from what this process last synced, and after a restart that is nothing while the store holds the draft
+// read from the file, so a kept description would stay under the new summary. The marker belongs to the
+// draft being replaced and goes with it. The sync at the end of this frame keeps the edited text.
+void TakeOverQuickCreateDraft() {
+    if (!s_quickCreateSyncSuspended) {
+        return;
+    }
+    s_quickCreateSyncSuspended = false; // cleared first: the erase leaves a suspended entry alone
+    EraseQuickCreateDraft();
+}
+
+// At open, after the seed: puts back a kept summary / description, unless the open passed its own text
+// (`summary=` / `description=` arguments are what the caller wants in the fields). Then neither comes back,
+// and the kept entry stays as it is until the user edits a field; then the edited text replaces it whole
+// (TakeOverQuickCreateDraft).
+void RestoreQuickCreateDraft(UiDrawSession& d, bool openPassedText) {
+    s_quickCreateDraftRestored = false;
+    s_quickCreateSyncSuspended = openPassedText;
+    if (openPassedText) {
+        return;
+    }
+    smatchet::drafts::DraftEntry kept;
+    if (smatchet::drafts::Get(kQuickCreateSummaryDraftSurface, kQuickCreateDraftScope, kept)) {
+        AssignBuf(d.quickCreateSummaryBuf, kSummaryBufCap, kept.Text);
+        s_quickCreateDraftRestored = true;
+    }
+    if (smatchet::drafts::Get(kQuickCreateDescriptionDraftSurface, kQuickCreateDraftScope, kept)) {
+        AssignBuf(d.quickCreateDescBuf, kQcDescBufCap, kept.Text);
+        d.quickCreateDescUserEdited = true; // typed by the user: the context prefill must not replace it
+        s_quickCreateDraftRestored = true;
+    }
+    s_quickCreateSyncedSummary = BufCStr(d.quickCreateSummaryBuf);
+    s_quickCreateSyncedDescription = d.quickCreateDescUserEdited ? BufCStr(d.quickCreateDescBuf) : "";
+}
+
+void LaunchContextPrefill(AppController& app, UiDrawSession& d);
+
+// The "restored" line with its Clear button, above the fields. Clear empties both and gathers the context
+// description again, as a fresh open does; the next sync erases the kept entry.
+void DrawQuickCreateDraftNotice(AppController& app, UiDrawSession& d) {
+    if (!s_quickCreateDraftRestored || d.quickCreateInFlight) {
+        // Hidden while a create runs: Clear would empty the text being sent, and its result settles the entry.
+        return;
+    }
+    smatchet::drafts::DraftEntry maybeCreated;
+    if (smatchet::drafts::Get(kQuickCreateMaybeCreatedSurface, kQuickCreateDraftScope, maybeCreated)) {
+        ImGui::TextColored(SmatchetTheme::GetActiveSemanticColors().WarningText, "%s",
+                           SmatchetLocalization::T("quickcreate.draft_restored_maybe_created",
+                                                   "Restored your unsaved issue. Its last Create may have gone "
+                                                   "through: check the tracker before creating it again."));
+    } else {
+        ImGui::TextDisabled("%s",
+                            SmatchetLocalization::T("quickcreate.draft_restored", "Restored your unsaved issue."));
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton(SmatchetLocalization::T("quickcreate.draft_clear", "Clear"))) {
+        AssignBuf(d.quickCreateSummaryBuf, kSummaryBufCap, std::string());
+        AssignBuf(d.quickCreateDescBuf, kQcDescBufCap, std::string());
+        d.quickCreateDescUserEdited = false;
+        s_quickCreateDraftRestored = false;
+        smatchet::drafts::Erase(kQuickCreateMaybeCreatedSurface, kQuickCreateDraftScope);
+        LaunchContextPrefill(app, d);
+    }
+}
+
 // Kick the engine-context prefill on a worker: read + parse the host snapshot and
 // format it through the Preferences toggles, then post the markdown back. Never
 // clobbers a description the user already edited.
@@ -81,6 +207,13 @@ void LaunchContextPrefill(AppController& app, UiDrawSession& d) {
             d.quickCreateCtxGenerating = false;
         });
     });
+}
+
+void ClearOpenArgs(UiDrawSession& d) {
+    d.quickCreateArgSummary.clear();
+    d.quickCreateArgDescription.clear();
+    d.quickCreateArgProject.clear();
+    d.quickCreateArgIssueType.clear();
 }
 
 // First-frame-open seed: allocate buffers, reset submit state, seed project/type
@@ -119,10 +252,8 @@ void SeedOnOpen(AppController& app, UiDrawSession& d) {
     AssignBuf(d.quickCreateDescBuf, kQcDescBufCap, d.quickCreateArgDescription);
     // A description passed via args is caller content — the context prefill must not replace it.
     d.quickCreateDescUserEdited = !d.quickCreateArgDescription.empty();
-    d.quickCreateArgSummary.clear();
-    d.quickCreateArgDescription.clear();
-    d.quickCreateArgProject.clear();
-    d.quickCreateArgIssueType.clear();
+    RestoreQuickCreateDraft(d, !d.quickCreateArgSummary.empty() || !d.quickCreateArgDescription.empty());
+    ClearOpenArgs(d);
     d.quickCreateError.clear();
     d.quickCreateInFlight = false;
     d.quickCreateQueueOffered = false;
@@ -215,6 +346,7 @@ void PollCreateFuture(AppController& app, UiDrawSession& d) {
         SmatchetToastManager::Instance().Push(
             SmatchetLocalization::T("toast.quick_create", "Quick create"),
             SmatchetLocalization::Format("quickcreate.created", "Created %s", r.IssueKey.c_str()), ToastType::Success);
+        EraseQuickCreateDraft();
         ResetAndClose(d);
         return;
     }
@@ -226,6 +358,7 @@ void PollCreateFuture(AppController& app, UiDrawSession& d) {
                 SmatchetLocalization::T("toast.quick_create", "Quick create"),
                 SmatchetLocalization::T("quickcreate.queued_offline", "Offline detected; queued for replay."),
                 ToastType::Info);
+            EraseQuickCreateDraft();
             ResetAndClose(d);
             return;
         }
@@ -233,7 +366,12 @@ void PollCreateFuture(AppController& app, UiDrawSession& d) {
                              (queueRefusal.empty() ? std::string() : " " + queueRefusal);
         return;
     }
-    // A create that may have landed is never queued: resending it could create the issue twice.
+    // A create that may have landed is never queued: resending it could create the issue twice. The kept
+    // text stays, marked, so a later open says to check before creating it again. Not the caller's text
+    // (sync suspended): the kept draft is another one, never sent.
+    if (IsAmbiguousCreateFailure(r) && !s_quickCreateSyncSuspended) {
+        smatchet::drafts::Put(kQuickCreateMaybeCreatedSurface, kQuickCreateDraftScope, "1");
+    }
     d.quickCreateError = IsAmbiguousCreateFailure(r) ? r.Error + " " + kAmbiguousCreateHint : r.Error;
     // Server-side required fields this popup doesn't render → point at the full flow.
     d.quickCreateQueueOffered = !r.MissingFieldIds.empty();
@@ -405,6 +543,7 @@ void DrawActions(AppController& app, UiDrawSession& d, const QuickCreateKeys& ke
                                                        "will be lost."));
         if (ImGui::Button(SmatchetLocalization::T("quickcreate.discard", "Discard"))) {
             ImGui::CloseCurrentPopup();
+            EraseQuickCreateDraft();
             ResetAndClose(d);
         }
         ImGui::SameLine();
@@ -425,8 +564,19 @@ void SmatchetQuickCreateIssueUi_Draw(AppController& app, UiDrawSession& d) {
     }
 
     if (d.quickCreateOpenLatch) {
-        SeedOnOpen(app, d);
-        LaunchContextPrefill(app, d);
+        if (d.quickCreateInFlight && d.quickCreateFuture.valid()) {
+            // Reopened while its create still runs: show what was sent, as it was, and keep polling. Seeding
+            // would bring the kept text back over it and drop the running create, so its result could not settle
+            // the entry and a second submit could file the issue twice. The open's own arguments are dropped.
+            if (!d.quickCreateArgSummary.empty() || !d.quickCreateArgDescription.empty() ||
+                !d.quickCreateArgProject.empty() || !d.quickCreateArgIssueType.empty()) {
+                LOG_INFO("QuickCreateIssueUi: open arguments ignored, a create is still running");
+            }
+            ClearOpenArgs(d);
+        } else {
+            SeedOnOpen(app, d);
+            LaunchContextPrefill(app, d);
+        }
     }
 
     ImGui::SetNextWindowSize(ImVec2(580, 520), ImGuiCond_FirstUseEver);
@@ -440,6 +590,7 @@ void SmatchetQuickCreateIssueUi_Draw(AppController& app, UiDrawSession& d) {
     SmatchetWindowExpand::DrawToggle(d);
     const QuickCreateKeys keys = ReadQuickCreateKeys();
 
+    DrawQuickCreateDraftNotice(app, d);
     DrawProjectRow(app, d);
     DrawIssueTypeRow(app, d);
 
@@ -454,6 +605,10 @@ void SmatchetQuickCreateIssueUi_Draw(AppController& app, UiDrawSession& d) {
     }
     const bool summaryEnter = ImGui::InputText("##quickcreate_summary", d.quickCreateSummaryBuf.data(),
                                                d.quickCreateSummaryBuf.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+    if (ImGui::IsItemEdited() && !d.quickCreateInFlight) {
+        // The user's text now. Not while a create runs: its result settles the entry as it was when sent.
+        TakeOverQuickCreateDraft();
+    }
 
     ImGui::TextUnformatted(SmatchetLocalization::T("quickcreate.description", "Description"));
     if (d.quickCreateCtxGenerating && BufText(d.quickCreateDescBuf).empty()) {
@@ -466,9 +621,15 @@ void SmatchetQuickCreateIssueUi_Draw(AppController& app, UiDrawSession& d) {
     if (ImGui::InputTextMultiline("##quickcreate_desc", d.quickCreateDescBuf.data(), d.quickCreateDescBuf.size(),
                                   ImVec2(-1.0f, 240.0f))) {
         d.quickCreateDescUserEdited = true;
+        if (!d.quickCreateInFlight) {
+            TakeOverQuickCreateDraft();
+        }
     }
 
     DrawActions(app, d, keys, summaryEnter);
+    if (d.showQuickCreateIssue) {
+        SyncQuickCreateDraft(d);
+    }
     s_quickCreatePopupOpenLastFrame = PopupOpenOverCurrentWindow();
 
     d.quickCreateOpenLatch = false;

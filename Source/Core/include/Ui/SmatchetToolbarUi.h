@@ -14,6 +14,8 @@
 #include <vector>
 
 #include "Config/ToolbarConfig.h"
+#include "TextMatchPure.h"
+#include "Ui/DialogScopeState.h"
 #include "Ui/SmatchetIconPickerUi.h"
 
 class AppController;
@@ -73,6 +75,7 @@ class SmatchetToolbarUi {
         std::vector<ToolbarButton>& buttons;
         bool trackerScope;
         bool faLoaded;
+        bool submit = false; // Ctrl+Enter this frame (smatchet::ui::DialogReadKeys): Save, as the button does
     };
     // Section helpers for the editor draw body. Each keeps its own paired ImGui begin and end
     // calls balanced internally; the editor orchestrator only sequences them in order. See the
@@ -112,6 +115,16 @@ class SmatchetToolbarUi {
     int selected_ = -1;          // selected button index in the editor
     int pendingListFocus_ = -1;  // row the list's keyboard cursor moves to next frame; -1 = none
 
+    // Keys (smatchet::ui dialog contract, audit #120 and the key half of #121): the selected row of the button
+    // list takes the keyboard on open (Add command, when the list is empty), Ctrl+Enter saves and Esc cancels.
+    // With the caret in a field and an edit made, the first Esc only leaves the field. A new Command button
+    // puts the caret in the command filter, a new Lua button in its tooltip. Per instance: a test host draws
+    // its own editor next to the app's, and a shared state would be reset each frame by the closed one.
+    smatchet::ui::DialogScopeState editorDialog_;
+    bool caretToNewButton_ = false;
+    ToolbarConfig editorOpenedGlobal_;               // the lists the editor opened with: Esc closes in one
+    std::vector<ToolbarButton> editorOpenedTracker_; // press while nothing differs from them
+
     // Editor working state (populated when the editor opens).
     EditScope editScope_ = EditScope::Global;   // active scope in the editor
     ToolbarConfig editBuf_;                     // edited copy of the global toolbar; committed to cfg.Toolbar on Save
@@ -122,9 +135,11 @@ class SmatchetToolbarUi {
     std::vector<std::string> cmdNames_;         // registry command names for the command picker
     std::vector<std::string> cmdHaystacks_;     // "name title" per cmdNames_ entry: what the filter matches
     std::vector<int> cmdFiltered_;              // ranked indices into cmdNames_ for the current filter text
-    std::string cmdFilterKey_;                  // filter text cmdFiltered_ was built for
-    bool cmdFilterValid_ = false;               // false forces a rebuild (set when the editor opens)
-    char cmdSearch_[64] = {0};                  // command-picker filter text
+    std::vector<std::vector<smatchet::textmatch::ByteRange>> cmdRanges_; // per cmdFiltered_ row: name bytes to mark
+    smatchet::textmatch::Scratch cmdScratch_;                            // the matcher's work buffers for cmdRanges_
+    std::string cmdFilterKey_;                                           // filter text cmdFiltered_ was built for
+    bool cmdFilterValid_ = false; // false forces a rebuild (set when the editor opens)
+    char cmdSearch_[64] = {0};    // command-picker filter text
     struct ArgsCheckEntry {
         std::string Text;      // args text the status was computed for
         int Status = 0;        // toolbar_editor::ArgsJsonStatus

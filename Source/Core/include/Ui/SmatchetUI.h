@@ -67,6 +67,10 @@ struct GridFrameContext {
     /// The catalog snapshot catalogIndex was built from: the index stores raw TrackerField pointers into it, so
     /// it must outlive the index. Declared before it so it is destroyed after it.
     std::shared_ptr<const std::vector<TrackerField>> catalogFields;
+    /// The project catalogFields was fetched for ("" = unscoped), read with it under one lock: a shared-index pane's
+    /// components cells compare their row's project against this, never against the live focused catalog (focus can
+    /// move after the index is built in a frame).
+    std::string catalogProjectKey;
     std::unique_ptr<TrackerFieldCatalogIndex> catalogIndex;
     std::vector<TicketGridColumn> columns;
 };
@@ -609,6 +613,10 @@ class SmatchetUI {
     void drawActiveProjectGridNewIssue(ActiveProjectDrawCtx& ctx);
     void drawActiveProjectGridPost(ActiveProjectDrawCtx& ctx);
     void drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx);
+    // Keyboard cell cursor: arrows, Home / End, Ctrl+Home / End, PageUp / PageDown (Shift extends the range). Claims
+    // those keys from ImGui's generic nav while the grid is focused with no text input, so one press moves one cell.
+    // Defined in SmatchetActiveProjectGridKeys.cpp.
+    void drawActiveProjectGridCursorKeys(ActiveProjectDrawCtx& ctx);
     // View-switch + grid-context-change bookkeeping (resets unsaved-edit flags, recomputes
     // gridSortEnvironmentChanged). Split out of drawActiveProjectWindow under the function-size cap.
     void applyActiveProjectViewChange(ActiveProjectDrawCtx& ctx);

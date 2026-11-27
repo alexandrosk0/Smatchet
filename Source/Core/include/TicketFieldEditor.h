@@ -3,8 +3,10 @@
 #include "ComponentOptionsPickPure.h"
 #include "LocalCacheManager.h"
 #include "SmatchetUiSession.h"
+#include "StatusComboOptionsPure.h"
 #include "TicketGridModel.h"
 #include "TrackerFieldSchema.h"
+#include "Types/TransitionsTypes.h"
 
 #include <string>
 #include <vector>
@@ -20,20 +22,51 @@ namespace components {
 /// cross-project view would offer components that do not exist in this project. `holder` keeps the project list
 /// alive; the catalog fallback points into `field.AllowedValueOptions`, so `field` must outlive the use of the
 /// returned options too (never pass a temporary). The grid derives `projectKey` from the row's issue id, the bulk popup
-/// from the clicked row's.
+/// from the clicked row's. `catalogProjectKey` is the project the catalog `field` came from was fetched for (""
+/// = unscoped), captured with that catalog by the caller (the grid's per-pane / shared frame index, the popup's
+/// request), never read live: the catalog's list stands in only when it names `projectKey`.
 ComponentOptionsPick PickProjectComponents(AppController& app, const std::string& projectKey, const TrackerField& field,
-                                           ProjectComponentsLookup& holder);
+                                           const std::string& catalogProjectKey, ProjectComponentsLookup& holder);
 } // namespace components
+
+namespace statuscombo {
+/// The status options of one ticket (Pillar 6): `Applicable` is false when the tracker has no transitions (the
+/// caller offers the catalog list as it always did).
+struct TicketStatusOptions {
+    bool Applicable = false;
+    StatusComboPick Pick;
+    smatchet::offline::DataFreshness Freshness = smatchet::offline::DataFreshness::Fresh;
+};
+
+/// The transitions query for `ticket`'s status field: its project, issue type and current status (id and name).
+TransitionsQuery BuildStatusTransitionsQuery(const AppController& app, const CachedTicket& ticket,
+                                             const TrackerField& field, const std::string& currentValue);
+
+/// The options of the status combo for `query`'s issue, from `lookup` (what the cache answered for that query): the
+/// live transition set, else the workflow remembered from earlier online use, else every status in `field`'s
+/// catalog; the current status always shows. The single-ticket combo and the bulk-edit picker both use it, so a
+/// status list is built one way.
+TicketStatusOptions PickTicketStatusOptions(const TransitionsLookup& lookup, const TransitionsQuery& query,
+                                            const TrackerField& field);
+
+/// The row drawn first in a status list that is not the live transition set (Pillar 6 freshness cue), then a
+/// separator. Nothing is drawn for a live, fresh list.
+void DrawStatusOptionsCue(StatusOptionsSource from, smatchet::offline::DataFreshness freshness);
+} // namespace statuscombo
 } // namespace smatchet
 
 class TicketFieldEditor {
   public:
+    /// `catalogProjectKey` is the project the catalog `field` came from was fetched for ("" = unscoped), resolved
+    /// once per pane per frame by the caller: a components cell offers that catalog's options for its row only
+    /// when the row belongs to that project. The default (unscoped) never lends them.
     static void RenderFieldCell(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
                                 int columnIndex, const TrackerField* field, const std::string& currentValue,
                                 float availWidth, bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
                                 std::vector<PendingFieldEdit>& pendingEdits,
                                 TrackerGridFieldAsyncState& trackerGridAsync, const std::string& dateFormatOption = {},
-                                int thresholdDays = 0, bool singleClickToEdit = true);
+                                int thresholdDays = 0, bool singleClickToEdit = true,
+                                const std::string& catalogProjectKey = std::string());
 
     /// Renders the floating modal used to edit ADF / long-text fields (Jira description/environment,
     /// Plane description, etc.). Must be called once per frame from a stable top-level location so the
@@ -45,9 +78,10 @@ class TicketFieldEditor {
     /// RenderFieldCell helper — dispatch the per-column RenderPlan to the matching editor (or a
     /// read-only plain-text fallback when edits are disabled). Returns true when the cell is fully
     /// handled and the caller should return; false to fall through to the time-tracking modal.
+    // SMATCHET_DEVIATION(rule=duplication; reason=a member declaration and its out-of-line definition share the parameter list by necessity; owner=grid-ui; revisit=never)
     static bool DispatchEditorByPlan(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
                                      const TrackerField* field, const std::string& currentValue, float availWidth,
                                      bool tooltipsEnabled, bool allowEdits, SpreadsheetState& state,
                                      std::vector<PendingFieldEdit>& pendingEdits, const std::string& dateFormatOption,
-                                     int thresholdDays, bool singleClickToEdit);
+                                     int thresholdDays, bool singleClickToEdit, const std::string& catalogProjectKey);
 };

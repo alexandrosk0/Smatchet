@@ -162,6 +162,10 @@ focus:
 | Annotate | `Ctrl+Enter` in the callstack box | Process |
 | Scripts & Actions | `Ctrl+Enter` or `F5` | Run the open script (the row's **Run** / **Run on selected** button) |
 | Dictation overlay | `Esc` while recording | Cancel: the clip is dropped, nothing is transcribed or typed |
+| Customize Toolbar | `Ctrl+Enter` | Save |
+| Customize Toolbar | `Esc` | Cancel, when nothing is changed. With an edit made (a field, a move or a removal), `Esc` only leaves the field, and with no field to leave it does nothing: **Cancel** discards the edits |
+| Save view as new | `Enter` in the name, or `Ctrl+Enter` | Save |
+| Save view as new | `Esc` | Cancel. With a name of your own typed and the caret in it, the first `Esc` only leaves the field |
 
 A submit button names its key at its right edge (**Post Comment** `Ctrl+Enter`, **Save**
 `Ctrl+Enter`), the way a menu item names its shortcut, and a composer's placeholder sits
@@ -191,14 +195,15 @@ leaves the keyboard where it is.
 ### Confirm dialogs
 
 Every confirm dialog (Delete view, Discard changes, Discard queued work, Delete local
-database, Reset keyboard shortcuts, Reset window layout, Clear conversation, Unsaved
-changes in Preferences or the Lua console, and the custom-endpoint and outbound-context
-consent prompts) uses the same keys:
+database, Reset keyboard shortcuts, Reset window layout, Clear conversation, the discard
+questions of the long-text editor and of Comments, Unsaved changes in Preferences or the
+Lua console, and the custom-endpoint and outbound-context consent prompts) uses the same
+keys:
 
 | Shortcut | Action |
 |---|---|
-| `Enter` | Run the button that has the keyboard |
-| `Esc` | Cancel: the same as the last button (**Cancel**, **Keep**, **Keep editing**, **Keep my shortcuts**) |
+| `Enter` | Run the button that has the keyboard. `Ctrl+Enter` does not: it is the save key of the form under the confirm |
+| `Esc` | Cancel: the same as the last button (**Cancel**, **Keep**, **Keep editing**, **Keep writing**, **Keep my shortcuts**) |
 | `Tab` / arrows | Move between the buttons |
 
 When a confirm opens, the keyboard is on its safe button if the action deletes or
@@ -208,6 +213,18 @@ deletes anything. A destructive action button is red.
 
 The **Pick Icon** dialog opens with the caret in its search box. `Enter` picks the icon
 when exactly one matches, and `Esc` closes it.
+
+**About**, **Update Available**, the Annotate assignee and Jira user profile windows, the
+bulk-import project picker and the date-time picker close on `Esc`. About and the Annotate
+windows open with the keyboard on **Close**. **Update Available** opens on **Later**: it can
+appear while you type, so pressing `Enter` straight away installs nothing and skips nothing.
+**Customize Toolbar** opens with the keyboard on its button list, and **Add command** or
+**Add Lua** puts the caret in the new button's first field.
+
+When the last open dialog, or the command palette, closes, the caret goes back to the text
+field that had it before, with the text and the cursor as you left them. That includes a
+dialog that opened by itself while you were typing. Running a command from the palette, or
+clicking into another field while it is open, leaves the keyboard where it is.
 
 While any modal dialog is open, the shortcuts in **Default bindings** below do nothing, except the
 zoom shortcuts, **Full Screen** and the list and divider keys below (`Alt+Up`, `Alt+Down`, `Delete`,
@@ -274,6 +291,38 @@ window. Where a dialog's row in the tables above differs, the row describes what
 `/` on its own does nothing while you are typing in a field, so it never takes a
 typed slash; `Ctrl+F` works from anywhere. In the search box, **Esc** clears the
 search and leaves the box.
+
+## Grid cell cursor
+
+The ticket grid keeps one **active cell**, drawn with a focus ring. Click a cell to make it the active one, or click a row's ID cell to select the row. With **Single-click to edit grid cells** on (the default) a click on an editable cell also opens its editor when you release over the same cell; with it off a double-click opens it. Dragging from one cell to another selects a range and opens no editor. With the grid focused and no text box in use:
+
+| Keys | Action |
+|---|---|
+| `Up` `Down` `Left` `Right` | Move the active cell one cell. The selection becomes that cell, so `Ctrl+C` copies it. |
+| `Home` / `End` | First / last cell of the row. |
+| `Ctrl+Home` / `Ctrl+End` | First / last cell of the grid. |
+| `PageUp` / `PageDown` | Move by a screenful of rows. |
+| `Shift` + any of the above | Grow a cell range from where it started. The active cell stays put. |
+| `Shift`+click, or drag between cells | Select a cell range. |
+| `Esc` | Clear the selection; the active cell stays. |
+| `F2` | Edit the active cell, the caret at the end of the value. |
+| `Enter` | Edit the active cell with the value selected, so typing replaces it. |
+| A letter, digit or symbol | Start editing the active cell with that text instead of its value (type-to-edit). On a dropdown cell the character goes into the dropdown's filter. |
+| `Ctrl+Z` | Undo the newest edit made in this grid pane: a cell you saved, or a whole bulk "Set ... for N rows" (each row gets its own old value back). |
+
+While a text cell is being edited:
+
+| Keys | Action |
+|---|---|
+| `Enter` / `Shift+Enter` | Save and move the active cell down / up. |
+| `Tab` / `Shift+Tab` | Save and move the active cell right / left, wrapping to the next / previous row. |
+| `Esc` | Drop the change; the cell is not written and stays the active cell. |
+
+Moving after a save skips cells you cannot edit (read-only columns and issues), and opens no editor: press `Enter`, `F2` or just type to edit the next cell. With nothing editable that way, the active cell stays. Saving an unchanged value writes nothing and still moves. `Ctrl+Enter` saves without moving (it is reserved for applying a value to a selection). On a duration cell `Tab` keeps its old behaviour (it leaves the cell and saves), and the picker of a date cell opens on `F2` / `Enter` / typing without taking the typed text.
+
+Every saved grid edit also shows a **Saved** toast with an **Undo** button (about 6 seconds); `Ctrl+Z` presses it while it is up, and after it is gone `Ctrl+Z` on the grid undoes from the pane's last 50 edits. An edit that has not finished saving answers "Still saving" and stays undoable. An undo that finds the field changed meanwhile (by someone else, or by sync) reports a conflict instead of overwriting it. The cell's right-click menu has the same action as "Undo <field> on <issue> (Ctrl+Z)". Dates, cascading fields and option lists the editors write as text are not recorded. A cell whose save the tracker rejected reopens with the value you typed and the tracker's message under it (`Esc` drops it).
+
+The grid scrolls to keep the active cell in view, clear of the header row and the ID column. The active cell, a cell range and a row selection follow their issues: a sync or a re-sort does not drop them (only rows that left the view are dropped), and the active cell also follows its row through a search and comes back when the search is cleared. Typing in the search box still clears a range or row selection, as before. The arrow keys belong to the grid while it has the keyboard, so the generic focus cursor does not move with them. Paste, fill-down and undo are planned in the same plan, `docs/plans/active/input-ux-w3-grid-spreadsheet.md`.
 
 ## Keyboard versions of mouse gestures
 

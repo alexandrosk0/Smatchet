@@ -33,6 +33,7 @@
 #include "Ui/SmatchetToast.h"
 #include "Tracker/TrackerFieldValueParseExplain.h"
 #include "TouchCellEditGesture.h"
+#include "Ui/SmatchetGridUiSupport.h"
 #include "Types/ProjectComponentsTypes.h"
 #include "TextEditor.h"
 #include "Logger.h"
@@ -106,6 +107,15 @@ static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* d
     }
     SpreadsheetState* st = u->state;
     if (data->EventFlag != ImGuiInputTextFlags_CallbackAlways) {
+        return 0;
+    }
+    if (st->PendingGridInputTextSelectAll) {
+        // Enter opened the editor: the value is selected, so typing replaces it. Only once ImGui reports the field
+        // activated (before that its own activation would reset the selection).
+        if (data->EventActivated) {
+            data->SelectAll();
+            st->PendingGridInputTextSelectAll = false;
+        }
         return 0;
     }
     if (!st->PendingGridInputTextDeselect) {
@@ -374,14 +384,78 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
 
 smatchet::components::ComponentOptionsPick
 smatchet::components::PickProjectComponents(AppController& app, const std::string& projectKey,
-                                            const TrackerField& field, ProjectComponentsLookup& holder) {
+                                            const TrackerField& field, const std::string& catalogProjectKey,
+                                            ProjectComponentsLookup& holder) {
     holder = app.GetComponentOptionsForProject(projectKey);
     if (holder.freshness != smatchet::offline::DataFreshness::Fresh && app.EnsureProjectComponentsLoaded(projectKey)) {
         holder = app.GetComponentOptionsForProject(projectKey); // report the fetch this frame, not the next
     }
-    const bool catalogIsRowProject = !holder.options && app.IsFieldCatalogScopedToProject(projectKey);
+    // `catalogProjectKey` was read with the catalog `field` came from (resolved once per pane per frame by the grid,
+    // captured with the field by the popup): no lookup or lock per cell, and never another catalog's scope.
+    const bool catalogIsRowProject =
+        !holder.options && smatchet::components::CatalogIsRowProject(catalogProjectKey, projectKey);
     return PickComponentOptions(holder, catalogIsRowProject, field.AllowedValueOptions,
                                 app.GetLastTrackerConnectivityState());
+}
+
+TransitionsQuery smatchet::statuscombo::BuildStatusTransitionsQuery(const AppController& app,
+                                                                    const CachedTicket& ticket,
+                                                                    const TrackerField& field,
+                                                                    const std::string& currentValue) {
+    TransitionsQuery query;
+    query.IssueId = ticket.id;
+    query.ProjectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
+    query.IssueTypeKey = ToLowerAsciiCopy(TrimCopy(ticket.GetFieldValue("issuetype")));
+    query.FromStatusKey = TrackerFieldValueUtils::ResolveOptionId(field, currentValue);
+    query.FromStatusName = app.ResolveDisplayValue(field.Id, &field, currentValue);
+    return query;
+}
+
+smatchet::statuscombo::TicketStatusOptions
+smatchet::statuscombo::PickTicketStatusOptions(const TransitionsLookup& lookup, const TransitionsQuery& query,
+                                               const TrackerField& field) {
+    TicketStatusOptions result;
+    if (!lookup.applicable) {
+        return result;
+    }
+    result.Applicable = true;
+    result.Freshness = lookup.freshness;
+    TrackerFieldOption current;
+    current.Id = query.FromStatusKey;
+    current.Value = query.FromStatusName;
+    if (current.Value.empty()) {
+        current.Value = query.FromStatusKey;
+    }
+    // Live = the options came from this session's fetch, not "the tracker is reachable now": a live but empty
+    // list (no valid move) must not fall back to every status once offline.
+    result.Pick = PickStatusComboOptions(lookup.options, lookup.fromLive, field.AllowedValueOptions, current);
+    return result;
+}
+
+// First combo row when the status list is not the live transition set (Pillar 6 freshness cue). A live list is still
+// cached data once offline or stale, so it only goes without a cue while it is fresh.
+void smatchet::statuscombo::DrawStatusOptionsCue(StatusOptionsSource from, smatchet::offline::DataFreshness freshness) {
+    if (from == StatusOptionsSource::Live && freshness == smatchet::offline::DataFreshness::Fresh) {
+        return;
+    }
+    const char* text = nullptr;
+    if (freshness == smatchet::offline::DataFreshness::Refreshing ||
+        freshness == smatchet::offline::DataFreshness::LoadingNoCache) {
+        text = SmatchetLocalization::T("status.cue.checking", "Checking valid transitions\xE2\x80\xA6");
+    } else if (from == StatusOptionsSource::Learned) {
+        text = SmatchetLocalization::T("status.cue.cached_workflow", "Saved workflow (last seen online)");
+    } else if (from == StatusOptionsSource::Live) {
+        // This session's fetched moves, shown while the tracker is unreachable or its last check failed.
+        text = freshness == smatchet::offline::DataFreshness::CachedOffline
+                   ? SmatchetLocalization::T("status.cue.live_offline", "Valid moves as last fetched (offline)")
+                   : SmatchetLocalization::T("status.cue.live_stale",
+                                             "Valid moves as last fetched (the last check failed)");
+    } else {
+        text = SmatchetLocalization::T("status.cue.all_statuses_offline",
+                                       "All statuses shown \xE2\x80\x94 an invalid move is rejected when it syncs");
+    }
+    ImGui::TextDisabled("%s", text);
+    ImGui::Separator();
 }
 
 namespace {
@@ -442,6 +516,54 @@ void DrawClippedPreviewTooltip(bool tooltipsEnabled, const char* previewCStr, fl
     ImGui::EndTooltip();
 }
 
+// Where the active cell goes after an inline editor ended on a key: Enter down, Shift+Enter up, Tab right, Shift+Tab
+// left. Ctrl+Enter is the apply-to-selection chord (a later slice), so it moves nothing.
+GridEditExit EditExitForKey(bool tabPressed) {
+    const bool shift = ImGuiEffectiveKeyShift();
+    if (tabPressed) {
+        return shift ? GridEditExit::Left : GridEditExit::Right;
+    }
+    if (ImGuiEffectiveKeyCtrl()) {
+        return GridEditExit::None;
+    }
+    return shift ? GridEditExit::Up : GridEditExit::Down;
+}
+
+// Tab in the active single-line editor ends the edit like Enter does (the cell moves right, Shift+Tab left). The
+// editor claims Tab while it is the active item, so ImGui's own nav does not tab focus out of the cell first. Call it
+// right after the editor's item.
+bool InlineEditTabPressed(bool editJustStarted) {
+    const bool pressed = !editJustStarted && ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Tab, false);
+    ImGui::SetItemKeyOwner(ImGuiKey_Tab);
+    return pressed;
+}
+
+// The last save of this cell was rejected: the editor opens on the value the user typed, with the tracker's message
+// under it, so the value is fixed rather than retyped (#31). A typed character that opened the editor (type-to-edit)
+// is the user's newer input and is kept.
+void SeedFromRejectedValue(const CachedTicket& ticket, const TrackerField& field, SpreadsheetState& state,
+                           bool editJustStarted) {
+    if (!editJustStarted || state.CellRejectedValue == nullptr ||
+        state.EditInitialValue != std::string(state.EditBuffer)) {
+        return;
+    }
+    std::snprintf(state.EditBuffer, sizeof(state.EditBuffer), "%s", state.CellRejectedValue->c_str());
+    state.EditRejectedMessage = state.CellRejectedMessage != nullptr ? *state.CellRejectedMessage : std::string();
+    state.EditRejectedIssueId = ticket.id;
+    state.EditRejectedFieldId = field.Id;
+}
+
+// The tracker's reason for the rejected value, under the field (the duration widget draws its own box).
+void DrawRejectedMessage(const SpreadsheetState& state, bool escapePressed, bool isDuration, const ImVec2& durationMin,
+                         const ImVec2& durationMax) {
+    if (state.EditRejectedMessage.empty() || escapePressed) {
+        return;
+    }
+    const ImVec2 inputMin = isDuration ? durationMin : ImGui::GetItemRectMin();
+    const ImVec2 inputMax = isDuration ? durationMax : ImGui::GetItemRectMax();
+    smatchet::ui::DrawInlineTextErrorBelowRect(state.EditRejectedMessage, inputMin, inputMax);
+}
+
 // Draws the active inline single-line text editor for a non-ADF text cell and commits / cancels
 // the edit. Extracted from RenderTextEditor's editing branch; behaviour byte-identical (duration
 // fields route through the suggestion widget, plain fields through InputText). Caller has already
@@ -450,8 +572,10 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
                           std::vector<PendingFieldEdit>& pendingEdits) {
     const bool editJustStarted = state.EditJustStarted;
     const bool isDuration = IsTimeDurationField(field.Id);
+    SeedFromRejectedValue(ticket, field, state, editJustStarted);
     bool explicitSubmit = false;
     bool deactivated = false;
+    bool tabPressed = false;
 
     // The duration field's own rectangle: the widget ends in a "▼" button, so the error is placed from this.
     ImVec2 durationRectMin(0.0f, 0.0f);
@@ -488,9 +612,13 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
         // value was not modified, so clicking another cell after merely refocusing closes the
         // editor. The dirty check below ensures an unchanged value still never PUTs.
         deactivated = !editJustStarted && ImGui::IsItemDeactivated();
+        tabPressed = InlineEditTabPressed(editJustStarted);
+        explicitSubmit = explicitSubmit || tabPressed;
     }
+    const GridEditExit exitAfter = explicitSubmit ? EditExitForKey(tabPressed) : GridEditExit::None;
 
     const bool escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
+    DrawRejectedMessage(state, escapePressed, isDuration, durationRectMin, durationRectMax);
     // A typed duration is read the tolerant way ("1.5h", "90 m", "1:30"); one that does not read is explained
     // under the field while the user types and is never committed (#38). An untouched value is left alone: a
     // tracker figure this reader cannot parse is not the user's typo.
@@ -551,8 +679,10 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
                ShouldCommitInlineFieldEdit(explicitSubmit, deactivated, kMobileInlineEditBuild, valueChanged)) {
         QueueEdit(ticket.id, field, {state.EditBuffer}, pendingEdits, originalValue);
         state.ClearEditing();
+        state.PendingEditExit = exitAfter;
     } else if (ShouldEndInlineEdit(escapePressed, explicitSubmit, deactivated)) {
-        state.ClearEditing(); // ended without a PUT (unchanged value, or mobile focus-loss)
+        state.ClearEditing(); // ended without a PUT (unchanged value, a too-long value, or mobile focus-loss)
+        state.PendingEditExit = exitAfter;
     } else if (editJustStarted) {
         state.EditJustStarted = false;
     }
@@ -702,28 +832,6 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
     }
 }
 
-// First combo row when the status list is not the live transition set (Pillar 6 freshness cue).
-void DrawStatusComboCue(smatchet::statuscombo::StatusOptionsSource from, smatchet::offline::DataFreshness freshness) {
-    const char* text = nullptr;
-    if (freshness == smatchet::offline::DataFreshness::Refreshing ||
-        freshness == smatchet::offline::DataFreshness::LoadingNoCache) {
-        text = SmatchetLocalization::T("status.cue.checking", "Checking valid transitions\xE2\x80\xA6");
-    } else if (from == smatchet::statuscombo::StatusOptionsSource::Learned) {
-        text = SmatchetLocalization::T("status.cue.cached_workflow", "Saved workflow (last seen online)");
-    } else if (from == smatchet::statuscombo::StatusOptionsSource::Live) {
-        // This session's fetched moves, shown while the tracker is unreachable or its last check failed.
-        text = freshness == smatchet::offline::DataFreshness::CachedOffline
-                   ? SmatchetLocalization::T("status.cue.live_offline", "Valid moves as last fetched (offline)")
-                   : SmatchetLocalization::T("status.cue.live_stale",
-                                             "Valid moves as last fetched (the last check failed)");
-    } else {
-        text = SmatchetLocalization::T("status.cue.all_statuses_offline",
-                                       "All statuses shown \xE2\x80\x94 an invalid move is rejected when it syncs");
-    }
-    ImGui::TextDisabled("%s", text);
-    ImGui::Separator();
-}
-
 void RenderSingleSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                               const std::string& currentValue, SpreadsheetState& state,
                               std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
@@ -782,34 +890,16 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
         if (field.Id == "status") {
             // Pillar 6: never block on the live transitions fetch. Live transitions, else the workflow
             // remembered from earlier online use, else every status; the current status always shows.
-            const std::string currentId = ResolveOptionId(field, currentValue);
-            TransitionsQuery query;
-            query.IssueId = ticket.id;
-            query.ProjectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
-            query.IssueTypeKey = ToLowerAsciiCopy(TrimCopy(ticket.GetFieldValue("issuetype")));
-            query.FromStatusKey = currentId;
-            const std::string currentName = app.ResolveDisplayValue(field.Id, &field, currentValue);
-            query.FromStatusName = currentName;
+            const TransitionsQuery query =
+                smatchet::statuscombo::BuildStatusTransitionsQuery(app, ticket, field, currentValue);
             app.EnsureIssueTransitionsLoaded(query);
             const TransitionsLookup lookup = app.GetAvailableTransitionsForIssue(query);
-            if (lookup.applicable) {
-                TrackerFieldOption current;
-                current.Id = currentId;
-                current.Value = currentName;
-                if (current.Value.empty()) {
-                    current.Value = currentId;
-                }
-                // Live = the options came from this session's fetch, not "the tracker is reachable now":
-                // a live but empty list (no valid move) must not fall back to every status once offline.
-                smatchet::statuscombo::StatusComboPick pick = smatchet::statuscombo::PickStatusComboOptions(
-                    lookup.options, lookup.fromLive, field.AllowedValueOptions, current);
-                statusOptions = std::move(pick.Options);
+            smatchet::statuscombo::TicketStatusOptions status =
+                smatchet::statuscombo::PickTicketStatusOptions(lookup, query, field);
+            if (status.Applicable) {
+                statusOptions = std::move(status.Pick.Options);
                 opts = &statusOptions;
-                // A live list is still cached data once offline or stale (Pillar 6: show the cue).
-                if (pick.From != smatchet::statuscombo::StatusOptionsSource::Live ||
-                    lookup.freshness != smatchet::offline::DataFreshness::Fresh) {
-                    DrawStatusComboCue(pick.From, lookup.freshness);
-                }
+                smatchet::statuscombo::DrawStatusOptionsCue(status.Pick.From, status.Freshness);
             }
         }
         RenderSingleSelectComboBody(ticket, field, currentValue, pendingEdits,
@@ -894,21 +984,24 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
 // The option list a components editor or cell uses for its row: PickProjectComponents on the row's project.
 smatchet::components::ComponentOptionsPick PickRowComponents(AppController& app, const CachedTicket& ticket,
                                                              const TrackerField& field,
+                                                             const std::string& catalogProjectKey,
                                                              ProjectComponentsLookup& holder) {
-    return smatchet::components::PickProjectComponents(app, smatchet::ExtractIssueKeyPrefix(ticket.id), field, holder);
+    return smatchet::components::PickProjectComponents(app, smatchet::ExtractIssueKeyPrefix(ticket.id), field,
+                                                       catalogProjectKey, holder);
 }
 
 void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, const TrackerField& field,
                              const std::string& currentValue, SpreadsheetState& state,
-                             std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
-                             bool singleClickToEdit) {
+                             std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled, bool singleClickToEdit,
+                             const std::string& catalogProjectKey) {
     // The grid components MultiSelect is scoped to THIS row's own Jira project, as PickProjectComponents
     // (TicketFieldEditor.h) explains. Every other field keeps the global AllowedValueOptions.
     const std::vector<TrackerFieldOption>* opts = &field.AllowedValueOptions;
     ProjectComponentsLookup rowComponents;
     smatchet::offline::DataFreshness optionsFreshness = smatchet::offline::DataFreshness::Fresh;
     if (field.Id == "components") {
-        const smatchet::components::ComponentOptionsPick pick = PickRowComponents(app, ticket, field, rowComponents);
+        const smatchet::components::ComponentOptionsPick pick =
+            PickRowComponents(app, ticket, field, catalogProjectKey, rowComponents);
         opts = pick.Options;
         optionsFreshness = pick.Freshness;
     }
@@ -1055,6 +1148,50 @@ struct CellIdScope {
     CellIdScope& operator=(const CellIdScope&) = delete;
 };
 
+// Opens the editor of this cell when a key asked for it (F2, Enter, a typed character on the active cell: the grid's
+// cursor keys leave the request on `state` and the cell consumes it on its next draw). Each editor kind opens through
+// the code that already owns it, so a keyboard open and a click open reach the same state:
+// Text cells start the inline editor: F2 puts the caret at the end, Enter selects the value, and a typed character
+// replaces it. Dropdown cells (single / multi select, cascading, labels) arm the popup, which opens on its next draw,
+// and a typed character is queued again so the dropdown's filter takes it. Date cells open their picker.
+// A request for another cell stays for it; the caller drops what no cell took.
+void StartEditFromKey(const CachedTicket& ticket, const TicketGridColumn& column, const TrackerField& field,
+                      const std::string& currentValue, SpreadsheetState& state) {
+    if (state.KeyEditIssueId != ticket.id || state.KeyEditFieldId != column.FieldId) {
+        return;
+    }
+    const GridEditStart kind = state.KeyEditKind;
+    const std::string seed = state.KeyEditSeed;
+    state.ClearKeyEdit();
+    switch (column.Plan) {
+    case TicketGridColumn::RenderPlan::TextEditor:
+        if (kind == GridEditStart::Typed && !TrackerFieldPayload::FieldUsesAdfDocument(field)) {
+            state.StartEditingFieldWithText(ticket.id, field.Id, currentValue, seed);
+        } else {
+            state.StartEditingField(ticket.id, field.Id, currentValue);
+            // StartEditingField puts the caret at the end (F2); Enter keeps ImGui's select-all instead.
+            state.PendingGridInputTextDeselect = kind != GridEditStart::SelectAll;
+            state.PendingGridInputTextSelectAll = kind == GridEditStart::SelectAll;
+        }
+        break;
+    case TicketGridColumn::RenderPlan::DateTimeEditor:
+        state.StartEditingField(ticket.id, field.Id, currentValue);
+        break;
+    case TicketGridColumn::RenderPlan::SingleSelect:
+    case TicketGridColumn::RenderPlan::MultiSelect:
+    case TicketGridColumn::RenderPlan::Cascading:
+    case TicketGridColumn::RenderPlan::Labels:
+        state.EditArmedKey = ticket.id + "::" + field.Id;
+        state.EditArmedJustOpened = true;
+        if (kind == GridEditStart::Typed && !seed.empty()) {
+            ImGui::GetIO().AddInputCharactersUTF8(seed.c_str());
+        }
+        break;
+    default:
+        break;
+    }
+}
+
 // Dispatches the "special" column render plans (attachments, watchers, votes, worklog, progress,
 // issue-restriction) to their grid-field-display renderers. Returns true when the cell was drawn.
 // A false result means the plan's guard did not match, so the caller falls through to its original
@@ -1114,7 +1251,8 @@ bool TryRenderSpecialColumnPlan(AppController& app, const CachedTicket& ticket, 
 // renderPlainText lambda; behaviour byte-identical.
 void RenderPlainTextCell(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
                          const TrackerField* field, const std::string& currentValue, float availWidth,
-                         bool tooltipsEnabled, const std::string& dateFormatOption, int thresholdDays, bool disabled) {
+                         bool tooltipsEnabled, const std::string& dateFormatOption, int thresholdDays, bool disabled,
+                         const std::string& catalogProjectKey) {
     std::string display;
     if (column.IsDateLike) {
         display = DisplayValueForTrackerDateField(column.FieldId, field, currentValue, dateFormatOption, thresholdDays);
@@ -1128,7 +1266,7 @@ void RenderPlainTextCell(AppController& app, const CachedTicket& ticket, const T
         if (field != nullptr && column.FieldId == "components") {
             ProjectComponentsLookup rowComponents;
             const smatchet::components::ComponentOptionsPick pick =
-                PickRowComponents(app, ticket, *field, rowComponents);
+                PickRowComponents(app, ticket, *field, catalogProjectKey, rowComponents);
             effectiveField = *field;
             effectiveField.AllowedValueOptions = *pick.Options;
             displayField = &effectiveField;
@@ -1158,8 +1296,8 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
                                         float availWidth, bool tooltipsEnabled, bool allowEdits,
                                         SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits,
                                         TrackerGridFieldAsyncState& trackerGridAsync,
-                                        const std::string& dateFormatOption, int thresholdDays,
-                                        bool singleClickToEdit) {
+                                        const std::string& dateFormatOption, int thresholdDays, bool singleClickToEdit,
+                                        const std::string& catalogProjectKey) {
     SMATCHET_UI_PERF_SCOPE("RenderFieldCell");
     CellIdScope cellIds(ticket.id.c_str(), column.FieldId.c_str(), columnIndex);
     // Cached recorded-cmd-list dispatch: cache hit replays in ~5 µs / cell; miss invokes
@@ -1183,8 +1321,12 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         return;
     }
 
+    if (state.KeyEditKind != GridEditStart::None && allowEdits && field != nullptr) {
+        StartEditFromKey(ticket, column, *field, currentValue, state);
+    }
+
     if (DispatchEditorByPlan(app, ticket, column, field, currentValue, availWidth, tooltipsEnabled, allowEdits, state,
-                             pendingEdits, dateFormatOption, thresholdDays, singleClickToEdit)) {
+                             pendingEdits, dateFormatOption, thresholdDays, singleClickToEdit, catalogProjectKey)) {
         return;
     }
 
@@ -1197,10 +1339,10 @@ bool TicketFieldEditor::DispatchEditorByPlan(AppController& app, const CachedTic
                                              bool allowEdits, SpreadsheetState& state,
                                              std::vector<PendingFieldEdit>& pendingEdits,
                                              const std::string& dateFormatOption, int thresholdDays,
-                                             bool singleClickToEdit) {
+                                             bool singleClickToEdit, const std::string& catalogProjectKey) {
     auto renderPlainText = [&](bool disabled) {
         RenderPlainTextCell(app, ticket, column, field, currentValue, availWidth, tooltipsEnabled, dateFormatOption,
-                            thresholdDays, disabled);
+                            thresholdDays, disabled, catalogProjectKey);
     };
 
     // A column can resolve its field to nullptr transiently when the active field catalog is
@@ -1250,7 +1392,7 @@ bool TicketFieldEditor::DispatchEditorByPlan(AppController& app, const CachedTic
             return true;
         }
         RenderMultiSelectEditor(app, ticket, *field, currentValue, state, pendingEdits, tooltipsEnabled,
-                                singleClickToEdit);
+                                singleClickToEdit, catalogProjectKey);
         return true;
     case TicketGridColumn::RenderPlan::SingleSelect:
         if (!allowEdits) {

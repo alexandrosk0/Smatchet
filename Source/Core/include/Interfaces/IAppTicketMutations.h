@@ -38,6 +38,10 @@ class IAppTicketMutations {
     /// The focused pane's tracker, latched where the user acted; field edits, comments and worklogs go to it
     /// even if focus moves before the worker submits. Also declared on IAppPendingActions.
     virtual PendingActionTarget LatchPendingActionTarget() const = 0;
+    /// The named pane's tracker, for an action taken in a pane that may not hold focus (a grid cell). A pane
+    /// with no live context gives a target with no backend, so a write fails instead of landing elsewhere.
+    /// UI thread.
+    virtual PendingActionTarget LatchPendingActionTargetForPane(const std::string& paneId) const = 0;
     /// The last tracker probe, and whether the app is quitting. A worker that writes many rows refreshes
     /// `PendingActionTarget::Connectivity` from the first before each write (a target latched once goes stale when the
     /// tracker drops mid-run) and stops at the second. Same functions as AppController's own.

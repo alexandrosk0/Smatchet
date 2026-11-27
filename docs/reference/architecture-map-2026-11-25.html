@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Smatchet Architecture Map</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; }
+[hidden] { display: none !important; }
+/* Layout: one working surface. Layered module graph on the left, inspector on the right; flows and notes below. */
+:root {
+  --bg: #f3f5f8; --panel: #ffffff; --ink: #16202b; --muted: #586675; --line: #d3dae2;
+  --band: #e8ecf1; --band-alt: #eef1f5; --node: #ffffff; --node-stroke: #8492a1;
+  --edge: #5d6b7a; --out: #0a66c2; --in: #a8500a; --up: #b81f66; --chip: #edf1f5;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #10151b; --panel: #18202a; --ink: #e5eaf0; --muted: #98a5b3; --line: #2a3541;
+  --band: #151c24; --band-alt: #19212b; --node: #1f2933; --node-stroke: #5b6877;
+  --edge: #8795a3; --out: #62adff; --in: #f2a650; --up: #ff73b0; --chip: #232e3a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #10151b; --panel: #18202a; --ink: #e5eaf0; --muted: #98a5b3; --line: #2a3541;
+  --band: #151c24; --band-alt: #19212b; --node: #1f2933; --node-stroke: #5b6877;
+  --edge: #8795a3; --out: #62adff; --in: #f2a650; --up: #ff73b0; --chip: #232e3a; color-scheme: dark }
+
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1320px; margin: 0 auto; padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 36px; }
+h1 { font-size: 30px; line-height: 1.15; font-weight: 700; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 20px; font-weight: 600; margin: 0; text-wrap: balance; }
+h3 { font-size: 16px; font-weight: 600; margin: 0; }
+p { margin: 0; }
+code, .mono { font-family: var(--mono); font-size: 0.9em; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+header { display: flex; flex-direction: column; gap: 12px; }
+.lede { max-width: 70ch; color: var(--ink); }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 28px; color: var(--muted); font-size: 14px; }
+.facts b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+section { display: flex; flex-direction: column; gap: 14px; }
+.sec-head { display: flex; flex-direction: column; gap: 4px; }
+.sec-head p { color: var(--muted); max-width: 78ch; }
+
+/* graph + inspector */
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+@media (max-width: 1040px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+.canvas, .inspector, .flow { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.controls label { display: flex; align-items: center; gap: 8px; }
+.controls output { color: var(--ink); font-variant-numeric: tabular-nums; min-width: 2ch; font-weight: 600; }
+.controls input[type="range"] { width: 130px; accent-color: var(--out); }
+.controls input[type="checkbox"] { accent-color: var(--up); }
+.controls button { font: inherit; color: var(--ink); background: var(--chip); border: 1px solid var(--line); border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+.controls button:hover { border-color: var(--node-stroke); }
+.scroll { overflow-x: auto; }
+#graph { display: block; width: 100%; min-width: 860px; height: auto; }
+figure { margin: 0; display: flex; flex-direction: column; }
+figcaption { padding: 10px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 20px; padding: 10px 14px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend svg { flex: none; }
+
+/* svg marks */
+.band { fill: var(--band); } .band.alt { fill: var(--band-alt); }
+.band-label { fill: var(--muted); font: 600 11.5px var(--sans); letter-spacing: 0.07em; text-transform: uppercase; }
+.band-note { fill: var(--muted); font: 400 11px var(--sans); }
+.node rect.box { fill: var(--node); stroke: var(--node-stroke); stroke-width: 1.2; }
+.node rect.bar-bg { fill: var(--line); } .node rect.bar { fill: var(--node-stroke); }
+.node text.name { fill: var(--ink); font: 600 13.5px var(--sans); }
+.node text.sub { fill: var(--muted); font: 400 11px var(--sans); }
+.node text.loc { fill: var(--muted); font: 400 10.5px var(--mono); }
+.node { cursor: pointer; outline: none; }
+.node:hover rect.box { stroke: var(--ink); }
+.node:focus-visible rect.box { stroke: var(--out); stroke-width: 2.5; }
+.node.sel rect.box { stroke: var(--ink); stroke-width: 2.4; }
+.node.dim { opacity: 0.3; }
+.edge path { fill: none; stroke: var(--edge); opacity: 0.34; }
+.edge polygon { fill: var(--edge); opacity: 0.5; }
+.edge.up path { stroke: var(--up); stroke-dasharray: 5 4; opacity: 0.85; }
+.edge.up polygon { fill: var(--up); opacity: 0.95; }
+.edge.out path { stroke: var(--out); opacity: 0.9; } .edge.out polygon { fill: var(--out); opacity: 1; }
+.edge.inc path { stroke: var(--in); opacity: 0.9; } .edge.inc polygon { fill: var(--in); opacity: 1; }
+.edge.out.up path, .edge.inc.up path { stroke-dasharray: 5 4; }
+
+/* inspector */
+.inspector { padding: 16px; display: flex; flex-direction: column; gap: 14px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); max-height: calc(100vh - 24px); overflow-y: auto; }
+@media (max-width: 1040px) { .inspector { position: static; max-height: none; } }
+.inspector .path { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.inspector .stats { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.inspector .stats b { color: var(--ink); font-weight: 600; }
+.group { display: flex; flex-direction: column; gap: 7px; }
+.group > .eyebrow { font-size: 11px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { font-family: var(--mono); font-size: 11.5px; background: var(--chip); border-radius: 3px; padding: 2px 6px; overflow-wrap: anywhere; }
+.deps { display: flex; flex-direction: column; gap: 2px; }
+.dep { display: grid; grid-template-columns: minmax(0, 1fr) 62px 30px; column-gap: 8px; align-items: center; width: 100%; text-align: left;
+  font: inherit; font-size: 13px; color: var(--ink); background: none; border: 0; border-radius: 4px; padding: 4px 6px; cursor: pointer; }
+.dep:hover, .dep:focus-visible { background: var(--chip); outline: none; }
+.dep .nm { min-width: 0; overflow-wrap: anywhere; }
+.dep .eg { grid-column: 1 / -1; font-family: var(--mono); font-size: 10.5px; color: var(--muted); overflow-wrap: anywhere; }
+.dep .meter { height: 5px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.dep .meter i { display: block; height: 100%; }
+.dep.o .meter i { background: var(--out); } .dep.i .meter i { background: var(--in); }
+.dep .n { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12.5px; }
+.tag-up { color: var(--up); font-size: 11px; font-weight: 600; margin-left: 6px; white-space: nowrap; }
+.starts { display: flex; flex-wrap: wrap; gap: 6px; }
+.starts button { font: inherit; font-size: 13px; color: var(--ink); background: var(--chip); border: 1px solid var(--line); border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+.starts button:hover { border-color: var(--node-stroke); }
+.inspector ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+
+/* flows */
+.flows { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.flow h3 { padding: 12px 14px 0; }
+.flow .scroll svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.f-box { fill: var(--node); stroke: var(--node-stroke); stroke-width: 1.2; }
+.f-ext { fill: none; stroke: var(--node-stroke); stroke-width: 1.2; stroke-dasharray: 4 3; }
+.f-zone { fill: var(--band); } .f-zone-label { fill: var(--muted); font: 600 10.5px var(--sans); letter-spacing: 0.07em; text-transform: uppercase; }
+.f-name { fill: var(--ink); font: 600 12.5px var(--sans); }
+.f-sub { fill: var(--muted); font: 400 10.5px var(--mono); }
+.f-lab { fill: var(--muted); font: 400 11px var(--sans); }
+.f-lab.hot { fill: var(--up); font-weight: 600; }
+.f-arrow { stroke: var(--ink); stroke-width: 1.3; fill: none; }
+.f-arrow.hot { stroke: var(--up); }
+.f-head { fill: var(--ink); } .f-head.hot { fill: var(--up); }
+
+/* tables */
+.tbl-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; min-width: 560px; }
+th, td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th.num { text-align: right; }
+td .mono { color: var(--muted); font-size: 11.5px; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.note { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.note p, .note li { font-size: 14px; }
+.note ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; }
+footer { color: var(--muted); font-size: 13px; max-width: 80ch; }
+@media (prefers-reduced-motion: no-preference) { .node, .edge path { transition: opacity 120ms; } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">C++14 · Source/ tree · measured from #include lines</span>
+    <h1>Smatchet architecture map</h1>
+    <p class="lede">Smatchet is one ImGui application core that three hosts embed. A single <code>AppController</code> owns the tracker backends, the SQLite cache and the sync services; every panel reads from it, and every automation surface reaches it through one command registry.</p>
+    <div class="facts" id="facts"></div>
+  </header>
+
+  <section>
+    <div class="sec-head">
+      <h2>Module dependency graph</h2>
+      <p>Each box is a module; each arrow means “includes headers from”. Click a module to see what it depends on, what depends on it, and which files carry the dependency.</p>
+    </div>
+    <div class="stage">
+      <figure class="canvas">
+        <div class="controls">
+          <label for="thr">Hide arrows under <output id="thrOut" for="thr">15</output> includes
+            <input type="range" id="thr" min="1" max="60" value="15" step="1"></label>
+          <label for="upOnly"><input type="checkbox" id="upOnly"> Upward includes only</label>
+          <button type="button" id="clearSel" hidden>Clear selection</button>
+        </div>
+        <div class="scroll">
+          <svg id="graph" role="group" aria-label="Layered dependency graph of Smatchet's 23 C++ modules. Hosts sit at the top, base utilities at the bottom, and most include arrows point downward."></svg>
+        </div>
+        <div class="legend" aria-hidden="true">
+          <span><svg width="34" height="10"><line x1="0" y1="5" x2="34" y2="5" stroke="var(--edge)" stroke-width="1"/></svg><svg width="34" height="10"><line x1="0" y1="5" x2="34" y2="5" stroke="var(--edge)" stroke-width="5"/></svg>few → many includes</span>
+          <span><svg width="34" height="10"><line x1="0" y1="5" x2="34" y2="5" stroke="var(--up)" stroke-width="2" stroke-dasharray="5 4"/></svg>upward include</span>
+          <span><svg width="34" height="10"><line x1="0" y1="5" x2="34" y2="5" stroke="var(--out)" stroke-width="3"/></svg>selected module depends on</span>
+          <span><svg width="34" height="10"><line x1="0" y1="5" x2="34" y2="5" stroke="var(--in)" stroke-width="3"/></svg>depends on selected module</span>
+          <span><svg width="34" height="10"><rect x="0" y="3" width="34" height="4" fill="var(--line)"/><rect x="0" y="3" width="20" height="4" fill="var(--node-stroke)"/></svg>bar = lines of code</span>
+        </div>
+        <figcaption>Hosts and plugins sit on top of one shared core. Dependencies run down through automation, presentation, the application hub and the domain services to the base; <span id="upShare"></span> of cross-module includes point the other way.</figcaption>
+      </figure>
+      <aside class="inspector" id="inspector" aria-live="polite"></aside>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Three paths worth knowing</h2>
+      <p>The include graph shows what knows about what. These show what happens at runtime: how rows reach the grid, how an edit reaches the tracker, and how every automation surface reaches the app.</p>
+    </div>
+    <div class="flows">
+
+      <figure class="flow">
+        <h3>Read path: rows reach the grid through the cache</h3>
+        <div class="scroll">
+          <svg viewBox="0 0 1080 232" role="img" aria-label="Read path. A backend client fetches issue JSON from the tracker on a worker thread and hands CachedTicket rows to TicketSyncService, which persists them to SQLite and merges at most twenty fetched rows per frame into the pane's published snapshot that the grid draws on the UI thread.">
+            <rect class="f-zone" x="270" y="8" width="472" height="216" rx="4"/>
+            <text class="f-zone-label" x="282" y="24">Worker threads</text>
+            <rect class="f-zone" x="798" y="8" width="274" height="100" rx="4"/>
+            <text class="f-zone-label" x="810" y="24">UI thread</text>
+
+            <rect class="f-ext" x="10" y="38" width="170" height="54" rx="4"/>
+            <text class="f-name" x="95" y="62" text-anchor="middle">Tracker site</text>
+            <text class="f-sub" x="95" y="79" text-anchor="middle">Jira·Plane·GitHub·Linear</text>
+
+            <rect class="f-box" x="280" y="38" width="170" height="54" rx="4"/>
+            <text class="f-name" x="365" y="62" text-anchor="middle">Backend client</text>
+            <text class="f-sub" x="365" y="79" text-anchor="middle">ITrackerIssueReader</text>
+
+            <rect class="f-box" x="550" y="38" width="170" height="54" rx="4"/>
+            <text class="f-name" x="635" y="62" text-anchor="middle">TicketSyncService</text>
+            <text class="f-sub" x="635" y="79" text-anchor="middle">streamed fetch</text>
+
+            <rect class="f-box" x="820" y="38" width="230" height="54" rx="4"/>
+            <text class="f-name" x="935" y="62" text-anchor="middle">Grid pane</text>
+            <text class="f-sub" x="935" y="79" text-anchor="middle">shared_ptr&lt;const snapshot&gt;</text>
+
+            <rect class="f-box" x="550" y="158" width="170" height="54" rx="4"/>
+            <text class="f-name" x="635" y="182" text-anchor="middle">LocalCacheManager</text>
+            <text class="f-sub" x="635" y="199" text-anchor="middle">SQLite · ISyncCache</text>
+
+            <line class="f-arrow" x1="180" y1="65" x2="272" y2="65"/><polygon class="f-head" points="280,65 271,60.5 271,69.5"/>
+            <text class="f-lab" x="230" y="56" text-anchor="middle">issue JSON</text>
+            <text class="f-lab" x="230" y="82" text-anchor="middle">HTTPS via cpr</text>
+
+            <line class="f-arrow" x1="450" y1="65" x2="542" y2="65"/><polygon class="f-head" points="550,65 541,60.5 541,69.5"/>
+            <text class="f-lab" x="500" y="56" text-anchor="middle">CachedTicket</text>
+            <text class="f-lab" x="500" y="82" text-anchor="middle">rows</text>
+
+            <line class="f-arrow hot" x1="720" y1="65" x2="812" y2="65"/><polygon class="f-head hot" points="820,65 811,60.5 811,69.5"/>
+            <text class="f-lab hot" x="770" y="56" text-anchor="middle">≤ 20 rows</text>
+            <text class="f-lab hot" x="770" y="82" text-anchor="middle">per frame</text>
+
+            <line class="f-arrow" x1="610" y1="92" x2="610" y2="150"/><polygon class="f-head" points="610,158 605.5,149 614.5,149"/>
+            <text class="f-lab" x="602" y="129" text-anchor="end">persist first</text>
+            <line class="f-arrow" x1="660" y1="158" x2="660" y2="100"/><polygon class="f-head" points="660,92 655.5,101 664.5,101"/>
+            <text class="f-lab" x="668" y="129">cached rows on open</text>
+          </svg>
+        </div>
+        <figcaption>The only hop onto the UI thread is the capped merge (<code>TickStreamingApply</code>), so a large fetch never stalls a frame and a restart shows cached rows before the network answers.</figcaption>
+      </figure>
+
+      <figure class="flow">
+        <h3>Write path: every edit can fall back to the offline queue</h3>
+        <div class="scroll">
+          <svg viewBox="0 0 1080 262" role="img" aria-label="Write path. A cell edit goes to FieldEditPipelineService. Online it calls UpdateField on the backend client, which sends it to the tracker. Offline, or after a retryable failure, it is stored by OfflineQueueService in SQLite, conflict-checked on reconnect, and replayed through the same UpdateField call; after five failed attempts it moves to a dead-letter table.">
+            <rect class="f-box" x="10" y="30" width="170" height="54" rx="4"/>
+            <text class="f-name" x="95" y="54" text-anchor="middle">Cell editor</text>
+            <text class="f-sub" x="95" y="71" text-anchor="middle">PendingActionTarget</text>
+
+            <rect class="f-box" x="280" y="30" width="170" height="54" rx="4"/>
+            <text class="f-name" x="365" y="54" text-anchor="middle">FieldEditPipeline</text>
+            <text class="f-sub" x="365" y="71" text-anchor="middle">CommitOrQueue</text>
+
+            <rect class="f-box" x="550" y="30" width="170" height="54" rx="4"/>
+            <text class="f-name" x="635" y="54" text-anchor="middle">Backend client</text>
+            <text class="f-sub" x="635" y="71" text-anchor="middle">UpdateField</text>
+
+            <rect class="f-ext" x="820" y="30" width="170" height="54" rx="4"/>
+            <text class="f-name" x="905" y="54" text-anchor="middle">Tracker site</text>
+            <text class="f-sub" x="905" y="71" text-anchor="middle">set-replace write</text>
+
+            <rect class="f-box" x="280" y="176" width="170" height="54" rx="4"/>
+            <text class="f-name" x="365" y="200" text-anchor="middle">OfflineQueueService</text>
+            <text class="f-sub" x="365" y="217" text-anchor="middle">pending_field_edits</text>
+
+            <rect class="f-box" x="550" y="176" width="170" height="54" rx="4"/>
+            <text class="f-name" x="635" y="200" text-anchor="middle">Conflict gate</text>
+            <text class="f-sub" x="635" y="217" text-anchor="middle">2-way · 3-way merge</text>
+
+            <rect class="f-box" x="820" y="176" width="170" height="54" rx="4"/>
+            <text class="f-name" x="905" y="200" text-anchor="middle">Dead-letter table</text>
+            <text class="f-sub" x="905" y="217" text-anchor="middle">restore or delete</text>
+
+            <line class="f-arrow" x1="180" y1="57" x2="272" y2="57"/><polygon class="f-head" points="280,57 271,52.5 271,61.5"/>
+            <text class="f-lab" x="230" y="48" text-anchor="middle">edit + pane</text>
+
+            <line class="f-arrow" x1="450" y1="57" x2="542" y2="57"/><polygon class="f-head" points="550,57 541,52.5 541,61.5"/>
+            <text class="f-lab" x="500" y="48" text-anchor="middle">online</text>
+
+            <line class="f-arrow" x1="720" y1="57" x2="812" y2="57"/><polygon class="f-head" points="820,57 811,52.5 811,61.5"/>
+            <text class="f-lab" x="770" y="48" text-anchor="middle">HTTPS</text>
+
+            <line class="f-arrow hot" x1="365" y1="84" x2="365" y2="168"/><polygon class="f-head hot" points="365,176 360.5,167 369.5,167"/>
+            <text class="f-lab hot" x="355" y="126" text-anchor="end">offline, or a</text>
+            <text class="f-lab hot" x="355" y="141" text-anchor="end">retryable failure</text>
+
+            <line class="f-arrow" x1="450" y1="203" x2="542" y2="203"/><polygon class="f-head" points="550,203 541,198.5 541,207.5"/>
+            <text class="f-lab" x="500" y="194" text-anchor="middle">on reconnect</text>
+
+            <line class="f-arrow" x1="635" y1="176" x2="635" y2="92"/><polygon class="f-head" points="635,84 630.5,93 639.5,93"/>
+            <text class="f-lab" x="645" y="126">replay through</text>
+            <text class="f-lab" x="645" y="141">the same call</text>
+
+            <line class="f-arrow" x1="720" y1="203" x2="812" y2="203"/><polygon class="f-head" points="820,203 811,198.5 811,207.5"/>
+            <text class="f-lab" x="770" y="194" text-anchor="middle">5 attempts</text>
+          </svg>
+        </div>
+        <figcaption>There is no second write implementation: a queued edit replays through the call a live edit uses, and both append a begin/result pair to <code>BackendAuditTrail</code>. Creates, comments, worklogs and watches follow the same shape with their own queue tables.</figcaption>
+      </figure>
+
+      <figure class="flow">
+        <h3>Command path: six front-ends, one registry</h3>
+        <div class="scroll">
+          <svg viewBox="0 0 1080 250" role="img" aria-label="Command path. The command palette, the CLI, the MCP server, Lua scripts, the Unreal console and scenarios all call CommandRegistry Dispatch, which gates destructive commands, runs the registered handler, and the handler reaches AppController through narrow IApp interfaces.">
+            <rect class="f-box" x="10" y="14" width="200" height="28" rx="4"/><text class="f-name" x="22" y="33">Command palette</text>
+            <rect class="f-box" x="10" y="52" width="200" height="28" rx="4"/><text class="f-name" x="22" y="71">CLI <tspan class="f-sub">Smatchet.exe cmd</tspan></text>
+            <rect class="f-box" x="10" y="90" width="200" height="28" rx="4"/><text class="f-name" x="22" y="109">MCP server <tspan class="f-sub">localhost HTTP</tspan></text>
+            <rect class="f-box" x="10" y="128" width="200" height="28" rx="4"/><text class="f-name" x="22" y="147">Lua scripts</text>
+            <rect class="f-box" x="10" y="166" width="200" height="28" rx="4"/><text class="f-name" x="22" y="185">Unreal console</text>
+            <rect class="f-box" x="10" y="204" width="200" height="28" rx="4"/><text class="f-name" x="22" y="223">Scenarios</text>
+
+            <rect class="f-box" x="340" y="96" width="180" height="54" rx="4"/>
+            <text class="f-name" x="430" y="120" text-anchor="middle">CommandRegistry</text>
+            <text class="f-sub" x="430" y="137" text-anchor="middle">Dispatch(name,args,ctx)</text>
+
+            <rect class="f-box" x="610" y="96" width="180" height="54" rx="4"/>
+            <text class="f-name" x="700" y="120" text-anchor="middle">Command handler</text>
+            <text class="f-sub" x="700" y="137" text-anchor="middle">BuiltinCommands_*.cpp</text>
+
+            <rect class="f-box" x="880" y="96" width="180" height="54" rx="4"/>
+            <text class="f-name" x="970" y="120" text-anchor="middle">AppController</text>
+            <text class="f-sub" x="970" y="137" text-anchor="middle">services · cache · panes</text>
+
+            <path class="f-arrow" d="M210 28 C 280 28, 270 108, 332 108"/>
+            <path class="f-arrow" d="M210 66 C 275 66, 275 114, 332 114"/>
+            <path class="f-arrow" d="M210 104 C 260 104, 280 120, 332 120"/>
+            <path class="f-arrow" d="M210 142 C 260 142, 280 126, 332 126"/>
+            <path class="f-arrow" d="M210 180 C 275 180, 275 132, 332 132"/>
+            <path class="f-arrow" d="M210 218 C 280 218, 270 138, 332 138"/>
+            <polygon class="f-head" points="340,123 331,104 331,142"/>
+            <text class="f-lab" x="300" y="24" text-anchor="middle">CommandContext</text>
+            <text class="f-lab" x="300" y="38" text-anchor="middle">names the source</text>
+
+            <line class="f-arrow hot" x1="520" y1="123" x2="602" y2="123"/><polygon class="f-head hot" points="610,123 601,118.5 601,127.5"/>
+            <text class="f-lab hot" x="565" y="100" text-anchor="middle">destructive?</text>
+            <text class="f-lab hot" x="565" y="114" text-anchor="middle">needs confirm</text>
+            <text class="f-lab" x="565" y="144" text-anchor="middle">returns</text>
+            <text class="f-lab" x="565" y="158" text-anchor="middle">CommandResult</text>
+
+            <line class="f-arrow" x1="790" y1="123" x2="872" y2="123"/><polygon class="f-head" points="880,123 871,118.5 871,127.5"/>
+            <text class="f-lab" x="835" y="114" text-anchor="middle">IApp* slice</text>
+          </svg>
+        </div>
+        <figcaption>A command is registered once and appears on every surface; MCP builds each tool's schema from the command's <code>Params</code>. The confirm gate is the same for every source, so no front-end can reach a destructive command by a side door.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Where the layering bends</h2>
+      <p>The largest includes that point up the layer order drawn above. Some are deliberate and documented in the code; all of them are where a change in a “higher” module can break a “lower” one.</p>
+    </div>
+    <div class="tbl-wrap"><table id="upTable"><thead><tr><th>From → to</th><th class="num">Includes</th><th>What carries it</th></tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>Shape of the build and the frame</h2></div>
+    <div class="two">
+      <div class="note">
+        <h3>Build targets</h3>
+        <ul>
+          <li><code>SmatchetStandalone</code> compiles the Core sources straight into the executable; there is no separate core library on the desktop path.</li>
+          <li>Each plugin is a static library (<code>SmatchetPlugin_Mcp</code>, <code>_LuaConsole</code>, <code>_Whisper</code>) behind a CMake switch: <code>SMATCHET_WITH_MCP</code>, <code>_LUA_AUTOMATION</code>, <code>_WHISPER</code>, and <code>_AI</code> for the assistant.</li>
+          <li>The Unreal plugin links a DX12 build of Core and talks to it only through the C API in <code>SmatchetImGuiHostC</code>.</li>
+        </ul>
+      </div>
+      <div class="note">
+        <h3>One frame</h3>
+        <ul>
+          <li>The host calls <code>SmatchetUI::Draw(app)</code>, then <code>PluginHost::OnDraw(app)</code>, then <code>EndFrame()</code>.</li>
+          <li>HTTP, SQLite, <code>p4</code> and file I/O run on worker threads. Results come back through <code>MainThreadDispatcher</code>, which drains within a per-frame time budget.</li>
+          <li>Panels read immutable snapshots (<code>shared_ptr&lt;const vector&lt;CachedTicket&gt;&gt;</code>) so a draw never waits on a lock held across I/O.</li>
+        </ul>
+      </div>
+      <div class="note">
+        <h3>Tracker abstraction</h3>
+        <ul>
+          <li><code>ITrackerBackend</code> hands out six role interfaces: Reader, Connectivity, FieldCatalog, Mutations, Collaboration, Activity. The last four may be <code>nullptr</code>.</li>
+          <li><code>DefaultTrackerBackendFactory</code> builds <code>JiraClient</code>, <code>PlaneClient</code>, <code>GitHubClient</code> or <code>LinearClient</code> from the configured type.</li>
+          <li>Fixture backends run canned JSON through the same mapping code, so tests and scenarios never touch the network.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Snapshot of commit <code>08bb389</code>, taken 2026-11-25. It is not regenerated when the code changes.</p>
+    <p>Method: every <code>.h</code> and <code>.cpp</code> under <code>Source/</code> except third-party code was assigned to a module by directory, and by name for the files at the root of <code>Source/Core/src</code> and <code>Source/Core/include</code>, following <code>CONTEXT-MAP.md</code> where it names an owner. An arrow counts <code>#include</code> lines that cross modules. Line counts include comments and blank lines. Includes compiled out by a feature switch are still counted.</p>
+  </footer>
+</div>
+
+<script>
+const DATA = {"top":{"Unreal":["SmatchetImGuiInputProcessor","SmatchetImGuiPluginModule","SmatchetImGuiConsoleCommands","SmatchetImGuiRenderBackend_WinDx12","SmatchetImGuiCommandBridge","SmatchetHostContextCollector","SmatchetImGuiRenderBackend_Platform"],"Android":["android_main","SmatchetAndroidImeBridge","SmatchetAndroidSecretBridge","SmatchetAndroidEgl","SmatchetAndroidPlatform"],"Standalone":["main","StandaloneAppBootstrap","Dx12Bootstrap","CliDispatch","CliSpawn","CliCommandRunner","CliHelpAndAttach"],"App":["AppController","AppController_CatalogAndFieldEdit","AppController_PaneContexts","AppController_Init","GridContextDepsAdapter","AppController_LocalCacheDb","AppController_PaneCatalog"],"AI":["AiAssistantController","AiEndpointSanitize","AiContextBuilder","SmatchetChatPersistWorker","AgentsMdLoader","AnthropicClient","AiPrefsValidator"],"Grid":["SmatchetViewsDashboardUi","TicketFieldEditor","SmatchetActiveProjectGridTable","FilterDropdown","TicketFieldEditor_Modal","SmatchetGridUiSupport","TicketFieldEditor_Worklog"],"Config":["ConfigManager","ConfigManager_Load","ConfigManager_PathUtils","ConfigManager_Views","ConfigManager_Save","KeybindingsConfig","ConfigManager_Secrets"],"Foundation":["SmatchetLocalization","TextMatchPure","Logger","TouchGesturePure","StringUtil","CompactDateFormat","SmatchetResult"],"PluginHost":["DictationInsertionRouter_Whisper","SmatchetWhisperSetupBanner","DictationInsertionRouter","PluginHost","DictationInsertionRouter_Stubs","IDictationHost","IPlugin"],"Lua":["AppController_LuaBindings_Draw","AppController_LuaBindings","AppController_LuaBindings_Ui","AppController_LuaBindings_Tickets","AppController_LuaScriptFiles","AppController_LuaBindingsCore","AppController_LuaBindings_Ai"],"Vcs":["AnnotateAnalysisUi_Window","SubprocessCapture","CodeColorView","P4Annotate","CallstackParser","AnnotateAnalysisUi_Modals","CppSyntaxLex"],"Persistence":["LocalCacheManager","AttachmentAppUpdateService","LeftViewHistoryService","EditMetaCacheService","BackendAuditTrail","SmatchetImageTextureCache","AttachmentDiskCache"],"Sync":["TicketSyncService","OfflineQueueService","FieldEditPipelineService","PendingActionQueueService","ConnectivityMonitorService","DraftStore","LeftViewReasonPure"],"Diagnostics":["BugReportService","TextRedaction","AboutInfo","CrashSink","BugReportBody","EngineContextFormat","HostMachineInfo"],"Commands":["CommandPaletteUi","ViewCommands","BuiltinCommands_TicketMutations","BuiltinCommands_Debug","CommandRegistry","BuiltinCommands_Ai","Command"],"Scenarios":["UiTestScenario","WhisperAiAssistantAutosendScenario","AiAssistantSendScenario","WhisperDictationScenario","UserInfoScreenshotScenarios","AiAssistantStreamingHappyPathScenario","AiChatHistoryRenderScenario"],"Ui":["SmatchetUI","SmatchetOfflineQueueUi","SmatchetAiAssistantUi","SmatchetPreferencesUi","SmatchetUiSession","AdfToMarkdown","MarkdownPreviewRender"],"UiHost":["SmatchetImGuiHost","SmatchetImGuiFonts","SmatchetImGuiTextureGuard","SmatchetImGuiHostC","SmatchetTextureFaultInjector","SmatchetImGuiHostC_Diagnostics","SmatchetImGuiTextureGuardRuntime"],"Tracker":["GitHubClient","TrackerFieldPayloadPure","TrackerFieldValueParseExplain","JiraIssueSearch","TrackerFieldValueParser","TrackerDateTimeFieldEditor","FieldCatalogCache"],"Contracts":["IAppSync","IAppTicketMutations","IAppScenarioHost","IAppPendingActions","IAppFields","IAppOfflineQueue","IMainThreadPoster"],"Plugin:Whisper":["WhisperPlugin","WindowsAudioCapture","ModelDownloader","GlobalHotkey_Win32","HotkeyParse","WhisperConsentGate","WhisperLocal"],"Plugin:LuaConsole":["LuaConsolePlugin","LuaConsolePlugin_detail"],"Plugin:Mcp":["McpPlugin","McpJsonRpcPure","McpRateLimitPure","McpAuthTokenPure"]},"loc":{"Unreal":2409,"Android":1747,"Standalone":6515,"App":11125,"AI":6029,"Grid":20304,"Config":7321,"Foundation":8664,"PluginHost":1492,"Lua":5069,"Vcs":9066,"Persistence":9347,"Sync":11584,"Diagnostics":2959,"Commands":9338,"Scenarios":6636,"Ui":45620,"UiHost":2627,"Tracker":34852,"Contracts":915,"Plugin:Whisper":5191,"Plugin:LuaConsole":1362,"Plugin:Mcp":1931},"nfiles":{"Unreal":16,"Android":9,"Standalone":22,"App":28,"AI":53,"Grid":69,"Config":23,"Foundation":49,"PluginHost":11,"Lua":21,"Vcs":44,"Persistence":53,"Sync":61,"Diagnostics":20,"Commands":49,"Scenarios":46,"Ui":191,"UiHost":11,"Tracker":179,"Contracts":24,"Plugin:Whisper":26,"Plugin:LuaConsole":3,"Plugin:Mcp":6},"edges":{"Unreal->UiHost":[7,[["SmatchetImGuiCommandBridge.cpp","SmatchetImGuiHostC.h"],["SmatchetImGuiInputProcessor.cpp","SmatchetImGuiHostC.h"]]],"Unreal->Foundation":[1,[["SmatchetImGuiPluginModule.cpp","SmatchetDefaults.h"]]],"Android->App":[1,[["android_main.cpp","AppController.h"]]],"Android->Scenarios":[1,[["android_main.cpp","IScenario.h"]]],"Android->Config":[1,[["android_main.cpp","ConfigManager.h"]]],"Android->Foundation":[2,[["android_main.cpp","Logger.h"],["android_main.cpp","SmatchetUiModeIds.h"]]],"Android->PluginHost":[1,[["android_main.cpp","PluginHost.h"]]],"Android->UiHost":[2,[["android_main.cpp","SmatchetImGuiFonts.h"],["android_main.cpp","SmatchetImGuiTextureGuardRuntime.h"]]],"Android->Ui":[3,[["android_main.cpp","SmatchetTheme.h"],["android_main.cpp","SmatchetThemeDensity.h"]]],"Android->Tracker":[1,[["android_main.cpp","TrackerHttpPure.h"]]],"Standalone->Foundation":[18,[["CliArgs.cpp","BoundedJsonParse.h"],["CliArgs.cpp","SmatchetDefaults.h"]]],"Standalone->Diagnostics":[4,[["SmatchetCrashHandler.cpp","CrashSink.h"],["SmatchetCrashHandler.cpp","SelfDump.h"]]],"Standalone->Commands":[13,[["CliArgs.cpp","Command.h"],["CliArgs.cpp","CommandRegistry.h"]]],"Standalone->App":[6,[["CliCommandRunner.cpp","AppController.h"],["StandaloneAppBootstrap.cpp","AppController.h"]]],"Standalone->Scenarios":[15,[["CliArgs.cpp","IScenario.h"],["CliArgs.cpp","SpawnOutLogBasename.h"]]],"Standalone->Config":[9,[["CliArgs.cpp","ConfigManager.h"],["CliCommandRunner.cpp","ConfigManager.h"]]],"Standalone->Ui":[11,[["StandaloneAppBootstrap.cpp","SmatchetTooltipWheelRouter.h"],["StandaloneAppBootstrap.cpp","SmatchetUI.h"]]],"Standalone->Tracker":[2,[["StandaloneAppBootstrap.cpp","ITrackerBackendFactory.h"],["main.cpp","ITrackerBackendFactory.h"]]],"Standalone->Lua":[2,[["StandaloneAppBootstrap.cpp","LuaAutomationHost.h"],["main.cpp","LuaAutomationHost.h"]]],"Standalone->Sync":[4,[["StandaloneAppBootstrap.cpp","OfflineQueueService.h"],["StandaloneAppBootstrap.cpp","TicketSyncService.h"]]],"Standalone->PluginHost":[2,[["StandaloneAppBootstrap.cpp","PluginHost.h"],["main.cpp","PluginHost.h"]]],"Standalone->Vcs":[1,[["StandaloneAppBootstrap.cpp","P4ClPreview.h"]]],"Standalone->UiHost":[4,[["StandaloneAppBootstrap.cpp","SmatchetImGuiFonts.h"],["StandaloneAppBootstrap.cpp","SmatchetImGuiTextureGuardRuntime.h"]]],"Standalone->Plugin:LuaConsole":[1,[["StandaloneAppBootstrap.cpp","LuaConsolePlugin.h"]]],"Standalone->Plugin:Mcp":[1,[["StandaloneAppBootstrap.cpp","McpPlugin.h"]]],"Standalone->Plugin:Whisper":[1,[["StandaloneAppBootstrap.cpp","WhisperPlugin.h"]]],"App->Config":[23,[["AppController.cpp","ConfigManager.h"],["AppController.cpp","ConfigSaveWorker.h"]]],"App->Sync":[67,[["AppController.cpp","ConnectivityMonitorService.h"],["AppController.cpp","DraftStore.h"]]],"App->Grid":[10,[["AppController.cpp","SmatchetFieldRender.h"],["AppController.cpp","SmatchetTicketChangeNotifications.h"]]],"App->Tracker":[67,[["AppController.cpp","DefaultTrackerBackendFactory.h"],["AppController.cpp","FieldCatalogCache.h"]]],"App->Foundation":[37,[["AppController.cpp","BackgroundTaskFirewall.h"],["AppController.cpp","BackgroundWorkerReap.h"]]],"AI->Foundation":[19,[["AgentsMdLoader.cpp","Logger.h"],["AiAssistantController.cpp","Logger.h"]]],"AI->Persistence":[5,[["AiAssistantController.cpp","BackendAuditTrail.h"],["AiContextBuilder.cpp","BackendAuditTrail.h"]]],"AI->Config":[8,[["AiAssistantController.cpp","ConfigManager.h"],["AiContextBuilder.cpp","ConfigManager.h"]]],"Grid->Foundation":[79,[["BulkFieldEditPure.cpp","SmatchetLocalization.h"],["BulkFieldEditPure.cpp","StringUtil.h"]]],"Config->Foundation":[28,[["CacheBackendKeyPure.cpp","Sha256.h"],["CacheBackendKeyPure.cpp","StringUtil.h"]]],"Config->Ui":[1,[["ConfigSaveWorker.cpp","Views.h"]]],"Foundation->Config":[2,[["Logger.cpp","TunableLimits.h"],["SmatchetLocalization.cpp","ConfigManager.h"]]],"Foundation->Diagnostics":[1,[["Logger.cpp","TextRedaction.h"]]],"PluginHost->App":[1,[["PluginHost.cpp","AppController.h"]]],"PluginHost->Config":[2,[["PluginHost.cpp","ConfigManager.h"],["SmatchetWhisperSetupBanner.cpp","ConfigManager.h"]]],"PluginHost->Foundation":[5,[["DictationInsertionRouter_Whisper.cpp","Logger.h"],["PluginHost.cpp","Logger.h"]]],"PluginHost->Plugin:Mcp":[1,[["PluginHost.cpp","McpPlugin.h"]]],"App->Persistence":[41,[["AppController.cpp","AttachmentAppUpdateService.h"],["AppController.cpp","BackendAuditTrail.h"]]],"App->Commands":[6,[["AppController.cpp","BuiltinCommands.h"],["AppController.cpp","CommandRegistry.h"]]],"App->Scenarios":[6,[["AppController.cpp","IScenario.h"],["AppController.cpp","SmatchetScenarioRegistry.h"]]],"App->Lua":[7,[["AppController.cpp","LuaAutomationHost.h"],["AppControllerImpl.h","AppController_LuaTypes.h"]]],"App->Ui":[21,[["AppController.cpp","SmatchetToast.h"],["AppController.cpp","SmatchetUI.h"]]],"App->Vcs":[4,[["AppController.cpp","SmatchetMergeWatchNotifyServer.h"],["AppController.h","SmatchetMergeWatchNotifyServer.h"]]],"App->AI":[16,[["AppController.cpp","AiAssistantController.h"],["AppController.cpp","AiAssistantUiStateAdapter.h"]]],"Lua->App":[11,[["AppController_LuaBindings.cpp","AppController.h"],["AppController_LuaBindings.cpp","AppControllerImpl.h"]]],"Lua->Config":[7,[["AppController_LuaBindings.cpp","ConfigManager.h"],["AppController_LuaBindingsCore.cpp","ConfigManager.h"]]],"Lua->Foundation":[27,[["AppController_LuaBindings.cpp","BoundedJsonParse.h"],["AppController_LuaBindings.cpp","Logger.h"]]],"Grid->App":[19,[["SmatchetActiveProjectGridCells.cpp","AppController.h"],["SmatchetActiveProjectGridKeys.cpp","GridPane.h"]]],"Grid->Ui":[113,[["BulkFieldEditPure.h","ToastHistoryPure.h"],["FilterDropdown.cpp","SmatchetMatchHighlight.h"]]],"Vcs->Config":[15,[["AnnotateAnalysisUi.cpp","ConfigManager.h"],["AnnotateAnalysisUi_Config.cpp","ConfigManager.h"]]],"Vcs->Foundation":[36,[["AnnotateAnalysisUi.cpp","Logger.h"],["AnnotateAnalysisUi.cpp","StringUtil.h"]]],"Persistence->Tracker":[26,[["AttachmentAppUpdateService.cpp","TrackerHttpUtils.h"],["AttachmentDiskCache.h","TrackerError.h"]]],"Persistence->Foundation":[45,[["AttachmentAppUpdateService.cpp","BoundedJsonParse.h"],["AttachmentAppUpdateService.cpp","CappedBodyAccumulator.h"]]],"Persistence->Sync":[16,[["CachedTicketTypes.h","PendingActionTypes.h"],["EditMetaCacheService.cpp","OfflineFirstPure.h"]]],"Grid->Tracker":[66,[["BulkFieldEditPure.cpp","TrackerFieldOptionLookup.h"],["BulkFieldEditPure.cpp","TrackerFieldValueUtils.h"]]],"Lua->Persistence":[11,[["AppController_LuaBindings.cpp","FieldEditAuditSource.h"],["AppController_LuaBindings.cpp","LocalCacheManager.h"]]],"Lua->Commands":[13,[["AppController_LuaBindings.cpp","Command.h"],["AppController_LuaBindings.cpp","CommandRegistry.h"]]],"Lua->AI":[4,[["AppController_LuaBindings.cpp","AiAssistantController.h"],["AppController_LuaBindings_Ai.cpp","AiAssistantController.h"]]],"Lua->Tracker":[11,[["AppController_LuaBindings.cpp","IssueTableSerializer.h"],["AppController_LuaBindings.cpp","TrackerFieldValueUtils.h"]]],"Lua->Ui":[9,[["AppController_LuaBindings.cpp","SmatchetToast.h"],["AppController_LuaBindings.cpp","UiPerfMonitor.h"]]],"Lua->Grid":[10,[["AppController_LuaBindings.cpp","SmatchetFieldIconRender.h"],["AppController_LuaBindings.cpp","TicketGridModel.h"]]],"PluginHost->Plugin:Whisper":[3,[["SmatchetWhisperSetupBanner.cpp","ModelCatalog.h"],["SmatchetWhisperSetupBanner.cpp","ModelDownloader.h"]]],"AI->Sync":[3,[["AnthropicClient.cpp","NetworkUsageTracker.h"],["OllamaClient.cpp","NetworkUsageTracker.h"]]],"Persistence->Config":[13,[["AttachmentAppUpdateService.cpp","ConfigManager.h"],["AttachmentAppUpdateService.cpp","TunableLimits.h"]]],"Persistence->Contracts":[6,[["AttachmentAppUpdateService.cpp","HostCallbacks.h"],["AttachmentAppUpdateService.h","AppUpdateTypes.h"]]],"Grid->Persistence":[14,[["FilterDropdown.cpp","RecentSelections.h"],["SmatchetActiveProjectGridIds.h","CachedTicketTypes.h"]]],"Foundation->Ui":[2,[["CompactDateFormat.cpp","UiPerfMonitor.h"],["MainThreadDispatcher.h","UiPerfMonitor.h"]]],"Vcs->Contracts":[3,[["AnnotateAnalysisUi_Config.cpp","IAppTicketData.h"],["AnnotateAnalysisUi_Preferences.cpp","IAppTicketMutations.h"]]],"Vcs->Ui":[16,[["AnnotateAnalysisUi.cpp","SmatchetHelpMarker.h"],["AnnotateAnalysisUi_Preferences.cpp","PreferencesFilter.h"]]],"Grid->Contracts":[6,[["ComponentOptionsPickPure.h","ConnectivityTypes.h"],["ComponentOptionsPickPure.h","ProjectComponentsTypes.h"]]],"Grid->Sync":[10,[["ComponentOptionsPickPure.h","OfflineFirstPure.h"],["DataFreshnessCue.h","OfflineFirstPure.h"]]],"Lua->PluginHost":[1,[["AppController_LuaBindings_Draw.cpp","DictationInsertionRouter.h"]]],"Sync->App":[3,[["ConnectivityMonitorService.cpp","AppActivity.h"],["OfflineQueueService.cpp","AppController.h"]]],"Sync->Config":[8,[["ConnectivityMonitorService.cpp","ConfigManager.h"],["DraftStore.cpp","ConfigManager.h"]]],"Sync->Tracker":[33,[["ChangeMonitorRosterProbe.h","ITrackerIssueReader.h"],["ChangeMonitorRosterProbe.h","TrackerRoster.h"]]],"Sync->Foundation":[30,[["CacheRecreatingMessage.h","SmatchetLocalization.h"],["ChangeMonitorRosterProbe.h","Logger.h"]]],"Persistence->Commands":[1,[["AttachmentDiskCache.cpp","PathConfinement.h"]]],"Grid->Config":[20,[["SmatchetActiveProjectGridCells.cpp","ConfigManager.h"],["SmatchetActiveProjectGridTable.cpp","ConfigManager.h"]]],"AI->Ui":[2,[["AiAssistantUiStateAdapter.cpp","SmatchetUiSession.h"],["AiPrefsTestConnection.cpp","SmatchetUiSession.h"]]],"Sync->Persistence":[28,[["ActiveRowMergePure.h","CachedTicketTypes.h"],["DeltaSyncPure.h","TicketSyncMeta.h"]]],"AI->Contracts":[1,[["AiPrefsTestConnection.cpp","IAppThreading.h"]]],"Grid->Vcs":[4,[["SmatchetFieldRender.cpp","CppSyntaxHighlight.h"],["SmatchetGridUiSupport.cpp","AnnotateAnalysisUi.h"]]],"Grid->PluginHost":[2,[["TicketFieldEditor.cpp","DictationInsertionRouter.h"],["TicketFieldEditor_Modal.cpp","DictationInsertionRouter.h"]]],"Config->Grid":[1,[["ConfigManager_Views.cpp","ViewColumnsPure.h"]]],"Vcs->Tracker":[16,[["AnnotateAnalysisUi.cpp","TrackerFieldSchema.h"],["AnnotateAnalysisUi_Config.cpp","JiraClient.h"]]],"Sync->Ui":[3,[["OfflineQueueService.cpp","MarkdownConvert.h"],["OfflineQueueService.cpp","Views.h"]]],"Diagnostics->Tracker":[7,[["BugReportBody.cpp","GitHubClientHelpers.h"],["BugReportService.cpp","GitHubClient.h"]]],"Diagnostics->Foundation":[8,[["AboutInfo.cpp","Logger.h"],["BugReportBody.cpp","BoundedJsonParse.h"]]],"Diagnostics->Config":[3,[["AboutInfo.cpp","ConfigManager.h"],["BugReportService.h","ConfigManager.h"]]],"Diagnostics->UiHost":[2,[["AboutInfo.cpp","SmatchetImGuiHostC.h"],["BugReportService.cpp","SmatchetImGuiHostC.h"]]],"Diagnostics->Contracts":[1,[["BugReportService.cpp","IAppMeta.h"]]],"Diagnostics->Persistence":[1,[["BugReportService.cpp","BackendAuditTrail.h"]]],"Commands->Config":[17,[["AppViewCommands.cpp","ConfigManager.h"],["BuiltinCommands_Ai.cpp","ConfigManager.h"]]],"Commands->App":[8,[["BuiltinCommands.cpp","AppController.h"],["BuiltinCommands_Perf.cpp","AppController.h"]]],"Commands->Ui":[23,[["AppViewCommands.cpp","SmatchetBottomPanelDrag.h"],["AppViewCommands.cpp","SmatchetUiSession.h"]]],"Commands->Grid":[5,[["BuiltinCommands_Perf.cpp","SmatchetGridUiSupport.h"],["BuiltinCommands_TicketMutations.cpp","BulkFieldEditPure.h"]]],"Commands->Contracts":[17,[["BuiltinCommands_App.cpp","AppUpdateTypes.h"],["BuiltinCommands_App.cpp","IAppMeta.h"]]],"Commands->Foundation":[18,[["BuiltinCommands.cpp","Logger.h"],["BuiltinCommands_Ai.cpp","Logger.h"]]],"Commands->PluginHost":[1,[["CommandPaletteUi.cpp","DictationInsertionRouter.h"]]],"Scenarios->Ui":[56,[["AiAssistantSendScenario.cpp","UiPerfMonitor.h"],["AiAssistantStreamingHappyPathScenario.cpp","UiPerfMonitor.h"]]],"Scenarios->Contracts":[10,[["CellEditBurstScenario.cpp","IAppScenarioHost.h"],["CommandContractSweepScenario.cpp","IAppScenarioHost.h"]]],"Scenarios->Commands":[13,[["CellEditBurstScenario.cpp","Command.h"],["CellEditBurstScenario.cpp","CommandRegistry.h"]]],"Scenarios->PluginHost":[2,[["WhisperAiAssistantAutosendScenario.cpp","DictationInsertionRouter.h"],["WhisperDictationScenario.cpp","DictationInsertionRouter.h"]]],"Scenarios->Foundation":[14,[["AiAssistantSendScenario.cpp","Logger.h"],["AiAssistantStreamingHappyPathScenario.cpp","Logger.h"]]],"Scenarios->Plugin:Whisper":[3,[["WhisperAiAssistantAutosendScenario.cpp","WhisperPlugin.h"],["WhisperDictationScenario.cpp","WhisperConsentGate.h"]]],"Scenarios->App":[2,[["InteractiveGridStressScenario.cpp","GridPane.h"],["UiTestScenario.cpp","AppController.h"]]],"Scenarios->Config":[7,[["ScenarioCaptureQuiesce.cpp","TrackerConfigSaveRepair.h"],["ScenarioRunner.cpp","ConfigManager.h"]]],"Scenarios->AI":[10,[["AiAssistantSendScenario.cpp","AiTypes.h"],["AiAssistantSendScenario.cpp","IAiClient.h"]]],"Scenarios->Grid":[1,[["LongTextOpenLargeAdfScenario.cpp","TicketFieldEditorLongTextPure.h"]]],"Scenarios->Vcs":[1,[["CodeSyntaxColoringScenario.cpp","CodeColorView.h"]]],"Scenarios->UiHost":[3,[["CodeSyntaxColoringScenario.cpp","SmatchetImGuiFonts.h"],["MobileTextureGuardScenario.cpp","SmatchetImGuiTextureGuardRuntime.h"]]],"Commands->Tracker":[8,[["BuiltinCommands_Fields.cpp","TrackerFieldSchema.h"],["BuiltinCommands_Perf.cpp","TrackerFieldSchema.h"]]],"Commands->Diagnostics":[4,[["BuiltinCommands_App.cpp","AboutInfo.h"],["BuiltinCommands_BugReport.cpp","BugReportService.h"]]],"Commands->Scenarios":[2,[["BuiltinCommands_Scenario.cpp","IScenario.h"],["BuiltinCommands_UiTest.cpp","IScenario.h"]]],"Commands->Persistence":[7,[["BuiltinCommands_Offline.cpp","CachedTicketTypes.h"],["BuiltinCommands_Perf.cpp","MemoryTelemetry.h"]]],"Commands->Sync":[5,[["BuiltinCommands_Offline.cpp","OfflineQueueTypes.h"],["BuiltinCommands_Sync.cpp","CacheRecreateReportPure.h"]]],"Commands->AI":[7,[["BuiltinCommands_Ai.cpp","AiClientFactory.h"],["BuiltinCommands_Ai.cpp","AiModelCatalog.h"]]],"Ui->Persistence":[18,[["ImageDimensionsPure.cpp","AttachmentMimeUtils.h"],["LeftViewHistoryPure.h","LeftViewRecord.h"]]],"Ui->Foundation":[159,[["AdfToMarkdown.cpp","Logger.h"],["BulkImportAbandon.h","CancelToken.h"]]],"Ui->Tracker":[60,[["GridSearchInputClassifier.h","GitHubClientHelpers.h"],["GridSearchInputClassifier.h","ProjectResolver.h"]]],"Ui->Config":[58,[["McpServerInfoTextPure.h","ConfigManager.h"],["NavigationHistory.cpp","TunableLimits.h"]]],"Ui->UiHost":[12,[["MarkdownPreviewRender.cpp","SmatchetImGuiFonts.h"],["SmatchetAboutUi.cpp","SmatchetImGuiFonts.h"]]],"Ui->AI":[31,[["SmatchetAiAssistantUi.cpp","AiAssistantController.h"],["SmatchetAiAssistantUi.cpp","AiAssistantInputSeedDecision.h"]]],"Ui->App":[19,[["SmatchetAiAssistantUi.cpp","AppController.h"],["SmatchetAttachmentPreviewUi.cpp","AppController.h"]]],"Ui->Contracts":[15,[["PendingActionSubmitAsync.h","IAppThreading.h"],["SmatchetAboutUi.cpp","IAppMeta.h"]]],"Ui->Sync":[21,[["PendingActionSubmitAsync.h","PendingActionTypes.h"],["SmatchetAiAssistantUi.cpp","DraftStore.h"]]],"Ui->Diagnostics":[5,[["SmatchetAboutUi.cpp","AboutInfo.h"],["SmatchetAboutUi.cpp","TextRedaction.h"]]],"Ui->Grid":[29,[["SmatchetAiAssistantUi.cpp","SpreadsheetState.h"],["SmatchetAutocompleteUi.cpp","SmatchetViewsDashboardUi_detail.h"]]],"Grid->UiHost":[1,[["SmatchetGridHeaderUi.cpp","SmatchetImGuiFonts.h"]]],"Ui->Commands":[13,[["SmatchetPreferencesUi_Keybindings.cpp","Command.h"],["SmatchetPreferencesUi_Keybindings.cpp","CommandRegistry.h"]]],"Ui->Plugin:Whisper":[21,[["SmatchetPreferencesUi.cpp","HotkeyParse.h"],["SmatchetPreferencesUi.cpp","ModelCatalog.h"]]],"Ui->PluginHost":[12,[["McpServerInfoTextPure.h","McpServerStatus.h"],["SmatchetAiAssistantUi.cpp","DictationInsertionRouter.h"]]],"Vcs->Sync":[3,[["AnnotateAnalysisUi_Modals.cpp","OfflineFirstPure.h"],["P4Annotate.h","OfflineFirstPure.h"]]],"Vcs->App":[2,[["AnnotateAnalysisUi_Modals.cpp","AppController.h"],["AnnotateAnalysisUi_Window.cpp","AppController.h"]]],"Vcs->Grid":[4,[["AnnotateAnalysisUi.cpp","SpreadsheetState.h"],["AnnotateAnalysisUi_Config.cpp","SmatchetFieldRender.h"]]],"UiHost->Foundation":[6,[["SmatchetImGuiFonts.cpp","Logger.h"],["SmatchetImGuiHost.cpp","BoundedJsonParse.h"]]],"Vcs->Persistence":[2,[["AnnotateAnalysisUi.cpp","CachedTicketTypes.h"],["AnnotateAnalysisUi_Config.cpp","CachedTicketTypes.h"]]],"UiHost->App":[3,[["SmatchetImGuiHost.cpp","AppActivity.h"],["SmatchetImGuiHost.cpp","AppController.h"]]],"UiHost->Diagnostics":[1,[["SmatchetImGuiHost.cpp","EngineHostContext.h"]]],"UiHost->Commands":[1,[["SmatchetImGuiHost.cpp","CommandRegistry.h"]]],"UiHost->Scenarios":[1,[["SmatchetImGuiHost.cpp","IScenario.h"]]],"UiHost->Config":[1,[["SmatchetImGuiHost.cpp","ConfigManager.h"]]],"UiHost->Tracker":[1,[["SmatchetImGuiHost.cpp","ITrackerBackendFactory.h"]]],"UiHost->Lua":[1,[["SmatchetImGuiHost.cpp","LuaAutomationHost.h"]]],"UiHost->Sync":[2,[["SmatchetImGuiHost.cpp","OfflineQueueService.h"],["SmatchetImGuiHost.cpp","TicketSyncService.h"]]],"UiHost->PluginHost":[1,[["SmatchetImGuiHost.cpp","PluginHost.h"]]],"UiHost->Ui":[4,[["SmatchetImGuiHost.cpp","SmatchetTheme.h"],["SmatchetImGuiHost.cpp","SmatchetTooltipWheelRouter.h"]]],"UiHost->Plugin:Mcp":[1,[["SmatchetImGuiHost.cpp","McpPlugin.h"]]],"UiHost->Plugin:LuaConsole":[1,[["SmatchetImGuiHost.cpp","LuaConsolePlugin.h"]]],"Ui->Vcs":[9,[["MarkdownPreviewRender.cpp","CodeColorView.h"],["MarkdownPreviewRender.cpp","CppSyntaxHighlight.h"]]],"Ui->Scenarios":[2,[["SmatchetUI.cpp","IScenario.h"],["SmatchetUI.cpp","ScenarioCaptureQuiesce.h"]]],"Tracker->Config":[32,[["DefaultTrackerBackendFactory.cpp","ConfigManager.h"],["FieldCatalogCache.cpp","ConfigManager.h"]]],"Tracker->Foundation":[146,[["CollaborationPreconditionPure.h","SmatchetResult.h"],["CommentBlobFormatPure.cpp","BoundedJsonParse.h"]]],"Tracker->Persistence":[18,[["FieldCatalogCache.cpp","FieldOptionsJsonPure.h"],["GitHubClient.cpp","BackendAuditTrail.h"]]],"Tracker->Sync":[7,[["GitHubClient.cpp","JqlChangedSincePure.h"],["JiraChangelogDeltaPure.h","TicketChangeDiffPure.h"]]],"Tracker->AI":[2,[["TrackerHttpPure.cpp","AiErrorRedact.h"],["TrackerHttpUtils.cpp","AiErrorRedact.h"]]],"Tracker->Grid":[8,[["TrackerDateTimeFieldEditor.cpp","TicketFieldEditorCommitPolicyPure.h"],["TrackerDateTimeFieldEditor.h","SpreadsheetState.h"]]],"Tracker->App":[2,[["TrackerGridFieldDisplay.cpp","AppController.h"],["TrackerLabelsEditor.cpp","AppController.h"]]],"Tracker->Ui":[8,[["JiraCommentMappingPure.cpp","MarkdownConvert.h"],["PlaneCommentMappingPure.cpp","MarkdownConvert.h"]]],"Sync->Contracts":[5,[["ConnectivityMonitorService.h","ConnectivityTypes.h"],["FieldEditPipelineService.h","FieldEditTypes.h"]]],"App->Contracts":[21,[["AppController.h","AppUpdateTypes.h"],["AppController.h","AttachmentTypes.h"]]],"Lua->Sync":[1,[["ILuaBindingHost.h","PendingActionTypes.h"]]],"Foundation->Grid":[1,[["TouchCellEditGesture.h","TicketFieldEditorCommitPolicyPure.h"]]],"Foundation->PluginHost":[1,[["SmatchetLocalizedImGui.h","DictationInsertionRouter.h"]]],"Config->AI":[1,[["ConfigManager.h","AiTypes.h"]]],"Config->Lua":[1,[["ConfigManager.h","LuaScriptConsent.h"]]],"Contracts->Sync":[9,[["IAppPendingActions.h","PendingActionTypes.h"],["IAppSync.h","CacheRecreateReportPure.h"]]],"Contracts->Tracker":[2,[["ProjectComponentsTypes.h","TrackerFieldSchema.h"],["TransitionsTypes.h","TrackerFieldSchema.h"]]],"Contracts->Foundation":[4,[["IAppAutomation.h","SmatchetResult.h"],["IAppSync.h","SmatchetResult.h"]]],"Contracts->Persistence":[3,[["IAppOfflineQueue.h","CachedTicketTypes.h"],["IAppTicketData.h","CachedTicketTypes.h"]]],"Persistence->AI":[1,[["LocalCacheManager.h","AiTypes.h"]]],"Tracker->Contracts":[1,[["TrackerGridFieldDisplayPure.h","AttachmentTypes.h"]]],"Plugin:Whisper->PluginHost":[2,[["WhisperPlugin.cpp","DictationInsertionRouter.h"],["WhisperPlugin.h","IPlugin.h"]]],"Plugin:Whisper->Foundation":[11,[["GlobalHotkey_Win32.cpp","Logger.h"],["HotkeyParse.cpp","StringUtil.h"]]],"Plugin:Whisper->Config":[4,[["ModelDownloader.cpp","ConfigManager.h"],["WhisperConsentGate.cpp","ConfigManager.h"]]],"Plugin:Whisper->AI":[1,[["WhisperApiClient.cpp","AiErrorRedact.h"]]],"Plugin:Whisper->Sync":[1,[["WhisperApiClient.cpp","NetworkUsageTracker.h"]]],"Plugin:Whisper->App":[1,[["WhisperPlugin.cpp","AppController.h"]]],"Plugin:Whisper->Commands":[3,[["WhisperPlugin.cpp","Command.h"],["WhisperPlugin.cpp","CommandRegistry.h"]]],"Plugin:Whisper->Ui":[1,[["WhisperPlugin.cpp","SmatchetToast.h"]]],"Plugin:Whisper->Contracts":[1,[["ModelDownloader.cpp","IAppThreading.h"]]],"Plugin:LuaConsole->App":[1,[["LuaConsolePlugin.cpp","AppController.h"]]],"Plugin:LuaConsole->Config":[2,[["LuaConsolePlugin.cpp","ConfigManager.h"],["LuaConsolePlugin.cpp","ConfigSaveWorker.h"]]],"Plugin:LuaConsole->Foundation":[2,[["LuaConsolePlugin.cpp","Logger.h"],["LuaConsolePlugin.cpp","SmatchetLocalizedImGui.h"]]],"Plugin:LuaConsole->Ui":[7,[["LuaConsolePlugin.cpp","GestureKeys.h"],["LuaConsolePlugin.cpp","SmatchetDialogScope.h"]]],"Plugin:LuaConsole->PluginHost":[1,[["LuaConsolePlugin.h","IPlugin.h"]]],"Plugin:LuaConsole->Lua":[1,[["LuaConsolePlugin.h","LuaConsole.h"]]],"Plugin:Mcp->PluginHost":[2,[["McpPlugin.h","IPlugin.h"],["McpPlugin.h","McpServerStatus.h"]]],"Plugin:Mcp->Foundation":[7,[["McpJsonRpcPure.cpp","SmatchetDefaults.h"],["McpJsonRpcPure.cpp","StringUtil.h"]]],"Plugin:Mcp->App":[1,[["McpPlugin.cpp","AppController.h"]]],"Plugin:Mcp->Lua":[1,[["McpPlugin.cpp","ILuaBindingHost.h"]]],"Plugin:Mcp->Config":[1,[["McpPlugin.cpp","ConfigManager.h"]]],"Plugin:Mcp->Commands":[2,[["McpPlugin.cpp","Command.h"],["McpPlugin.cpp","CommandRegistry.h"]]]},"ext":{"Unreal":{"Dear ImGui":2,"DX12":1},"Android":{"Dear ImGui":4},"Standalone":{"Dear ImGui":16,"DX12":1,"nlohmann/json":8,"cpp-httplib":5,"GLFW/OpenGL":7,"stb":1},"App":{"nlohmann/json":6},"AI":{"nlohmann/json":8,"cpr (libcurl)":3},"Grid":{"Dear ImGui":34,"nlohmann/json":3,"ImGuiColorTextEdit":2,"cpr (libcurl)":1},"Config":{"nlohmann/json":13},"Lua":{"nlohmann/json":9,"Dear ImGui":6,"Lua + sol2":3},"Foundation":{"nlohmann/json":4,"Dear ImGui":5},"Persistence":{"nlohmann/json":8,"cpr (libcurl)":1,"Dear ImGui":2,"stb":1,"SQLite":7},"PluginHost":{"Dear ImGui":1},"Vcs":{"cpp-httplib":1,"nlohmann/json":4,"ImGuiColorTextEdit":1,"Dear ImGui":4},"Sync":{"nlohmann/json":9,"cpr (libcurl)":1},"Diagnostics":{"Dear ImGui":1,"cpr (libcurl)":1,"nlohmann/json":3},"Commands":{"nlohmann/json":32,"Dear ImGui":3},"Scenarios":{"nlohmann/json":34,"Dear ImGui":6,"cpp-httplib":1},"Ui":{"Dear ImGui":96,"nlohmann/json":17,"md4c":6,"cpr (libcurl)":2,"stb":1,"ImGuiColorTextEdit":1},"UiHost":{"Dear ImGui":8,"DX12":1,"nlohmann/json":1},"Tracker":{"cpr (libcurl)":17,"nlohmann/json":59,"Dear ImGui":5},"Plugin:Whisper":{"whisper.cpp":1,"cpr (libcurl)":2,"nlohmann/json":2,"Dear ImGui":2},"Plugin:LuaConsole":{"nlohmann/json":1,"Dear ImGui":1,"ImGuiColorTextEdit":1},"Plugin:Mcp":{"nlohmann/json":3,"cpp-httplib":1,"cpr (libcurl)":1}}};
+const LAYERS = [
+  { name: 'Hosts', note: 'window + frame loop', mods: ['Standalone', 'Unreal', 'Android'] },
+  { name: 'Shell & plugins', note: 'host seam, opt-in', mods: ['UiHost', 'PluginHost', 'Plugin:Mcp', 'Plugin:LuaConsole', 'Plugin:Whisper'] },
+  { name: 'Automation', note: 'scriptable surfaces', mods: ['Scenarios', 'Commands', 'Lua'] },
+  { name: 'Presentation', note: 'ImGui draw code', mods: ['Ui', 'Grid', 'Vcs'] },
+  { name: 'Application', note: 'composition root', mods: ['App', 'Contracts'] },
+  { name: 'Domain services', note: 'no ImGui by rule', mods: ['Sync', 'Tracker', 'Persistence', 'AI', 'Diagnostics'] },
+  { name: 'Base', note: 'used by everything', mods: ['Config', 'Foundation'] },
+];
+const M = {
+  Standalone: { label: 'Standalone', sub: 'desktop exe + CLI', path: 'Source/Standalone/',
+    desc: 'The desktop executable. main.cpp creates the GLFW window with an OpenGL or DX12 renderer, builds AppController, PluginHost and SmatchetUI, and runs the frame loop. It also holds the cmd CLI, which dispatches a command in-process or attaches over HTTP to an instance that is already running.' },
+  Unreal: { label: 'Unreal plugin', sub: 'DX12 overlay in UE', path: 'Source/UnrealPlugins/SmatchetImGuiPlugin/',
+    desc: 'Draws the same UI inside Unreal through a DX12 render backend and a scene view extension, feeds Slate input to ImGui, and forwards console commands to the core command queue. It reaches Core only through the C API.' },
+  Android: { label: 'Android', sub: 'NativeActivity + EGL', path: 'Source/Mobile/Android/',
+    desc: 'android_main drives the same AppController, PluginHost and SmatchetUI stack on an EGL surface, with bridges for the soft keyboard and the platform secret store.' },
+  UiHost: { label: 'ImGui host', sub: 'SmatchetImGuiHost', path: 'Source/Core/{src,include}/Ui/SmatchetImGuiHost*',
+    desc: 'The embedding seam. Owns the ImGui context, fonts and texture guard, exposes BeginFrame / DrawUI / RenderDrawData, input injection and an asynchronous command queue, and wraps all of it in a C API for hosts that cannot include C++ headers.' },
+  PluginHost: { label: 'Plugin host', sub: 'IPlugin lifecycle', path: 'Source/Core/include/{IPlugin,PluginHost}.h',
+    desc: 'One plugin contract (OnEarlyInit, OnStart, OnDraw, OnStop, NeedsRestart) and the host that calls each registered plugin once per frame. Also holds the dictation routing hooks the Whisper plugin fills in.' },
+  'Plugin:Mcp': { label: 'MCP plugin', sub: 'localhost tool server', path: 'Source/Plugins/Mcp/',
+    desc: 'A Model Context Protocol server on localhost. It publishes every registered command as a tool, authorises each request with a token and a loopback check, rate-limits, and executes calls through CommandRegistry::Dispatch.' },
+  'Plugin:LuaConsole': { label: 'Lua console', sub: 'script editor window', path: 'Source/Plugins/LuaConsole/',
+    desc: 'An in-app console and script editor for the Lua automation host.' },
+  'Plugin:Whisper': { label: 'Whisper', sub: 'push-to-talk dictation', path: 'Source/Plugins/Whisper/',
+    desc: 'Dictation: Windows audio capture, a global hotkey, transcription through local whisper.cpp or an API client, a consent gate and a model downloader.' },
+  Scenarios: { label: 'Scenarios', sub: 'scripted UI flows', path: 'Source/Core/src/Commands/Scenarios/',
+    desc: 'Scripted flows run by ScenarioRunner through the scenario.run command: perf captures, UI tests and screenshot runs. They never make a live HTTP call; they use fixture backends.' },
+  Commands: { label: 'Commands', sub: 'one registry, all surfaces', path: 'Source/Core/{src,include}/Commands/',
+    desc: 'The unified command system. A Command is a name, a parameter spec and a handler that returns a structured result. CommandRegistry::Dispatch is the only way in, and it gates destructive commands on an explicit confirmation. Also holds the command palette window.' },
+  Lua: { label: 'Lua automation', sub: 'sol2 bindings + sandbox', path: 'Source/Core/src/AppController_LuaBindings*, LuaAutomationHost',
+    desc: 'LuaAutomationHost runs sandboxed scripts under an instruction-count hook. The bindings expose tickets, custom windows, cell renderers, the AI assistant and command dispatch.' },
+  Ui: { label: 'UI panels', sub: 'SmatchetUI + windows', path: 'Source/Core/{src,include}/Ui/',
+    desc: 'All ImGui panels outside the grid: the frame root SmatchetUI with docking and the main menu, preferences, the offline queue panel, the AI assistant panel, toolbar, status bar, theme, and Markdown / ADF conversion and rendering.' },
+  Grid: { label: 'Ticket grid', sub: 'spreadsheet + editors', path: 'Ui/SmatchetActiveProjectGrid*, TicketGrid*, TicketFieldEditor*',
+    desc: 'The spreadsheet. TicketGridModel filters and sorts, the table and cell code draws every visible cell each frame, TicketFieldEditor commits edits, and the views dashboard manages saved views. Per-cell code is held to a no-allocation rule.' },
+  Vcs: { label: 'Annotate & VCS', sub: 'p4 blame, callstacks', path: 'P4Annotate*, CallstackParser, Ui/AnnotateAnalysisUi*, Vcs/',
+    desc: 'Perforce annotate and callstack analysis: p4 runs in a captured subprocess on a worker, results draw in the annotate windows with C++ syntax colouring. Also GitHub commit lookup and the merge-watch notify server.' },
+  App: { label: 'AppController', sub: 'hub + pane contexts', path: 'Source/Core/src/AppController*.cpp, GridLiveContext',
+    desc: 'The composition root. It owns the cache, the backend factory, the sync, offline-queue and lookup services, the command registry and one GridLiveContext per grid pane. It implements the IApp* interfaces, so callers can depend on a slice of it.' },
+  Contracts: { label: 'Contracts', sub: 'IApp* + shared types', path: 'Source/Core/include/{Interfaces,Types}/',
+    desc: 'Narrow role interfaces that AppController implements (IAppSync, IAppTicketData, IAppTicketMutations and others) and the plain types they pass. Command handlers and tests depend on these instead of the whole controller.' },
+  Sync: { label: 'Sync', sub: 'fetch, queue, replay', path: 'Source/Core/{src,include}/Sync/ + root services',
+    desc: 'TicketSyncService streams issues in and tops up parents and children. OfflineQueueService and PendingActionQueueService store writes made offline and replay them. FieldEditPipelineService decides commit or queue, ConnectivityMonitorService probes reachability, and the *Pure headers hold diff, merge and policy logic.' },
+  Tracker: { label: 'Tracker backends', sub: 'Jira Plane GitHub Linear', path: 'Source/Core/{src,include}/Tracker/, ITracker*.h',
+    desc: 'ITrackerBackend is a facade over six role interfaces. Four clients implement it, plus fixture backends for tests. Fields move catalog → parser → payload, and all HTTP goes through TrackerHttpClient for retry and error classification.' },
+  Persistence: { label: 'Persistence', sub: 'SQLite cache + audit', path: 'Source/Core/{src,include}/Persistence/ + cache services',
+    desc: 'LocalCacheManager wraps SQLite behind ISyncCache and ILookupCache. It stores CachedTicket rows, the pending-write tables with their dead-letter twins, saved lookups, the attachment disk cache and the append-only BackendAuditTrail. Schema changes are additive only.' },
+  AI: { label: 'AI assistant', sub: 'IAiClient providers', path: 'Source/Core/src/Ai*.cpp, *Client.cpp',
+    desc: 'AiAssistantController and three provider clients behind IAiClient (Anthropic, OpenAI, Ollama), with request building, SSE and NDJSON stream parsers, endpoint policy, error redaction and a chat persistence worker.' },
+  Diagnostics: { label: 'Diagnostics', sub: 'bug reports, crash, redaction', path: 'Source/Core/{src,include}/{Diagnostics,Privacy,Imaging}/',
+    desc: 'Bug report assembly and submission, the crash sink and self-minidump, host machine info, text redaction and screenshot censoring.' },
+  Config: { label: 'Config', sub: 'ConfigManager', path: 'Source/Core/{src,include}/Config/',
+    desc: 'Tracker settings, secrets, saved views, panes, keybindings, toolbar and tunable limits. ConfigSaveWorker writes to disk off the UI thread.' },
+  Foundation: { label: 'Foundation', sub: 'threads, logging, strings', path: 'Source/Core/include/*.h (leaf headers)',
+    desc: 'Leaf utilities: Logger, MainThreadDispatcher, SerialTaskQueue, CancelToken, UiThreadAffinity, SmatchetResult, localization, and string, date and JSON helpers.' },
+};
+const UP_NOTES = {
+  'Ui->Plugin:Whisper': 'The Whisper preferences page and overlay read the plugin\'s own model and consent types.',
+  'App->Ui': 'AppController raises toasts and reads Views.h and the UI session directly.',
+  'Ui->Commands': 'The toolbar, main menu and keybinding editor list commands from the registry.',
+  'Ui->UiHost': 'Panels ask the host for fonts and texture upload.',
+  'Ui->PluginHost': 'Dictation hooks and the MCP status readout.',
+  'App->Grid': 'GridPane embeds SpreadsheetState and TicketGridModel; the controller calls field render and change notifications.',
+  'Tracker->Ui': 'MarkdownConvert is used by comment mapping; the date-time cell editor carries documented SMATCHET_DEVIATION includes.',
+  'Tracker->Grid': 'Tracker owns two ImGui cell editors (labels, date-time) that share grid edit state.',
+  'App->Lua': 'The controller owns LuaAutomationHost; its Impl implements ILuaBindingHost.',
+  'App->Commands': 'The controller owns the CommandRegistry and registers the built-ins at init.',
+  'App->Scenarios': 'The controller owns the ScenarioRunner and its registry.',
+  'Persistence->Contracts': 'Cache services return the shared lookup types.',
+};
+
+const NS = 'http://www.w3.org/2000/svg';
+const el = (n, a = {}, parent) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); if (parent) parent.appendChild(e); return e; };
+const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const fmt = n => n.toLocaleString('en-US');
+
+const rank = {}; LAYERS.forEach((l, i) => l.mods.forEach(m => rank[m] = i));
+const edges = Object.keys(DATA.edges).map(k => { const [a, b] = k.split('->'); const [n, eg] = DATA.edges[k]; return { a, b, n, eg, up: rank[a] > rank[b], key: k }; });
+const maxLoc = Math.max(...Object.values(DATA.loc));
+
+// ---- layout
+const W = 1120, LABEL_W = 132, NODE_H = 58, PITCH = 124, TOP = 22;
+const H = TOP + PITCH * (LAYERS.length - 1) + NODE_H + 24;
+const pos = {};
+LAYERS.forEach((l, i) => {
+  const slot = (W - LABEL_W - 12) / l.mods.length;
+  const w = Math.min(slot - 30, 200);
+  l.mods.forEach((m, j) => { pos[m] = { cx: LABEL_W + slot * (j + 0.5), y: TOP + i * PITCH, w, h: NODE_H }; });
+});
+
+const svg = document.getElementById('graph');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+LAYERS.forEach((l, i) => {
+  const y = TOP + i * PITCH;
+  el('rect', { class: 'band' + (i % 2 ? ' alt' : ''), x: 0, y: y - 18, width: W, height: NODE_H + 36, rx: 3 }, svg);
+  el('text', { class: 'band-label', x: 10, y: y + 24 }, svg).textContent = l.name;
+  el('text', { class: 'band-note', x: 10, y: y + 40 }, svg).textContent = l.note;
+});
+const gEdges = el('g', {}, svg), gNodes = el('g', {}, svg);
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function edgeGeom(e) {
+  const A = pos[e.a], B = pos[e.b];
+  const off = clamp((B.cx - A.cx) * 0.16, -A.w / 2 + 14, A.w / 2 - 14);
+  const off2 = clamp((A.cx - B.cx) * 0.16, -B.w / 2 + 14, B.w / 2 - 14);
+  let sx = A.cx + off, ex = B.cx + off2, sy, ey, c1, c2;
+  if (rank[e.a] < rank[e.b]) { sy = A.y + A.h; ey = B.y; const k = Math.max(34, (ey - sy) * 0.45); c1 = [sx, sy + k]; c2 = [ex, ey - k]; }
+  else if (rank[e.a] > rank[e.b]) { sx += 12; ex += 12; sy = A.y; ey = B.y + B.h; const k = Math.max(34, (sy - ey) * 0.45); c1 = [sx, sy - k]; c2 = [ex, ey + k]; }
+  else { const below = A.cx > B.cx; sy = below ? A.y + A.h : A.y; ey = below ? B.y + B.h : B.y; const k = (below ? 1 : -1) * clamp(Math.abs(B.cx - A.cx) * 0.12 + 14, 18, 30); c1 = [sx, sy + k]; c2 = [ex, ey + k]; }
+  return { sx, sy, ex, ey, c1, c2 };
+}
+const strokeW = n => 0.8 + Math.sqrt(n) * 0.42;
+edges.forEach(e => {
+  const g = el('g', { class: 'edge' + (e.up ? ' up' : '') }, gEdges);
+  const { sx, sy, ex, ey, c1, c2 } = edgeGeom(e);
+  const sw = strokeW(e.n);
+  let dx = ex - c2[0], dy = ey - c2[1]; const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+  const ah = 5 + sw * 1.1, aw = 2.6 + sw * 0.7;
+  const bx = ex - dx * ah, by = ey - dy * ah;
+  el('path', { d: `M${sx} ${sy} C${c1[0]} ${c1[1]}, ${c2[0] - dx * ah} ${c2[1] - dy * ah}, ${bx} ${by}`, 'stroke-width': sw.toFixed(2) }, g);
+  el('polygon', { points: `${ex},${ey} ${bx - dy * aw},${by + dx * aw} ${bx + dy * aw},${by - dx * aw}` }, g);
+  el('title', {}, g).textContent = `${M[e.a].label} → ${M[e.b].label}: ${e.n} includes`;
+  e.g = g;
+});
+const nodeEls = {};
+Object.keys(pos).forEach(m => {
+  const p = pos[m], x = p.cx - p.w / 2;
+  const g = el('g', { class: 'node', tabindex: 0, role: 'button', 'aria-label': `${M[m].label}, ${fmt(DATA.loc[m])} lines. Show dependencies.` }, gNodes);
+  el('rect', { class: 'box', x, y: p.y, width: p.w, height: p.h, rx: 4 }, g);
+  el('text', { class: 'name', x: x + 10, y: p.y + 21 }, g).textContent = M[m].label;
+  el('text', { class: 'sub', x: x + 10, y: p.y + 36 }, g).textContent = M[m].sub;
+  const loc = DATA.loc[m];
+  el('text', { class: 'loc', x: x + p.w - 8, y: p.y + 21, 'text-anchor': 'end' }, g).textContent = loc >= 1000 ? (loc / 1000).toFixed(1) + 'k' : loc;
+  el('rect', { class: 'bar-bg', x: x + 10, y: p.y + p.h - 11, width: p.w - 20, height: 4, rx: 1 }, g);
+  el('rect', { class: 'bar', x: x + 10, y: p.y + p.h - 11, width: Math.max(2, (p.w - 20) * loc / maxLoc), height: 4, rx: 1 }, g);
+  g.addEventListener('click', ev => { ev.stopPropagation(); select(sel === m ? null : m); });
+  g.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(sel === m ? null : m); } });
+  nodeEls[m] = g;
+});
+svg.addEventListener('click', () => select(null));
+
+// ---- state
+let sel = null;
+const thr = document.getElementById('thr'), thrOut = document.getElementById('thrOut'), upOnly = document.getElementById('upOnly'), clearBtn = document.getElementById('clearSel');
+function render() {
+  const t = +thr.value; thrOut.textContent = t;
+  edges.forEach(e => {
+    const touches = sel && (e.a === sel || e.b === sel);
+    const show = sel ? touches && (!upOnly.checked || e.up) : (upOnly.checked ? e.up : e.n >= t);
+    e.g.style.display = show ? '' : 'none';
+    e.g.classList.toggle('out', !!sel && e.a === sel);
+    e.g.classList.toggle('inc', !!sel && e.b === sel);
+  });
+  const near = new Set(sel ? [sel] : []);
+  if (sel) edges.forEach(e => { if (e.a === sel) near.add(e.b); if (e.b === sel) near.add(e.a); });
+  for (const m in nodeEls) { nodeEls[m].classList.toggle('sel', m === sel); nodeEls[m].classList.toggle('dim', !!sel && !near.has(m)); }
+  clearBtn.hidden = !sel;
+  renderInspector();
+}
+function select(m) { sel = m; render(); }
+thr.addEventListener('input', render); upOnly.addEventListener('change', render); clearBtn.addEventListener('click', () => select(null));
+
+// ---- inspector
+const insp = document.getElementById('inspector');
+function depList(list, kind, other) {
+  const box = h('div', 'deps');
+  const max = Math.max(...list.map(e => e.n), 1);
+  list.forEach(e => {
+    const b = h('button', 'dep ' + kind); b.type = 'button';
+    const nm = h('span', 'nm', M[e[other]].label);
+    if (e.up) nm.appendChild(h('span', 'tag-up', '↑ upward'));
+    const meter = h('span', 'meter'); const bar = document.createElement('i'); bar.style.width = (100 * e.n / max) + '%'; meter.appendChild(bar);
+    b.append(nm, meter, h('span', 'n', e.n));
+    if (e.eg && e.eg[0]) b.appendChild(h('span', 'eg', `${e.eg[0][0]} → ${e.eg[0][1]}`));
+    b.addEventListener('click', () => select(e[other]));
+    box.appendChild(b);
+  });
+  return box;
+}
+function group(title, node) { const g = h('div', 'group'); g.append(h('span', 'eyebrow', title), node); return g; }
+function renderInspector() {
+  // Rebuilding the inspector removes the button that was just activated; remember whether focus
+  // was inside it so keyboard users are not dropped back to the top of the document.
+  const hadFocus = insp.contains(document.activeElement);
+  insp.replaceChildren();
+  renderInspectorBody();
+  if (hadFocus) {
+    const target = sel ? nodeEls[sel] : insp.querySelector('button');
+    if (target) target.focus();
+  }
+}
+function renderInspectorBody() {
+  if (!sel) {
+    insp.append(h('span', 'eyebrow', 'Reading the map'), h('h3', null, 'Start from the hub'));
+    const ul = document.createElement('ul');
+    ['Three hosts share one core. Standalone, the Unreal plugin and Android differ only in who owns the window and the render backend.',
+     'AppController is the centre. It includes the domain services heavily and is the one module both the UI and the automation surfaces call into.',
+     'The domain row is the offline-first engine: Tracker talks to the sites, Persistence stores rows in SQLite, Sync moves data between them and replays queued writes.',
+     'Foundation and Config sit under everything; the thick arrows into them are expected.'].forEach(t => ul.appendChild(h('li', null, t)));
+    insp.appendChild(ul);
+    const st = h('div', 'starts');
+    [['App', 'AppController'], ['Tracker', 'Tracker backends'], ['Sync', 'Sync'], ['Grid', 'Ticket grid'], ['Commands', 'Commands']].forEach(([m, l]) => { const b = h('button', null, l); b.type = 'button'; b.addEventListener('click', () => select(m)); st.appendChild(b); });
+    insp.appendChild(group('Open a module', st));
+    return;
+  }
+  const m = M[sel];
+  insp.append(h('span', 'eyebrow', LAYERS[rank[sel]].name), h('h3', null, m.label), h('p', null, m.desc));
+  const stats = h('p', 'stats'); stats.innerHTML = `<b>${fmt(DATA.loc[sel])}</b> lines · <b>${DATA.nfiles[sel]}</b> files`;
+  insp.append(stats, h('p', 'path mono', m.path));
+  const chips = h('div', 'chips'); (DATA.top[sel] || []).forEach(f => chips.appendChild(h('span', 'chip', f)));
+  insp.appendChild(group('Largest units', chips));
+  const ext = Object.entries(DATA.ext[sel] || {}).sort((a, b) => b[1] - a[1]);
+  if (ext.length) { const c = h('div', 'chips'); ext.forEach(([k]) => c.appendChild(h('span', 'chip', k))); insp.appendChild(group('Third-party libraries', c)); }
+  const outs = edges.filter(e => e.a === sel).sort((x, y) => y.n - x.n), ins = edges.filter(e => e.b === sel).sort((x, y) => y.n - x.n);
+  if (outs.length) insp.appendChild(group(`Depends on · ${outs.length} modules`, depList(outs, 'o', 'b')));
+  if (ins.length) insp.appendChild(group(`Used by · ${ins.length} modules`, depList(ins, 'i', 'a')));
+}
+
+// ---- header facts, upward table
+const totalInc = edges.reduce((s, e) => s + e.n, 0), upInc = edges.filter(e => e.up).reduce((s, e) => s + e.n, 0);
+const totalLoc = Object.values(DATA.loc).reduce((s, n) => s + n, 0), totalFiles = Object.values(DATA.nfiles).reduce((s, n) => s + n, 0);
+document.getElementById('facts').innerHTML =
+  `<span><b>${fmt(totalLoc)}</b> lines of first-party C++</span><span><b>${fmt(totalFiles)}</b> files</span><span><b>${Object.keys(M).length}</b> modules</span><span><b>${fmt(totalInc)}</b> cross-module includes</span><span><b>4</b> tracker backends</span><span><b>3</b> hosts</span>`;
+document.getElementById('upShare').textContent = `${upInc} of ${fmt(totalInc)} (${(100 * upInc / totalInc).toFixed(1)}%)`;
+const tb = document.querySelector('#upTable tbody');
+edges.filter(e => e.up).sort((x, y) => y.n - x.n).slice(0, 12).forEach(e => {
+  const tr = document.createElement('tr');
+  const td1 = h('td', null, `${M[e.a].label} → ${M[e.b].label}`);
+  const td3 = document.createElement('td');
+  if (UP_NOTES[e.key]) td3.appendChild(h('div', null, UP_NOTES[e.key]));
+  td3.appendChild(h('div', 'mono', e.eg.map(p => `${p[0]} → ${p[1]}`).join(' · ')));
+  tr.append(td1, h('td', 'num', e.n), td3); tb.appendChild(tr);
+});
+render();
+</script>
+</body>
+</html>

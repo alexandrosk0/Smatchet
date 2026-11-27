@@ -1,8 +1,8 @@
 // Views class seam tests — Slice 0 Workstream 1 of
 // docs/plans/multi-grid-tabs.md (characterize-existing regression net).
 //
-// Pins the CURRENT behaviour of the Views state holder (Source/Core/src/Ui/Views.cpp,
-// header Source/Core/include/Ui/Views.h) BEFORE the multi-pane refactor:
+// Pins the CURRENT behaviour of the Views state holder (Source/Core/src/Views.cpp,
+// header Source/Core/include/Views.h) BEFORE the multi-pane refactor:
 //   * EnsureLoaded — backend-keyed slice selection + bootstrap-on-empty.
 //   * Activate / Create / UpdateActive / DeleteActive contracts.
 //   * GetRevision() monotonicity + the explicit BumpRevision cache-key contract.

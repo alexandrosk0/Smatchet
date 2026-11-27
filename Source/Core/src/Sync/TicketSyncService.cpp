@@ -1,16 +1,17 @@
 #include "TicketSyncService.h"
 
-#include "AppController.h"
 #include "CacheBackendKeyPure.h"
 #include "ConfigManager.h"
 #include "ITicketSyncDeps.h"
+#include "ITrackerBackend.h" // complete type: the factory returns unique_ptr<ITrackerBackend>
 #include "ITrackerBackendFactory.h"
+#include "ITrackerConnectivity.h" // GetTrackerType (the backend-swap check)
 #include "ISyncCache.h"
 #include "ITrackerIssueReader.h" // FetchIssuesForKeys + TrackerIssueFetchSummary (parent top-up)
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TimeNowPure.h"
-#include "Tracker/TrackerError.h"                // TrackerError is only forward-declared by TicketSyncService.h
+#include "TrackerError.h"                        // TrackerError is only forward-declared by TicketSyncService.h
 #include "Sync/RemoteVersionPure.h"              // never persist a row older than the cached version
 #include "TicketSyncMeta.h"                      // BuildSyncMeta: the tracker version stored beside each saved row
 #include "Sync/RefusalIsolatingFetchPure.h"      // refusal-isolating key-batch download (shared with the monitor)
@@ -18,7 +19,6 @@
 #include "Sync/LazyEnrichmentCarryForwardPure.h" // keeps a lazily fetched comment thread across syncs
 #include "Sync/TicketRosterFilterPure.h"         // shared keep-set roster filter (also used by the local-data refresh)
 #include "Tracker/ParentHierarchyPure.h"         // ParentKeyOf — the one parent-field contract
-#include "Views.h"
 
 #include <algorithm>
 #include <chrono>

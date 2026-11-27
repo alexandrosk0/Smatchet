@@ -234,4 +234,8 @@ TEST_CASE("A pasted link the backend cannot open is not a ticket key") {
     CHECK_FALSE(LooksLikePastedIssueUrl("https://example.com/", GridSearchBackend::Jira));
     CHECK_FALSE(LooksLikePastedIssueUrl("PROJ-12", GridSearchBackend::Jira)); // a key, not a link
     CHECK_FALSE(LooksLikePastedIssueUrl("fix a/b problem", GridSearchBackend::Jira));
+    // A wiki page whose name looks like a key is not a ticket.
+    CHECK_FALSE(LooksLikePastedIssueUrl("https://wiki.acme.com/display/ENG/Release-2", GridSearchBackend::Jira));
+    CHECK(ClassifyGridSearchInput("https://wiki.acme.com/display/ENG/Release-2", GridSearchBackend::Jira) !=
+          GridSearchInputKind::TicketKey);
 }

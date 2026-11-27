@@ -1,9 +1,10 @@
 <!-- index-summary: input UX Wave 2 piece 4.5 — one parse-and-explain layer (durations, dates, issue URLs, site URLs, queries) with a shared inline error under the field, plus a toast on every remaining silent failure -->
 # Plan — Input UX Wave 2: tolerant parsing with inline errors
+<!-- plan-date: 2026-11-19 -->
 
 > **Slug**: `input-ux-w2-tolerant-parsing` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped` — Wave 2 piece 4.5, PR #2441 (squash `3d1ff166f`). Leftovers: `docs/self-improvement/categories/debt/2026-11-22-tolerant-parsing-deferred.md`.
 
 ## Context
 
@@ -100,7 +101,7 @@ There are no changes to `ITrackerBackend` or its role interfaces, to `RegisterCo
 21. `tests/Core/GridSearchInputClassifier.test.cpp`, `tests/Core/TrackerFieldPayloadPure.test.cpp`, `tests/Core/SmatchetWorklogSubmitPure.test.cpp` (changed).
 22. `tests/ui/tolerant_parse_inline_error.test.cpp` (new): bucket E. `tests/ui/duration_inline_edit_commit.test.cpp` (changed: new worklog error text).
 23. `tests/CMakeLists.txt`, `tests/ui/CMakeLists.txt`, `tests/ui/ui_tests_registry.cpp`: appended rows.
-24. `docs/plans/active/input-ux-w2-tolerant-parsing.md`: this plan.
+24. `docs/plans/input-ux-w2-tolerant-parsing.md`: this plan.
 
 The new Core `.cpp` files are picked up by `file(GLOB_RECURSE CORE_SOURCES …)`, so they need no list edit. The new tests are added to `SmatchetTests` and to the Linux `SmatchetTsanTests` subset, so they run in this container.
 
@@ -208,11 +209,13 @@ None blocking. The bare-number preference and the file-existence probe are recor
 - `8ee652b` · merge of `origin/develop` (the shared text field #2438 and the shared dropdown #2432). The annotate path and link fields and the Preferences site fields moved onto `SmatchetInput` in the merge, so the parse checks now run over the shared field instead of a raw `InputText`.
 - Review fixes after that merge: the annotate Process run and Ask AI use `TrackerInputNormalise::AcceptedOr`, so text a checked field refused never reaches the worker config, the link opener or a later save; the checked fields pass the normaliser straight to the template (no per-frame string copy); a site field keeps itself as the last item after its error or "Using ..." line, so the GitHub tooltips stay on the field.
 
+- `3d1ff166f` · squash-merge of PR #2441 into `develop`.
+
 Closes #38, #40, #63 (the Enter refusal and the dashboard inline line), #66, #80, #82, #115, #127, #128 and the `pasted URLs` part of the 4.5 build list. #98, #117 and #136 were closed by Wave 1.
 
 ## Deviations from plan
 
-- **Plan-lock not claimed.** Pushing `refs/locks/input-ux-w2-tolerant-parsing` was refused: first by the environment's proxy (HTTP 403 on `refs/locks/*`), then, once Wave 1 was merged, by the pre-push collision check, because this diff appends rows to files that `bulk-edit-rows` and `shared-dropdown-recents` hold (`SmatchetLocalization.cpp`, `tests/CMakeLists.txt`, `tests/ui/CMakeLists.txt`, `tests/ui/ui_tests_registry.cpp`). No override was used. The push waits on that decision.
+- **Plan-lock not claimed.** Pushing `refs/locks/input-ux-w2-tolerant-parsing` was refused: first by the environment's proxy (HTTP 403 on `refs/locks/*`), then, once Wave 1 was merged, by the pre-push collision check, because this diff appends rows to files that `bulk-edit-rows` and `shared-dropdown-recents` hold (`SmatchetLocalization.cpp`, `tests/CMakeLists.txt`, `tests/ui/CMakeLists.txt`, `tests/ui/ui_tests_registry.cpp`). No override was used at push time; the PR then shipped as #2441 with the user-approved `plan-lock-out-of-band` label for those shared append-only rows.
 - **Deferred, as the plan said** (their files are locked by `shared-dropdown-recents`): #53, #58, and the inline line under the grid search box itself (#63; Enter is refused with a toast and the dashboard editor has the inline line). Also deferred: a file-existence probe, Browse and `p4 -V` check for the p4 paths (#82/#128), and a bare-number unit preference.
 - **Canonical duration form is stricter than planned.** The review found that folding hours into days (`8h` to `1d`) sends a wrong value to Jira sites with a non-8-hour day. The committed form never folds hours into days or weeks; whole days and weeks the user wrote are kept as written; only a decimal day falls to hours, using the app's 8-hour day.
 - **Query check is per dialect.** The JQL rules (single quotes, trailing keywords, the field-name check) apply to Jira only. GitHub, Plane and Linear take the field:value dialect, where only a double quote is a quote and a trailing word, `!` or `~` is plain text.
@@ -235,8 +238,3 @@ Closes #38, #40, #63 (the Enter refusal and the dashboard inline line), #66, #80
 - **Reviews**: the project code-review agent reviewed the staged diff twice (4 High and 3 Medium findings, all fixed; the second pass found nothing) and the branch diff once (it caught the merge damage, fixed in `2eff947`). Acks and the branch review artifact are recorded for the committed tree.
 - **After the `8ee652b` merge (Windows, MSVC)**: `ninja-test-msvc` unit suite 4281 cases pass; `ninja-iter-msvc` builds `SmatchetStandalone` and `SmatchetCore_DX12`; the full bucket-E suite on `ninja-ui-test-msvc` passes 287 of 290, the three failures being the host-only `OpenViaToastClickRequest_RendersRowsAndClears`, `AuditWindow_RendersAndShowsRefreshButton` and `BulkImportWindow_RendersAndShowsLoadFile`, which pass on CI. The counts above are from the Linux run before that merge.
 - **Not run here**: the Perf PR-fast lane and bucket-C screenshot diffs; CI owns those. (The MSVC dual-target build, and with it the Windows half of `P4vLaunch.cpp`, was not run in the Linux pass; the Windows run above after the `8ee652b` merge built both targets.)
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*

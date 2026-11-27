@@ -1,8 +1,9 @@
 # Plan — Input UX Wave 2, piece 4.3: drafts and undo
+<!-- plan-date: 2026-11-20 -->
 
 > **Slug**: `input-ux-w2-drafts-undo` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — Wave 2 piece 4.3 of `docs/audits/INPUT_UX_AUDIT.md` § 4.3, stacked on the Wave 1 branch (PR #2433).
+> **Status**: `shipped` — Wave 2 piece 4.3 of `docs/audits/INPUT_UX_AUDIT.md` § 4.3, PR #2439 (squash `673a37ee5`). Leftovers: `docs/self-improvement/categories/debt/2026-11-22-drafts-undo-deferred.md`, Issues #2458 and #2459.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -181,10 +182,9 @@ None — the lock-driven scope cuts are recorded above and listed in the PR.
 - fr-FR rows for the new strings: once `SmatchetLocalization.cpp` is free.
 
 ## Implementation log
-*(commit shas are added once the branch is pushed; the single implementation commit carries the whole slice)*
 
 - `141c34f` · `wip(plan)`: this plan.
-- implementation commit · `DraftStorePure.h` + `DraftStore.{h,cpp}` (bounded map, JSON file, worker); `UndoLedgerPure.h` + `SmatchetToast` (`PushUndoable`, Undo button, Ctrl+Z, `CommitUndo`, `CommitPendingUndos`); kept drafts for Comments (#56), the long-text editor (#39), Log work (#51), the assistant message box (#103) and the conflict resolver (#110, now across restarts); chat clear with Undo after its confirm (#90; view delete was dropped, see Deviations); Esc during an armed hide-drag cancels the hide (#141); `~AppController` commits pending undos and stops the store before the chat-persist worker.
+- implementation commit (squash `673a37ee5`, PR #2439) · `DraftStorePure.h` + `DraftStore.{h,cpp}` (bounded map, JSON file, worker); `UndoLedgerPure.h` + `SmatchetToast` (`PushUndoable`, Undo button, Ctrl+Z, `CommitUndo`, `CommitPendingUndos`); kept drafts for Comments (#56), the long-text editor (#39), Log work (#51), the assistant message box (#103) and the conflict resolver (#110, now across restarts); chat clear with Undo after its confirm (#90; view delete was dropped, see Deviations); Esc during an armed hide-drag cancels the hide (#141); `~AppController` commits pending undos and stops the store before the chat-persist worker.
 
 ## Deviations from plan
 
@@ -212,15 +212,3 @@ Head `7b56436` (the branch after merging `develop` at the Mobile-lane pin, #2454
 - **Gates.** `scripts/dev/pre-ship.sh` delta lint gates (incl. the Pillar 2 scan, duplication, function size) and doc validation pass; the CI `Pillar 2 scanner`, `Duplication scanner`, `Doc anchors`, `Plan-lock gate`, `Intent section` and `C++ lint` jobs pass. `posix-core-check` of every touched TU is clean locally, and the CI POSIX core, Android NDK, Android APK and emulator-smoke lanes pass.
 - **Earlier CI trouble, not this change.** The first Bucket-E runs on `1745e9a` failed `WindowExpand` docking tests: the suite needed ~170 s against a 160 s deadline, and the retry reused a killed attempt's profile (backlog entry `2026-11-18-bucket-e-retry-reuses-profile.md`). Develop's 230 s deadline fixed the trigger. The Mobile lanes failed for a while on the `ubuntu-26.04` runner image (`libjitterentropy`/`-lzstd` link errors, `intptr_t` in `cpr`); #2454 pinned them to `ubuntu-24.04`.
 - **Manual verification.** None needed: restore-on-reopen, the undo toast and the Esc dirty guard are bucket-E cases.
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.**
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md`.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*

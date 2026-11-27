@@ -458,6 +458,28 @@ TEST_CASE("DictationInsertionRouter::ConsumePendingReloadItemId: set by splice i
     router.UnregisterInputText(ai);
 }
 
+TEST_CASE("DictationInsertionRouter::TakeLastConsumedReloadItemIdForTest: reports a drained id once") {
+    // The frame's one drain (SmatchetLocalizedImGui::ApplyPendingDictationReload, #2458) consumes the
+    // pending id before a scenario or test can, so they read what it consumed from here.
+    DictationInsertionRouter router;
+    char box[64] = {0};
+    constexpr unsigned int kItemId = 0x2458u;
+    router.RegisterInputTextWithItemId(box, sizeof(box), nullptr, kItemId);
+
+    CHECK(router.TakeLastConsumedReloadItemIdForTest() == 0u); // nothing consumed yet
+
+    router.InsertIntoFocusedInputText("dictated", kItemId);
+    CHECK(router.TakeLastConsumedReloadItemIdForTest() == 0u); // armed, not consumed yet
+    CHECK(router.ConsumePendingReloadItemId() == kItemId);     // the drain
+    CHECK(router.TakeLastConsumedReloadItemIdForTest() == kItemId);
+    CHECK(router.TakeLastConsumedReloadItemIdForTest() == 0u); // test-and-clear
+
+    CHECK(router.ConsumePendingReloadItemId() == 0u); // an empty drain leaves no id behind
+    CHECK(router.TakeLastConsumedReloadItemIdForTest() == 0u);
+
+    router.UnregisterInputText(box);
+}
+
 TEST_CASE("DictationInsertionRouter::ConsumePendingReloadItemId: not armed by ItemId=0 entry") {
     // Legacy / scenario / headless path: when the only registered entry has
     // ItemId=0 (no live ImGui widget) AND the shadow has no id either, the

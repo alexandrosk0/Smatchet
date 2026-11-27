@@ -43,12 +43,14 @@
 #include "CachedTicketTypes.h"                     // CachedTicket
 #include "DraftStore.h"                            // the entry the worklog dialog keeps
 #include "Commands/Scenarios/UiTestScenario.h"     // SmatchetActiveUiTestAppController
+#include "GridPane.h"                              // the pane the harness draws the dialog in
 #include "Interfaces/IAppTicketMutations.h"        // the facet the dialog saves through
 #include "PendingActionTypes.h"                    // PendingActionSubmitResult
-#include "SmatchetUiSession.h"                     // PendingFieldEdit
+#include "SmatchetUiSession.h"                     // PendingFieldEdit; g_ui.activePaneForDraw
 #include "SpreadsheetState.h"                      // SpreadsheetState
 #include "Tracker/TrackerFieldValueParseExplain.h" // the dialog and the field explain a bad time with it
 #include "TrackerFieldSchema.h"                    // TrackerField
+#include "Ui/SmatchetToast.h"                      // the toast a save result goes to when no dialog shows it
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -59,6 +61,7 @@
 #include <chrono>
 #include <cstdint>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -313,12 +316,35 @@ class RecordingWorklogMutations final : public IAppTicketMutations {
         std::string IssueId;
         std::string TimeSpent;
         std::string Description;
+        /// The pane and tracker site the worklog was sent to.
+        std::string TargetPaneId;
+        std::string TargetBackendKey;
+        /// What the send-or-queue route was told about the tracker.
+        TrackerConnectivityState TargetConnectivity = TrackerConnectivityState::Unknown;
     };
 
     using IAppTicketMutations::QueueCreateOffline;
 
     const TrackerField* FindFieldById(const std::string&) const override { return nullptr; }
-    PendingActionTarget LatchPendingActionTarget() const override { return PendingActionTarget(); }
+    /// The focused pane, as the controller latches it: it can still be another pane than the one that
+    /// draws the dialog (the pane focus follows a click a frame or two late).
+    PendingActionTarget LatchPendingActionTarget() const override {
+        PendingActionTarget target;
+        target.PaneId = m_FocusedPaneId;
+        target.BackendKey = m_BackendKey;
+        return target;
+    }
+    /// A named pane, as the controller latches it: its tracker site when the pane is known (SetPaneSite),
+    /// otherwise a target with no backend and no backend key, like a pane with no live context.
+    PendingActionTarget LatchPendingActionTargetForPane(const std::string& paneId) const override {
+        PendingActionTarget target;
+        target.PaneId = paneId;
+        const auto it = m_PaneSites.find(paneId);
+        if (it != m_PaneSites.end()) {
+            target.BackendKey = it->second;
+        }
+        return target;
+    }
     PendingActionSubmitResult SubmitFieldEditOrQueue(const PendingActionTarget&, const std::string&,
                                                      const TrackerField&, const std::vector<std::string>&) override {
         return PendingActionSubmitResult();
@@ -328,12 +354,13 @@ class RecordingWorklogMutations final : public IAppTicketMutations {
         return PendingActionSubmitResult();
     }
     // Runs on the dialog's worker thread.
-    PendingActionSubmitResult SubmitOrQueueWorklog(const PendingActionTarget&, const std::string& issueId,
+    PendingActionSubmitResult SubmitOrQueueWorklog(const PendingActionTarget& target, const std::string& issueId,
                                                    const std::string& timeSpent, const std::string&, const std::string&,
                                                    const std::string& workDescription, const std::string&) override {
         {
             std::lock_guard<std::mutex> lock(m_Mutex);
-            m_Calls.push_back(Call{issueId, timeSpent, workDescription});
+            m_Calls.push_back(
+                Call{issueId, timeSpent, workDescription, target.PaneId, target.BackendKey, target.Connectivity});
         }
         while (m_Hold.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -348,11 +375,21 @@ class RecordingWorklogMutations final : public IAppTicketMutations {
     }
     std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const override { return nullptr; }
     // Bulk-edit pre-flight reads; the single-worklog dialog never calls them.
-    TrackerConnectivityState GetLastTrackerConnectivityState() const override {
-        return TrackerConnectivityState::AuthenticatedReachable;
-    }
+    TrackerConnectivityState GetLastTrackerConnectivityState() const override { return m_Connectivity.load(); }
     bool IsShuttingDown() const override { return false; }
 
+    /// The focused pane and its tracker site. UI-thread only, like the open request: the test coroutine
+    /// and the GuiFunc never run at once. Reset leaves it alone.
+    void SetFocusedPane(const std::string& paneId, const std::string& backendKey) {
+        m_FocusedPaneId = paneId;
+        m_BackendKey = backendKey;
+    }
+    /// The panes LatchPendingActionTargetForPane knows, each with its tracker site. UI-thread only, like
+    /// SetFocusedPane. Reset leaves them alone.
+    void SetPaneSite(const std::string& paneId, const std::string& backendKey) { m_PaneSites[paneId] = backendKey; }
+    void ClearPaneSites() { m_PaneSites.clear(); }
+    /// The last connectivity probe, as the controller reports it. Reset puts it back to reachable.
+    void SetConnectivity(TrackerConnectivityState state) { m_Connectivity.store(state); }
     /// While held, a submit stays "in flight" (the worker waits) so a test can act during the save.
     void SetHold(bool hold) { m_Hold.store(hold); }
     std::vector<Call> Calls() const {
@@ -362,6 +399,7 @@ class RecordingWorklogMutations final : public IAppTicketMutations {
     int CallCount() const { return static_cast<int>(Calls().size()); }
     void Reset() {
         m_Hold.store(false);
+        m_Connectivity.store(TrackerConnectivityState::AuthenticatedReachable);
         std::lock_guard<std::mutex> lock(m_Mutex);
         m_Calls.clear();
     }
@@ -370,16 +408,36 @@ class RecordingWorklogMutations final : public IAppTicketMutations {
     mutable std::mutex m_Mutex;
     std::vector<Call> m_Calls;
     std::atomic<bool> m_Hold{false};
+    std::atomic<TrackerConnectivityState> m_Connectivity{TrackerConnectivityState::AuthenticatedReachable};
+    std::string m_FocusedPaneId;
+    std::string m_BackendKey;
+    std::map<std::string, std::string> m_PaneSites;
 };
 
 // TU-lifetime: the dialog's worker keeps a pointer to the facet until its submit returns.
 RecordingWorklogMutations g_worklogMutations;
 CachedTicket g_worklogTicket;
 bool g_worklogOpenRequested = false;
+// The grid pane the harness draws the dialog in, as the pane-window loop does (g_ui.activePaneForDraw).
+// An empty id draws it outside any pane, like the field viewer.
+GridPane g_worklogDrawingPane;
+// Another grid pane that shows the same issue in the same column and draws the dialog first each frame, as a
+// second visible pane window does. Empty: no such pane.
+GridPane g_worklogOtherDrawingPane;
+// The owning pane stopped drawing the cell (the pane was closed or hidden, or the row left its grid).
+bool g_worklogOwnerPaneHidden = false;
 
 const char* kWorklogHostWindow = "SmatchetTest::WorklogDialog";
 const char* kWorklogIssueId = "WLOGTEST-1"; // no grid row has it, so only this harness draws the dialog
 const char* kWorklogOwnerField = "timespent";
+// Two tracker sites that both have an issue with the harness's key.
+const char* kWorklogSiteKey = "Jira@site-a.example";
+const char* kWorklogOtherSiteKey = "Jira@site-b.example";
+// The draft-store scope the dialog keeps its entry under: the site, then the issue. Spelled out here
+// rather than taken from the product helper, so a change of shape shows up as a failing case.
+std::string WorklogDraftScopeForTest(const char* backendKey = kWorklogSiteKey) {
+    return std::string(backendKey) + "|" + kWorklogIssueId;
+}
 // "0m" reads as a duration but logs nothing, so the dialog asks for a time above zero (the same words the field
 // shows under itself). Built with the parser's own text so the case holds in any language.
 std::string WorklogBadTimeError() {
@@ -401,12 +459,27 @@ void DrawWorklogDialogHarness(ImGuiTestContext*) {
     ImGui::SetNextWindowSize(ImVec2(420, 120), ImGuiCond_Appearing);
     if (ImGui::Begin(kWorklogHostWindow, nullptr, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::TextUnformatted("worklog dialog host");
+        // The pane loop has already run this frame, so the slot is free; it is put back right after.
+        GridPane* const savedPane = g_ui.activePaneForDraw;
+        if (!g_worklogOtherDrawingPane.id.empty()) {
+            // Its own id scope, as its own pane window has: the open popup is not under it.
+            g_ui.activePaneForDraw = &g_worklogOtherDrawingPane;
+            ImGui::PushID(g_worklogOtherDrawingPane.id.c_str());
+            TicketFieldEditorWorklog::RenderTimeTrackingModal(*app, g_worklogMutations, g_worklogTicket,
+                                                              kWorklogOwnerField);
+            ImGui::PopID();
+        }
+        g_ui.activePaneForDraw = g_worklogDrawingPane.id.empty() ? savedPane : &g_worklogDrawingPane;
+        // Opened inside the pane's draw, as the grid cell does on a click.
         if (g_worklogOpenRequested) {
             g_worklogOpenRequested = false;
             TicketFieldEditorWorklog::OpenWorklogDialog(g_worklogTicket, kWorklogOwnerField);
         }
-        TicketFieldEditorWorklog::RenderTimeTrackingModal(*app, g_worklogMutations, g_worklogTicket,
-                                                          kWorklogOwnerField);
+        if (!g_worklogOwnerPaneHidden) {
+            TicketFieldEditorWorklog::RenderTimeTrackingModal(*app, g_worklogMutations, g_worklogTicket,
+                                                              kWorklogOwnerField);
+        }
+        g_ui.activePaneForDraw = savedPane;
     }
     ImGui::End();
 }
@@ -441,7 +514,12 @@ void CloseWorklogDialog(ImGuiTestContext* ctx) {
 
 // Opens a fresh dialog and waits for its first draw. False (and a failed check) when the app is
 // missing or the dialog never appeared.
-bool OpenWorklogDialogForTest(ImGuiTestContext* ctx, bool keepDrafts = false) {
+// `focusedPaneId` / `backendKey` are the focused pane the controller latches; `drawingPaneId` is the pane
+// the dialog is opened from and drawn in (empty: outside any pane), on site `drawingPaneBackendKey` (null:
+// the controller knows no such pane, so it has no tracker).
+bool OpenWorklogDialogForTest(ImGuiTestContext* ctx, bool keepDrafts = false, const char* backendKey = kWorklogSiteKey,
+                              const char* focusedPaneId = "", const char* drawingPaneId = "",
+                              const char* drawingPaneBackendKey = nullptr) {
     if (!keepDrafts) {
         smatchet::drafts::ResetForTests(); // an entry an earlier case kept must not prefill this one
     }
@@ -453,6 +531,18 @@ bool OpenWorklogDialogForTest(ImGuiTestContext* ctx, bool keepDrafts = false) {
         CloseWorklogDialog(ctx); // left open by a case that failed part-way
     }
     g_worklogMutations.Reset();
+    g_worklogMutations.SetFocusedPane(focusedPaneId, backendKey);
+    g_worklogMutations.ClearPaneSites();
+    if (!std::string(focusedPaneId).empty()) {
+        g_worklogMutations.SetPaneSite(focusedPaneId, backendKey);
+    }
+    if (!std::string(drawingPaneId).empty() && drawingPaneBackendKey != nullptr) {
+        g_worklogMutations.SetPaneSite(drawingPaneId, drawingPaneBackendKey);
+    }
+    g_worklogDrawingPane = GridPane{};
+    g_worklogDrawingPane.id = drawingPaneId;
+    g_worklogOtherDrawingPane = GridPane{};
+    g_worklogOwnerPaneHidden = false;
     g_worklogTicket = CachedTicket{};
     g_worklogTicket.id = kWorklogIssueId;
     g_worklogTicket.fieldValues["timeestimate"] = "4h";
@@ -722,14 +812,14 @@ void RegisterWorklogCancelKeepsEntry(ImGuiTestEngine* engine) {
         ctx->KeyChars("1h");
         ctx->Yield(2);
         smatchet::drafts::DraftEntry stored;
-        IM_CHECK_NO_RET(smatchet::drafts::Get("worklog.time", kWorklogIssueId, stored));
+        IM_CHECK_NO_RET(smatchet::drafts::Get("worklog.time", WorklogDraftScopeForTest(), stored));
         IM_CHECK_STR_EQ_NO_RET(stored.Text.c_str(), "1h");
 
         ctx->KeyPress(ImGuiKey_Escape); // leaves the field
         ctx->Yield(4);
         ctx->KeyPress(ImGuiKey_Escape); // cancels
         IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 10, []() { return !GetWorklogDialogSnapshotForTests().Active; }));
-        IM_CHECK_NO_RET(smatchet::drafts::Get("worklog.time", kWorklogIssueId, stored));
+        IM_CHECK_NO_RET(smatchet::drafts::Get("worklog.time", WorklogDraftScopeForTest(), stored));
         IM_CHECK_NO_RET(g_worklogMutations.CallCount() == 0);
 
         IM_CHECK_NO_RET(OpenWorklogDialogForTest(ctx, /*keepDrafts=*/true));
@@ -746,9 +836,298 @@ void RegisterWorklogCancelKeepsEntry(ImGuiTestEngine* engine) {
             ctx->ItemClick("Clear");
             ctx->Yield(4);
             IM_CHECK_STR_EQ_NO_RET(GetWorklogDialogSnapshotForTests().TimeSpent.c_str(), "");
-            IM_CHECK_NO_RET(!smatchet::drafts::Get("worklog.time", kWorklogIssueId, stored));
+            IM_CHECK_NO_RET(!smatchet::drafts::Get("worklog.time", WorklogDraftScopeForTest(), stored));
         }
         CloseWorklogDialog(ctx);
+    };
+}
+
+// O. The kept entry belongs to one tracker site (#2505). Two sites can have an issue with the same key:
+// opening it on the other site starts empty, and a save there does not erase the first site's entry.
+void RegisterWorklogKeptEntryStaysOnItsSite(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterWorklogDialogTest(engine, "WorklogDialog_KeptEntryStaysOnItsTrackerSite");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OpenWorklogDialogForTest(ctx)) {
+            return;
+        }
+        IM_CHECK_NO_RET(WaitForCaretInTimeSpent(ctx));
+        ctx->KeyChars("1h");
+        ctx->Yield(2);
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(smatchet::drafts::Get("worklog.time", WorklogDraftScopeForTest(), stored));
+        IM_CHECK_STR_EQ_NO_RET(stored.Text.c_str(), "1h");
+        IM_CHECK_NO_RET(!smatchet::drafts::Get("worklog.time", kWorklogIssueId, stored));
+
+        ctx->KeyPress(ImGuiKey_Escape); // leaves the field
+        ctx->Yield(4);
+        ctx->KeyPress(ImGuiKey_Escape); // cancels
+        IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 10, []() { return !GetWorklogDialogSnapshotForTests().Active; }));
+
+        IM_CHECK_NO_RET(OpenWorklogDialogForTest(ctx, /*keepDrafts=*/true, kWorklogOtherSiteKey));
+        ctx->Yield(3);
+        const WorklogDialogTestSnapshot otherSite = GetWorklogDialogSnapshotForTests();
+        IM_CHECK_STR_EQ_NO_RET(otherSite.TimeSpent.c_str(), "");
+        IM_CHECK_NO_RET(!otherSite.DraftRestored);
+
+        IM_CHECK_NO_RET(WaitForCaretInTimeSpent(ctx));
+        ctx->KeyChars("30m");
+        ctx->KeyPress(ImGuiKey_Enter);
+        IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 300, []() { return !GetWorklogDialogSnapshotForTests().Active; }));
+        const std::vector<RecordingWorklogMutations::Call> calls = g_worklogMutations.Calls();
+        IM_CHECK_NO_RET(calls.size() == 1);
+        if (calls.size() == 1) {
+            IM_CHECK_STR_EQ_NO_RET(calls.front().TimeSpent.c_str(), "30m");
+        }
+        IM_CHECK_NO_RET(smatchet::drafts::Get("worklog.time", WorklogDraftScopeForTest(), stored));
+        IM_CHECK_STR_EQ_NO_RET(stored.Text.c_str(), "1h");
+        IM_CHECK_NO_RET(!smatchet::drafts::Get("worklog.time", WorklogDraftScopeForTest(kWorklogOtherSiteKey), stored));
+
+        IM_CHECK_NO_RET(OpenWorklogDialogForTest(ctx, /*keepDrafts=*/true, kWorklogSiteKey));
+        ctx->Yield(3);
+        const WorklogDialogTestSnapshot ownSite = GetWorklogDialogSnapshotForTests();
+        IM_CHECK_STR_EQ_NO_RET(ownSite.TimeSpent.c_str(), "1h");
+        IM_CHECK_NO_RET(ownSite.DraftRestored);
+        CloseWorklogDialog(ctx);
+    };
+}
+
+// P. A click in a pane that is not focused (#2505). The pane focus follows the click a frame or two late,
+// so when the dialog opens the focused pane is still another pane, on another tracker site. The dialog
+// acts for the pane whose cell opened it from its first draw, with no wait for the focus: it shows and
+// erases that site's kept entry, never the focused pane's, and Save sends there with focus still elsewhere.
+void RegisterWorklogActsForThePaneThatDrawsIt(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterWorklogDialogTest(engine, "WorklogDialog_ActsForThePaneThatDrawsIt");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const char* kClickedPane = "worklog-pane-a"; // on kWorklogSiteKey, opens and draws the dialog
+        const char* kFocusedPane = "worklog-pane-b"; // on kWorklogOtherSiteKey, focused the whole time
+        smatchet::drafts::ResetForTests();
+        smatchet::drafts::Put("worklog.time", WorklogDraftScopeForTest(), "1h");
+        smatchet::drafts::Put("worklog.time", WorklogDraftScopeForTest(kWorklogOtherSiteKey), "9h");
+        if (!OpenWorklogDialogForTest(ctx, /*keepDrafts=*/true, kWorklogOtherSiteKey, kFocusedPane, kClickedPane,
+                                      kWorklogSiteKey)) {
+            g_worklogDrawingPane = GridPane{};
+            return;
+        }
+        // Site A's entry is back on the first draw, while pane B still holds focus.
+        const WorklogDialogTestSnapshot opened = GetWorklogDialogSnapshotForTests();
+        IM_CHECK_STR_EQ_NO_RET(opened.TimeSpent.c_str(), "1h");
+        IM_CHECK_NO_RET(opened.DraftRestored);
+
+        // The tracker drops while the dialog is up: the route must see that, not the state at the open.
+        g_worklogMutations.SetConnectivity(TrackerConnectivityState::TransportDown);
+        ctx->Yield(2);
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Enter);
+        IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 300, []() { return !GetWorklogDialogSnapshotForTests().Active; }));
+        const std::vector<RecordingWorklogMutations::Call> calls = g_worklogMutations.Calls();
+        IM_CHECK_NO_RET(calls.size() == 1);
+        if (calls.size() == 1) {
+            IM_CHECK_STR_EQ_NO_RET(calls.front().TimeSpent.c_str(), "1h");
+            IM_CHECK_STR_EQ_NO_RET(calls.front().TargetPaneId.c_str(), kClickedPane);
+            IM_CHECK_STR_EQ_NO_RET(calls.front().TargetBackendKey.c_str(), kWorklogSiteKey);
+            IM_CHECK_NO_RET(calls.front().TargetConnectivity == TrackerConnectivityState::TransportDown);
+        }
+        g_worklogMutations.SetConnectivity(TrackerConnectivityState::AuthenticatedReachable);
+        smatchet::drafts::DraftEntry stored;
+        // The entry the save finished is the one it sent: site A's is erased, site B's is untouched.
+        IM_CHECK_NO_RET(!smatchet::drafts::Get("worklog.time", WorklogDraftScopeForTest(), stored));
+        IM_CHECK_NO_RET(smatchet::drafts::Get("worklog.time", WorklogDraftScopeForTest(kWorklogOtherSiteKey), stored));
+        IM_CHECK_STR_EQ_NO_RET(stored.Text.c_str(), "9h");
+        if (GetWorklogDialogSnapshotForTests().Active) {
+            CloseWorklogDialog(ctx); // the owning pane must still draw it to close it
+        }
+        g_worklogDrawingPane = GridPane{};
+    };
+}
+
+// Q. Another visible pane shows the same issue in the same column and draws it before the owning pane each
+// frame. Its draw leaves the open alone: the dialog stays up, and the owning pane still saves it.
+void RegisterWorklogOtherPaneDrawKeepsTheOpen(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterWorklogDialogTest(engine, "WorklogDialog_AnotherPaneDrawingTheIssueKeepsItOpen");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const char* kOwnerPane = "worklog-pane-a";
+        const char* kOtherPane = "worklog-pane-b";
+        if (!OpenWorklogDialogForTest(ctx, /*keepDrafts=*/false, kWorklogSiteKey, kOwnerPane, kOwnerPane,
+                                      kWorklogSiteKey)) {
+            g_worklogDrawingPane = GridPane{};
+            return;
+        }
+        g_worklogOtherDrawingPane = GridPane{};
+        g_worklogOtherDrawingPane.id = kOtherPane;
+        ctx->Yield(10);
+        IM_CHECK_NO_RET(GetWorklogDialogSnapshotForTests().Active);
+        IM_CHECK_NO_RET(WorklogDialogOnTop() != nullptr);
+
+        IM_CHECK_NO_RET(WaitForCaretInTimeSpent(ctx));
+        ctx->KeyChars("2h");
+        ctx->KeyPress(ImGuiKey_Enter);
+        IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 300, []() { return !GetWorklogDialogSnapshotForTests().Active; }));
+        const std::vector<RecordingWorklogMutations::Call> calls = g_worklogMutations.Calls();
+        IM_CHECK_NO_RET(calls.size() == 1);
+        if (calls.size() == 1) {
+            IM_CHECK_STR_EQ_NO_RET(calls.front().TimeSpent.c_str(), "2h");
+            IM_CHECK_STR_EQ_NO_RET(calls.front().TargetPaneId.c_str(), kOwnerPane);
+        }
+        if (GetWorklogDialogSnapshotForTests().Active) {
+            CloseWorklogDialog(ctx);
+        }
+        g_worklogOtherDrawingPane = GridPane{};
+        g_worklogDrawingPane = GridPane{};
+    };
+}
+
+// R. The owning pane has no tracker (no live context): the dialog fails closed. It puts back no entry, not
+// even the focused pane's site's, keeps nothing of what is typed, and Save says why in the dialog and sends
+// nothing.
+void RegisterWorklogOwnerPaneWithoutTrackerFailsClosed(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterWorklogDialogTest(engine, "WorklogDialog_PaneWithoutTrackerKeepsNothingAndCannotSave");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const char* kGonePane = "worklog-pane-gone"; // the controller knows no such pane
+        const char* kFocusedPane = "worklog-pane-b"; // on kWorklogOtherSiteKey
+        smatchet::drafts::ResetForTests();
+        smatchet::drafts::Put("worklog.time", WorklogDraftScopeForTest(kWorklogOtherSiteKey), "9h");
+        if (!OpenWorklogDialogForTest(ctx, /*keepDrafts=*/true, kWorklogOtherSiteKey, kFocusedPane, kGonePane,
+                                      /*drawingPaneBackendKey=*/nullptr)) {
+            g_worklogDrawingPane = GridPane{};
+            return;
+        }
+        ctx->Yield(30); // longer than any wait for the focus: the dialog never falls back to the focused pane
+        const WorklogDialogTestSnapshot opened = GetWorklogDialogSnapshotForTests();
+        IM_CHECK_STR_EQ_NO_RET(opened.TimeSpent.c_str(), "");
+        IM_CHECK_NO_RET(!opened.DraftRestored);
+
+        IM_CHECK_NO_RET(WaitForCaretInTimeSpent(ctx));
+        ctx->KeyChars("1h");
+        ctx->Yield(2);
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(!smatchet::drafts::Get("worklog.time", std::string("|") + kWorklogIssueId, stored));
+        IM_CHECK_NO_RET(!smatchet::drafts::Get("worklog.time", kWorklogIssueId, stored));
+        IM_CHECK_NO_RET(smatchet::drafts::Get("worklog.time", WorklogDraftScopeForTest(kWorklogOtherSiteKey), stored));
+        IM_CHECK_STR_EQ_NO_RET(stored.Text.c_str(), "9h");
+
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Enter);
+        ctx->Yield(10);
+        const WorklogDialogTestSnapshot afterSave = GetWorklogDialogSnapshotForTests();
+        IM_CHECK_NO_RET(afterSave.Active);
+        IM_CHECK_NO_RET(!afterSave.SubmitInFlight);
+        IM_CHECK_NO_RET(!afterSave.ErrorMsg.empty());
+        IM_CHECK_NO_RET(g_worklogMutations.CallCount() == 0);
+        CloseWorklogDialog(ctx);
+        g_worklogDrawingPane = GridPane{};
+    };
+}
+
+// Whether the toast history holds a success toast for the harness's issue.
+bool WorklogSavedToastShown() {
+    const std::vector<ToastHistoryEntry>& history = SmatchetToastManager::Instance().History();
+    for (const ToastHistoryEntry& entry : history) {
+        if (entry.Type == ToastType::Success && entry.Message == kWorklogIssueId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// S. The owning pane stops drawing the cell while a save is running (the pane closed or hid, or the row left
+// its grid). With another pane still drawing the issue, the open ends at once; without one, it ends when the
+// save lands. Either way the outcome reaches the user as a toast, never only a dialog nobody can see.
+void RunWorklogOwnerPaneStopsDrawing(ImGuiTestContext* ctx, bool otherPaneDraws) {
+    const char* kOwnerPane = "worklog-pane-a";
+    const char* kOtherPane = "worklog-pane-b";
+    if (!OpenWorklogDialogForTest(ctx, /*keepDrafts=*/false, kWorklogSiteKey, kOwnerPane, kOwnerPane,
+                                  kWorklogSiteKey)) {
+        g_worklogDrawingPane = GridPane{};
+        return;
+    }
+    if (otherPaneDraws) {
+        g_worklogOtherDrawingPane = GridPane{};
+        g_worklogOtherDrawingPane.id = kOtherPane;
+    }
+    IM_CHECK_NO_RET(WaitForCaretInTimeSpent(ctx));
+    g_worklogMutations.SetHold(true);
+    ctx->KeyChars("1h");
+    ctx->KeyPress(ImGuiKey_Enter);
+    IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 120, []() {
+        return g_worklogMutations.CallCount() == 1 && GetWorklogDialogSnapshotForTests().SubmitInFlight;
+    }));
+    SmatchetToastManager::Instance().ClearHistory();
+    g_worklogOwnerPaneHidden = true;
+    if (otherPaneDraws) {
+        IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 10, []() { return !GetWorklogDialogSnapshotForTests().Active; }));
+    } else {
+        ctx->Yield(4);
+    }
+    g_worklogMutations.SetHold(false);
+    IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 300, []() { return WorklogSavedToastShown(); }));
+    IM_CHECK_NO_RET(!GetWorklogDialogSnapshotForTests().Active);
+    IM_CHECK_NO_RET(g_worklogMutations.CallCount() == 1);
+    g_worklogOwnerPaneHidden = false;
+    if (GetWorklogDialogSnapshotForTests().Active) {
+        CloseWorklogDialog(ctx);
+    }
+    g_worklogOtherDrawingPane = GridPane{};
+    g_worklogDrawingPane = GridPane{};
+}
+
+void RegisterWorklogOwnerPaneStopsDrawing(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterWorklogDialogTest(engine, "WorklogDialog_OwnerPaneStopsDrawing_OtherPaneEndsTheOpen");
+    t->TestFunc = [](ImGuiTestContext* ctx) { RunWorklogOwnerPaneStopsDrawing(ctx, /*otherPaneDraws=*/true); };
+    ImGuiTest* alone = RegisterWorklogDialogTest(engine, "WorklogDialog_OwnerPaneStopsDrawing_SaveResultIsAToast");
+    alone->TestFunc = [](ImGuiTestContext* ctx) { RunWorklogOwnerPaneStopsDrawing(ctx, /*otherPaneDraws=*/false); };
+}
+
+// T. Two tracker sites share an issue key. A save running for it on site A neither blocks Save on site B nor
+// holds back site B's kept entry, and site A's save landing leaves that entry alone.
+void RegisterWorklogSubmitOnOneSiteLeavesTheOther(ImGuiTestEngine* engine) {
+    ImGuiTest* t = RegisterWorklogDialogTest(engine, "WorklogDialog_SaveOnOneSiteLeavesTheOtherSitesEntry");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        smatchet::drafts::ResetForTests();
+        smatchet::drafts::Put("worklog.time", WorklogDraftScopeForTest(kWorklogOtherSiteKey), "2h");
+        if (!OpenWorklogDialogForTest(ctx, /*keepDrafts=*/true, kWorklogSiteKey)) {
+            return;
+        }
+        IM_CHECK_NO_RET(WaitForCaretInTimeSpent(ctx));
+        g_worklogMutations.SetHold(true);
+        ctx->KeyChars("1h");
+        ctx->KeyPress(ImGuiKey_Enter);
+        IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 120, []() {
+            return g_worklogMutations.CallCount() == 1 && GetWorklogDialogSnapshotForTests().SubmitInFlight;
+        }));
+        TicketFieldEditorWorklog::RequestCloseWorklogDialogForTests(); // closed while site A's save runs
+        IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 30, []() { return !GetWorklogDialogSnapshotForTests().Active; }));
+
+        // The same issue key, now on site B; the held save on site A keeps running (no Reset here).
+        g_worklogMutations.SetFocusedPane("", kWorklogOtherSiteKey);
+        g_worklogOpenRequested = true;
+        IM_CHECK_NO_RET(WorklogYieldUntil(
+            ctx, 60, []() { return GetWorklogDialogSnapshotForTests().Active && WorklogDialogOnTop() != nullptr; }));
+        ctx->Yield(2);
+        const WorklogDialogTestSnapshot otherSite = GetWorklogDialogSnapshotForTests();
+        IM_CHECK_NO_RET(!otherSite.SubmitInFlight);
+        IM_CHECK_STR_EQ_NO_RET(otherSite.TimeSpent.c_str(), "2h");
+        IM_CHECK_NO_RET(otherSite.DraftRestored);
+
+        g_worklogMutations.SetHold(false);
+        smatchet::drafts::DraftEntry stored;
+        IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 300, [&stored]() {
+            return !smatchet::drafts::Get("worklog.time", WorklogDraftScopeForTest(), stored);
+        }));
+        IM_CHECK_NO_RET(smatchet::drafts::Get("worklog.time", WorklogDraftScopeForTest(kWorklogOtherSiteKey), stored));
+        IM_CHECK_STR_EQ_NO_RET(stored.Text.c_str(), "2h");
+        IM_CHECK_NO_RET(GetWorklogDialogSnapshotForTests().Active);
+        IM_CHECK_STR_EQ_NO_RET(GetWorklogDialogSnapshotForTests().TimeSpent.c_str(), "2h");
+
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Enter);
+        IM_CHECK_NO_RET(WorklogYieldUntil(ctx, 300, []() { return !GetWorklogDialogSnapshotForTests().Active; }));
+        const std::vector<RecordingWorklogMutations::Call> calls = g_worklogMutations.Calls();
+        IM_CHECK_NO_RET(calls.size() == 2);
+        if (calls.size() == 2) {
+            IM_CHECK_STR_EQ_NO_RET(calls[0].TargetBackendKey.c_str(), kWorklogSiteKey);
+            IM_CHECK_STR_EQ_NO_RET(calls[1].TargetBackendKey.c_str(), kWorklogOtherSiteKey);
+            IM_CHECK_STR_EQ_NO_RET(calls[1].TimeSpent.c_str(), "2h");
+        }
+        if (GetWorklogDialogSnapshotForTests().Active) {
+            CloseWorklogDialog(ctx);
+        }
     };
 }
 } // namespace
@@ -768,6 +1147,12 @@ extern "C" void SmatchetRegisterDurationInlineEditCommitTests(ImGuiTestEngine* e
     RegisterWorklogEscKeepsTypedDate(engine);                  // L: Esc, start date typed into
     RegisterWorklogCancelKeepsEntry(engine);                   // M: Esc Esc keeps the entry, reopen restores
     RegisterWorklogSaveNamesItsKey(engine);                    // N: Save names Ctrl+Enter, placeholder
+    RegisterWorklogKeptEntryStaysOnItsSite(engine);            // O: the kept entry is per tracker site
+    RegisterWorklogActsForThePaneThatDrawsIt(engine);          // P: a click in a pane focus has not reached
+    RegisterWorklogOtherPaneDrawKeepsTheOpen(engine);          // Q: another pane's draw keeps the open
+    RegisterWorklogOwnerPaneWithoutTrackerFailsClosed(engine); // R: a pane with no tracker fails closed
+    RegisterWorklogOwnerPaneStopsDrawing(engine);              // S: the owning pane stops drawing mid-save
+    RegisterWorklogSubmitOnOneSiteLeavesTheOther(engine);      // T: a save on one site, the same key on another
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

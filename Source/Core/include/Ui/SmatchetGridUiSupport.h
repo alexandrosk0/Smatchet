@@ -36,6 +36,8 @@ struct GridKeyCellMenuCtx {
     int clickedRow;
     const TrackerField* field = nullptr;       ///< the clicked column's catalog field (data cells)
     const std::string* paneCacheKey = nullptr; ///< AppController::PaneCacheBackendKey of the pane (data cells)
+    /// The project `catalog` (and so `field`) was fetched for, "" = unscoped (ActiveProjectDrawCtx::catalogProjectKey)
+    const std::string* catalogProjectKey = nullptr;
 };
 
 // SMATCHET_DEVIATION(rule=duplication; reason=declaration mirrors its definition's long parameter list, not a copy-paste clone; owner=grid-engine; revisit=2027-10-13)
@@ -85,6 +87,16 @@ void CancelUnfinishedNewIssueForGridChange(UiDrawSession& d);
 /// non-whitespace summary or description, or staged attachments (P2-H4). Inherited
 /// seed fields (assignee, priority, ...) alone do not count as content.
 bool NewIssueDraftHasUserContent(const UiDrawSession& d);
+
+/// The kept new-issue draft (SmatchetNewIssueDraftUi.cpp, INPUT_UX_AUDIT.md #51). The draft-store scope of
+/// the row's entry for the focused tracker connection.
+std::string NewIssueRowDraftScope(const AppController& app);
+/// Before a view change closes the row: stores its typed text one last time. True when that text is kept
+/// ("+ New Issue" brings it back); false for a row the offline queue loaded, an empty row, or one whose
+/// create is still running (that create's result settles the entry).
+bool KeepNewIssueRowDraftOnClose(const UiDrawSession& d);
+/// The row was closed by something other than its own buttons: the next row decides afresh whether it is kept.
+void ForgetNewIssueRowDraft();
 
 // Consolidated Shared Utilities
 bool ImGuiEffectiveKeyCtrl();
@@ -156,6 +168,27 @@ std::uint64_t StartBulkFieldEdit(AppController& app, UiDrawSession& d, const std
                                  const TrackerField& field, const std::vector<std::string>& issueIds,
                                  const std::vector<std::string>& values, smatchet::grid::bulk::BulkMode mode,
                                  bool readOnlyMode);
+
+/// Per-row bulk edit: every row gets its own values (a pasted column, or an undo that gives each row its own
+/// before-value back, with the value we wrote as the row's ADR-0016 conflict base). Always Replace mode. An undo job
+/// (`isUndo`) records no history entry and its summary toast reads "Undone".
+std::uint64_t StartBulkFieldEdit(AppController& app, UiDrawSession& d, const std::string& paneId,
+                                 const TrackerField& field, const std::vector<smatchet::grid::bulk::BulkRowInput>& rows,
+                                 bool readOnlyMode, bool isUndo = false);
+
+// SMATCHET_DEVIATION(rule=duplication; reason=a header declaration mirrors its definition signature; owner=grid-engine; revisit=2027-05-15)
+smatchet::grid::bulk::BulkFieldEditJob
+PrepareBulkFieldEditJob(AppController& app, const std::string& paneId, const TrackerField& field,
+                        const std::vector<smatchet::grid::bulk::BulkRowInput>& rows,
+                        std::vector<std::vector<std::string>>* rowValues);
+
+/// Undo (docs/plans/active/input-ux-w3-grid-spreadsheet.md, S3). The toast's Undo button: takes history entry
+/// `entryId` and queues its inverse as ordinary edits. A no-op when the entry is gone.
+void UndoGridEntryById(AppController& app, UiDrawSession& d, std::uint64_t entryId);
+
+/// Grid Ctrl+Z: undoes the newest entry of `paneId`. An entry whose save has not landed yet answers with an info
+/// toast and stays; an empty history answers with a quiet info toast. Returns true when an inverse was queued.
+bool UndoNewestGridEntry(AppController& app, UiDrawSession& d, const std::string& paneId);
 
 /// Folds one row's result into its job (UI thread). An unknown job is ignored with a warning. When the last row
 /// lands, the one summary toast is pushed.

@@ -23,6 +23,31 @@ ToolbarButton MakeCmd(const std::string& id, const std::string& tip = std::strin
 
 using smatchet::toolbar_editor::DragDropDestIndex;
 using smatchet::toolbar_editor::EditorRowLabel;
+using smatchet::toolbar_editor::SameToolbarButtons;
+
+TEST_CASE("SameToolbarButtons: equal lists, and each field that differs") {
+    const std::vector<ToolbarButton> base = {MakeCmd("view.list", "Views"), MakeCmd("app.quit")};
+    CHECK(SameToolbarButtons(base, base));
+    CHECK(SameToolbarButtons({}, {}));
+    std::vector<ToolbarButton> other = base;
+    other.pop_back();
+    CHECK_FALSE(SameToolbarButtons(base, other));
+    const auto differsAfter = [&](void (*edit)(ToolbarButton&)) {
+        std::vector<ToolbarButton> changed = base;
+        edit(changed[1]);
+        return !SameToolbarButtons(base, changed);
+    };
+    CHECK(differsAfter([](ToolbarButton& b) { b.Kind = ToolbarButtonKind::Lua; }));
+    CHECK(differsAfter([](ToolbarButton& b) { b.IconName = "gear"; }));
+    CHECK(differsAfter([](ToolbarButton& b) { b.IconGlyph = "x"; }));
+    CHECK(differsAfter([](ToolbarButton& b) { b.Tooltip = "Quit"; }));
+    CHECK(differsAfter([](ToolbarButton& b) { b.CommandId = "app.restart"; }));
+    CHECK(differsAfter([](ToolbarButton& b) { b.ArgsJson = "{\"a\":1}"; }));
+    CHECK(differsAfter([](ToolbarButton& b) { b.LuaCode = "print(1)"; }));
+    // Order counts: a reorder is an edit.
+    const std::vector<ToolbarButton> swapped = {base[1], base[0]};
+    CHECK_FALSE(SameToolbarButtons(base, swapped));
+}
 
 TEST_CASE("EditorRowLabel: separator renders a fixed marker") {
     ToolbarButton b;
@@ -299,4 +324,60 @@ TEST_CASE("RankCommandMatches: an exact match leaves out letters-in-order ones")
     const std::vector<int> runOnly = {1};
     CHECK(RankCommandMatches(names, names, "run") == runOnly);   // r..u..n in "return" is left out
     CHECK(RankCommandMatches(names, names, "tsrn").size() == 2); // no exact entry: both by letters in order
+}
+
+using smatchet::toolbar_editor::CommandNameMatchRanges;
+using smatchet::toolbar_editor::IconNameMatchesNoIcon;
+
+namespace {
+
+// The marked bytes of `name` as text, ranges joined by '|': "list" for one range, "v|l" for two.
+std::string MarkedText(const std::string& name, const std::vector<smatchet::textmatch::ByteRange>& ranges) {
+    std::string out;
+    for (const smatchet::textmatch::ByteRange& r : ranges) {
+        if (!out.empty()) {
+            out += '|';
+        }
+        out += name.substr(r.Begin, r.End - r.Begin);
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("CommandNameMatchRanges: marks the matched letters of the name only") {
+    const std::string name = "view.list";
+    const std::string haystack = name + " List views";
+    smatchet::textmatch::Scratch scratch;
+    std::vector<smatchet::textmatch::ByteRange> ranges;
+
+    CommandNameMatchRanges(haystack, name.size(), "LIST", scratch, ranges);
+    CHECK(MarkedText(name, ranges) == "list"); // a word as written, any case
+
+    CommandNameMatchRanges(haystack, name.size(), "  vwlst ", scratch, ranges);
+    CHECK(!ranges.empty()); // letters in order, the query trimmed
+    for (const smatchet::textmatch::ByteRange& r : ranges) {
+        CHECK(r.End <= name.size());
+    }
+
+    CommandNameMatchRanges("app.quit Quit Smatchet", 8, "smatchet", scratch, ranges);
+    CHECK(ranges.empty()); // matched only in the title: nothing in the name to mark
+
+    // A later segment of the name loses the word-end bonus the title's "Comment" gets; the name is still marked.
+    const std::string comments = "issue.comments";
+    CommandNameMatchRanges(comments + " Comment on issue", comments.size(), "comment", scratch, ranges);
+    CHECK(MarkedText(comments, ranges) == "comment");
+
+    CommandNameMatchRanges(haystack, name.size(), "   ", scratch, ranges);
+    CHECK(ranges.empty()); // a blank filter marks nothing
+
+    CommandNameMatchRanges(haystack, name.size(), "zzzzqq", scratch, ranges);
+    CHECK(ranges.empty());
+}
+
+TEST_CASE("IconNameMatchesNoIcon: a typed name with no glyph, never a blank one") {
+    CHECK(IconNameMatchesNoIcon("no-such-icon", ""));
+    CHECK_FALSE(IconNameMatchesNoIcon("house", "\xef\x80\x95"));
+    CHECK_FALSE(IconNameMatchesNoIcon("", ""));
+    CHECK_FALSE(IconNameMatchesNoIcon("   ", ""));
 }

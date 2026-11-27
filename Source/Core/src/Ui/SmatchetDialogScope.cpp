@@ -4,6 +4,8 @@
 #include "Ui/SmatchetDestructiveButton.h"
 #include "imgui_internal.h"
 
+#include <cstring>
+
 namespace smatchet {
 namespace ui {
 
@@ -74,7 +76,7 @@ bool DialogFocusHere(DialogScopeState& s) {
     return true;
 }
 
-DialogKeys DialogReadKeys(DialogScopeState& s, bool nothingTyped) {
+DialogKeys DialogReadKeys(DialogScopeState& s, bool nothingTyped, bool readSubmit) {
     ImGuiContext& g = *ImGui::GetCurrentContext();
     const bool owns = DialogOwnsKeyboard();
     const bool esc = EscPressed();
@@ -82,7 +84,7 @@ DialogKeys DialogReadKeys(DialogScopeState& s, bool nothingTyped) {
     keys.Esc =
         dialogkeys::ResolveEscape(esc, owns, s.OwnedKeyboardLastFrame, FieldActiveForEsc(s, g, esc), nothingTyped);
     // Gated like Esc: the Ctrl+Enter that opened the dialog must not also submit it.
-    keys.Submit = owns && s.OwnedKeyboardLastFrame &&
+    keys.Submit = readSubmit && owns && s.OwnedKeyboardLastFrame &&
                   (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Enter) ||
                    ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadEnter));
     if (FieldActiveInDialog(g) && (keys.Submit || keys.Esc != dialogkeys::EscapeAction::None)) {
@@ -115,8 +117,18 @@ dialogkeys::ConfirmPick ConfirmFooter(DialogScopeState& s, const ConfirmFooterSp
     const bool navItemTakesEnter =
         g.NavId != 0 && g.NavCursorVisible && g.NavWindow != nullptr && g.CurrentWindow != nullptr &&
         g.NavWindow->RootWindow == g.CurrentWindow->RootWindow && (g.ActiveId == 0 || g.ActiveId == g.NavId);
+    // Ctrl+Enter is a form's submit, not a confirm's Enter: one aimed at the form under the confirm (the
+    // long-text editor's save) must not answer the confirm either.
+    const bool plainEnter = EnterPressed() && !ImGui::GetIO().KeyCtrl;
+    if (owns && EnterPressed() && ImGui::GetIO().KeyCtrl) {
+        // ImGui activates the item under a visible keyboard cursor on Enter whatever the modifiers, so
+        // without this Ctrl+Enter would still press the focused button (Discard included).
+        g.NavActivateId = 0;
+        g.NavActivateDownId = 0;
+        g.NavActivatePressedId = 0;
+    }
     const ConfirmPick enterPick =
-        dialogkeys::ResolveConfirmEnter(EnterPressed(), owns, s.OwnedKeyboardLastFrame, navItemTakesEnter, def);
+        dialogkeys::ResolveConfirmEnter(plainEnter, owns, s.OwnedKeyboardLastFrame, navItemTakesEnter, def);
     const dialogkeys::EscapeAction escape =
         dialogkeys::ResolveEscape(esc, owns, s.OwnedKeyboardLastFrame, FieldActiveForEsc(s, g, esc), true);
 
@@ -170,6 +182,125 @@ dialogkeys::ConfirmPick ConfirmFooter(DialogScopeState& s, const ConfirmFooterSp
 }
 
 bool AnyModalDialogOpen() { return ImGui::GetTopMostPopupModal() != nullptr; }
+
+namespace {
+
+// One tracker for the whole UI: modals stack, and the caret goes back once the last of them closes.
+dialogkeys::CaretReturnTracker g_caretReturn;
+
+// Frames a return request survives without the field taking the caret. The activation lands on the frame
+// after the request, so two would do; the rest covers a window that skips a frame while its dock settles.
+constexpr int kCaretReturnTries = 4;
+
+ImGuiID RootId(const ImGuiWindow* w) { return (w != nullptr && w->RootWindow != nullptr) ? w->RootWindow->ID : 0; }
+
+// The text field holding the caret, 0 for none. ImGui keeps one text-edit state, for the field being edited.
+ImGuiID ActiveTextField(const ImGuiContext& g) {
+    return (g.ActiveId != 0 && g.InputTextState.ID == g.ActiveId) ? g.ActiveId : 0;
+}
+
+// Where the caret and selection were in a text field. ImGui keeps one text-edit state, for the field being
+// edited, so a field that lost the caret to another field (the palette's filter, a dialog's own field) is
+// set up afresh when it is activated again, with all its text selected: the next key would replace it.
+struct CaretSpot {
+    ImGuiID Field = 0;
+    int Anchor = 0;
+    int Cursor = 0;
+};
+
+CaretSpot g_fieldCaret;   // the field that had the caret, as of the last frame no modal was up
+CaretSpot g_openerCaret;  // the field the palette was opened from
+CaretSpot g_restoreCaret; // to put back once the returned field has the caret again
+int g_restoreFrames = 0;
+
+CaretSpot ReadCaret(const ImGuiContext& g, ImGuiID field) {
+    CaretSpot spot;
+    if (field == 0 || g.InputTextState.ID != field) {
+        return spot;
+    }
+    const ImGuiInputTextState& st = g.InputTextState;
+    spot.Field = field;
+    spot.Anchor = st.HasSelection() ? st.GetSelectionStart() : st.GetCursorPos();
+    spot.Cursor = st.HasSelection() ? st.GetSelectionEnd() : st.GetCursorPos();
+    return spot;
+}
+
+// Puts an owed caret back on the first frame its field has the caret; drops it after a few frames.
+void RestoreOwedCaret(ImGuiContext& g, ImGuiID activeField) {
+    if (g_restoreCaret.Field == 0) {
+        return;
+    }
+    if (activeField == g_restoreCaret.Field) {
+        g.InputTextState.SetSelection(g_restoreCaret.Anchor, g_restoreCaret.Cursor);
+        g.InputTextState.CursorClamp();
+        g.InputTextState.CursorFollow = true;
+        g_restoreCaret = CaretSpot();
+    } else if (--g_restoreFrames <= 0) {
+        g_restoreCaret = CaretSpot();
+    }
+}
+
+} // namespace
+
+void ServiceDialogFocusReturn() {
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    const ImGuiID field = ActiveTextField(g);
+    RestoreOwedCaret(g, field);
+    const bool modalUp = AnyModalDialogOpen();
+    if (field != 0 && !modalUp) {
+        g_fieldCaret = ReadCaret(g, field);
+    }
+    const unsigned int give = dialogkeys::StepCaretReturn(
+        g_caretReturn, modalUp, field, field != 0 ? RootId(g.ActiveIdWindow) : 0, RootId(g.NavWindow),
+        ImGui::IsKeyDown(ImGuiKey_Enter) || ImGui::IsKeyDown(ImGuiKey_KeypadEnter), kCaretReturnTries);
+    if (give != 0) {
+        // Keep the caret where it was, as clicking back into the field does, instead of selecting the text.
+        ImGui::ActivateItemByID(give);
+        g.NavNextActivateFlags = ImGuiActivateFlags_PreferInput | ImGuiActivateFlags_TryToPreserveState;
+        // TryToPreserveState only holds while ImGui's one text state is still this field's: put the caret and
+        // selection back by hand once the field is active, in case it was not.
+        if (g_fieldCaret.Field == give) {
+            g_restoreCaret = g_fieldCaret;
+        } else if (g_openerCaret.Field == give) {
+            g_restoreCaret = g_openerCaret;
+        } else {
+            g_restoreCaret = CaretSpot();
+        }
+        g_restoreFrames = kCaretReturnTries + 1;
+    }
+}
+
+FocusOpener CaptureFocusOpener(const char* ignoreRootName) {
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
+    FocusOpener opener;
+    const ImGuiWindow* nav = g.NavWindow != nullptr ? g.NavWindow->RootWindow : nullptr;
+    if (nav == nullptr || (ignoreRootName != nullptr && std::strcmp(nav->Name, ignoreRootName) == 0)) {
+        return opener;
+    }
+    opener.Window = nav->ID;
+    const ImGuiID field = ActiveTextField(g);
+    if (field != 0 && RootId(g.ActiveIdWindow) == nav->ID) {
+        opener.TextField = field;
+        g_openerCaret = ReadCaret(g, field);
+    }
+    return opener;
+}
+
+void ReturnFocusTo(const FocusOpener& opener, const char* onlyFromRootName) {
+    ImGuiWindow* w = opener.Window != 0 ? ImGui::FindWindowByID(opener.Window) : nullptr;
+    if (w == nullptr || !w->WasActive) {
+        return;
+    }
+    const ImGuiWindow* nav = GImGui->NavWindow != nullptr ? GImGui->NavWindow->RootWindow : nullptr;
+    if (onlyFromRootName != nullptr && nav != nullptr && std::strcmp(nav->Name, onlyFromRootName) != 0) {
+        return;
+    }
+    // Also takes the caret out of the overlay's own field: FocusWindow drops an active item of another root.
+    ImGui::FocusWindow(w, ImGuiFocusRequestFlags_RestoreFocusedChild);
+    if (opener.TextField != 0) {
+        dialogkeys::RequestCaretReturn(g_caretReturn, opener.TextField, opener.Window);
+    }
+}
 
 } // namespace ui
 } // namespace smatchet

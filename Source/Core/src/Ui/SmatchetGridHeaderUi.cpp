@@ -296,11 +296,15 @@ void DrawGridSearchBox(UiDrawSession& d, GridPane& pane) {
     }
     ImGui::SameLine();
     // grid.search.focus (Ctrl+F or /) asked for the caret here: bring this pane forward and focus
-    // the box this frame.
+    // the box this frame. The request is consumed either way, but only honoured while no popup is
+    // open: SetWindowFocus() runs ClosePopupsOverWindow, so focusing the grid would close the
+    // bulk-edit dialog, an open FilterDropdown or a "Discard draft?" prompt along with its picks.
     if (pane.gridSearchFocusFramesLeft > 0) {
         pane.gridSearchFocusFramesLeft = 0;
-        ImGui::SetWindowFocus();
-        ImGui::SetKeyboardFocusHere();
+        if (!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+            ImGui::SetWindowFocus();
+            ImGui::SetKeyboardFocusHere();
+        }
     }
     // Esc in the box clears the search and leaves the box: the shared helper the settings search uses.
     SmatchetInput::ClearSearchOnEscape(pane.gridSearchInputId, pane.gridSearchBuf);

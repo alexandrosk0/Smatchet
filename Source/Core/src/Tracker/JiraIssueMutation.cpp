@@ -42,7 +42,7 @@ std::string WithRedactedBody(const std::string& userError, const std::string& bo
     return userError + " | body: " + RedactHttpBodyForLog(body);
 }
 
-// ClassifyRejectedHttpStatus moved to the shared Tracker/TrackerError.h (used by PlaneClient too —
+// ClassifyRejectedHttpStatus moved to the shared TrackerError.h (used by PlaneClient too —
 // #1785); the unqualified calls below now resolve to that inline free function.
 
 } // namespace

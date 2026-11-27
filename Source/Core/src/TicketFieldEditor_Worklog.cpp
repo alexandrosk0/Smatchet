@@ -10,6 +10,7 @@
 #include "Commands/IAppThreading.h"
 #include "CompactDateFormat.h"
 #include "DraftStore.h"
+#include "GridPane.h"
 #include "Interfaces/IAppTicketMutations.h"
 #include "Logger.h"
 #include "PendingActionTypes.h"
@@ -22,8 +23,10 @@
 #include "Ui/PendingActionSubmitAsync.h"
 #include "Ui/DialogKeysPure.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
+#include "Ui/SmatchetDialogScope.h"
 #include "Ui/SmatchetSubmitKeys.h"
 #include "Ui/SmatchetToast.h"
+#include "Ui/SmatchetUiSession.h" // g_ui.activePaneForDraw: the pane that draws the dialog
 #include "Ui/SmatchetWorklogSubmitPure.h"
 
 #include "imgui.h"
@@ -127,76 +130,191 @@ struct ActiveWorklogDialogState {
     /// Frames left to put the caret in Time spent (0 = nothing pending): set when the dialog opens
     /// and when Enter there was turned down. Bounded, so a focus that cannot land never fights the user.
     int TimeSpentFocusFramesLeft = 0;
-    /// The dialog itself (not a popup above it) had the keyboard on the last draw.
-    bool OwnedKeyboardLastFrame = false;
-    /// The two text boxes as last handed to the draft store (DraftStore.h), to notice a change without
-    /// allocating each frame.
+    /// The dialog scope's state (Ui/SmatchetDialogScope.h): Esc and Ctrl+Enter are read through it.
+    smatchet::ui::DialogScopeState Dialog;
+    /// The text boxes as last handed to the draft store (DraftStore.h), to notice a change without
+    /// allocating each frame. Time remaining is kept only while the user edited it (WorklogRemainingDraftText).
     std::string DraftSyncedSpent;
     std::string DraftSyncedDescription;
+    std::string DraftSyncedRemaining;
     /// The boxes were filled from an entry kept by an earlier open.
     bool DraftRestored = false;
+    /// The grid pane whose cell opened the dialog (g_ui.activePaneForDraw at the open). Empty when it was
+    /// opened outside the pane windows. Only that pane's draw hosts the popup, and the target is that pane.
+    std::string OwnerPaneId;
+    /// The pane this open acts for, latched once on the first draw (LatchWorklogTarget). Save sends to it and
+    /// the draft scope names its tracker site, so the kept entry and the worklog always belong to the same site.
+    PendingActionTarget Target;
+    bool TargetLatched = false;
+    /// Draft-store scope of this open (WorklogDraftScope: the target's tracker site and the issue). Empty
+    /// until the target is latched, and empty for a target with no tracker: nothing is kept or put back then.
+    std::string DraftScope;
+    /// Key of this open in the in-flight set (WorklogDraftScope of the target, even one without a backend
+    /// key). Empty until the target is latched and for a target with no tracker, which never sends.
+    std::string SubmitKey;
+    /// ImGui frame on which the owning pane last hosted the popup. An open whose pane stopped drawing it
+    /// (the pane closed or hid, or the row left the grid) is no longer seen, so it is ended (OpenIsSeen).
+    int HostedFrame = 0;
 };
 
 static ActiveWorklogDialogState s_ActiveWorklogState;
+
+/// Submit keys (the tracker site and the issue, ActiveWorklogDialogState::SubmitKey) whose worklog POST is
+/// still outstanding; the set is empty when none is. Outside the dialog state because `SubmitInFlight` is
+/// reset on every open, so tracking the POST there let Save → Cancel → re-open the SAME ticket enable Save
+/// again while the first request was still running — two worklogs for one intent. The POST cannot be
+/// cancelled (`AddWorklog` takes no cancel token), so Cancel closes the dialog while the request keeps
+/// running; these keys are what keep that fact visible. A SET, not one slot (#2167): submits on different
+/// tickets overlap, and a single slot let Save on B overwrite A's latch so re-opening A re-enabled Save
+/// mid-POST. Keyed by site as well as issue: two sites can share an issue key, and a submit on one must
+/// neither block Save nor hold back the kept entry on the other. Each post-back erases its OWN key
+/// UNCONDITIONALLY, before the stale-guard, so a cancelled dialog cannot strand a latch and lock its ticket
+/// out of Save forever, and a late post-back cannot clear another submit's still-outstanding latch.
+static smatchet::worklog::WorklogSubmitInFlightSet s_WorklogSubmitInFlightKeys;
 
 /// One focus request plus one retry; each needs the frame after it to land.
 constexpr int kTimeSpentFocusFrames = 4;
 constexpr const char* kTimeSpentFieldLabel = "##WorklogTimeSpent";
 
-/// Draft store surfaces of the two text boxes; the scope is the issue (DraftStore.h).
+/// Draft store surfaces of the text boxes; the scope is the tracker site and the issue (DraftStore.h).
 constexpr const char* kWorklogSpentDraftSurface = "worklog.time";
 constexpr const char* kWorklogDescriptionDraftSurface = "worklog.description";
+constexpr const char* kWorklogRemainingDraftSurface = "worklog.remaining";
 
 /// Keeps what is typed in the two boxes as a draft, so Cancel, Esc, a restart or a crash does not lose it.
 /// Called once per frame while the dialog is up; it compares the boxes with what was last handed over.
 void SyncWorklogDraft() {
     ActiveWorklogDialogState& st = s_ActiveWorklogState;
-    if (st.SubmitInFlight) {
-        return; // being sent: the draft is erased when it lands
+    if (st.SubmitInFlight || st.DraftScope.empty()) {
+        return; // being sent (the draft is erased when it lands), or no tracker site to keep it under
     }
     if (st.DraftSyncedSpent != st.TimeSpent) {
         st.DraftSyncedSpent = st.TimeSpent;
-        smatchet::drafts::Put(kWorklogSpentDraftSurface, st.IssueId, st.DraftSyncedSpent);
+        smatchet::drafts::Put(kWorklogSpentDraftSurface, st.DraftScope, st.DraftSyncedSpent);
     }
     if (st.DraftSyncedDescription != st.WorkDescription) {
         st.DraftSyncedDescription = st.WorkDescription;
-        smatchet::drafts::Put(kWorklogDescriptionDraftSurface, st.IssueId, st.DraftSyncedDescription);
+        smatchet::drafts::Put(kWorklogDescriptionDraftSurface, st.DraftScope, st.DraftSyncedDescription);
+    }
+    const bool remainingChanged =
+        st.TimeRemainingManuallyEdited ? st.DraftSyncedRemaining != st.TimeRemaining : !st.DraftSyncedRemaining.empty();
+    if (remainingChanged) {
+        st.DraftSyncedRemaining =
+            smatchet::worklog::WorklogRemainingDraftText(st.TimeRemainingManuallyEdited, st.TimeRemaining);
+        smatchet::drafts::Put(kWorklogRemainingDraftSurface, st.DraftScope, st.DraftSyncedRemaining);
     }
 }
 
-void EraseWorklogDraft(const std::string& issueId) {
-    smatchet::drafts::Erase(kWorklogSpentDraftSurface, issueId);
-    smatchet::drafts::Erase(kWorklogDescriptionDraftSurface, issueId);
+void EraseWorklogDraft(const std::string& scope) {
+    if (scope.empty()) {
+        return; // an open with no tracker site kept nothing
+    }
+    smatchet::drafts::Erase(kWorklogSpentDraftSurface, scope);
+    smatchet::drafts::Erase(kWorklogDescriptionDraftSurface, scope);
+    smatchet::drafts::Erase(kWorklogRemainingDraftSurface, scope);
 }
 
-/// At open: puts back the entry kept for this issue. Not while this issue's last submit is still
-/// running: that text is what is being sent.
+/// Once the target is latched: puts back the entry kept for its tracker site and this issue. Not while this
+/// issue's last submit is still running (that text is what is being sent), and not without a tracker site.
 void RestoreWorklogDraft() {
     ActiveWorklogDialogState& st = s_ActiveWorklogState;
     st.DraftSyncedSpent.clear();
     st.DraftSyncedDescription.clear();
+    st.DraftSyncedRemaining.clear();
     st.DraftRestored = false;
-    if (st.SubmitInFlight) {
+    if (st.SubmitInFlight || st.DraftScope.empty()) {
         return;
     }
     smatchet::drafts::DraftEntry spent;
     smatchet::drafts::DraftEntry description;
-    if (smatchet::drafts::Get(kWorklogSpentDraftSurface, st.IssueId, spent)) {
+    if (smatchet::drafts::Get(kWorklogSpentDraftSurface, st.DraftScope, spent)) {
         std::strncpy(st.TimeSpent, spent.Text.c_str(), sizeof(st.TimeSpent) - 1);
         st.TimeSpent[sizeof(st.TimeSpent) - 1] = '\0';
         st.DraftRestored = true;
     }
-    if (smatchet::drafts::Get(kWorklogDescriptionDraftSurface, st.IssueId, description)) {
+    if (smatchet::drafts::Get(kWorklogDescriptionDraftSurface, st.DraftScope, description)) {
         std::strncpy(st.WorkDescription, description.Text.c_str(), sizeof(st.WorkDescription) - 1);
         st.WorkDescription[sizeof(st.WorkDescription) - 1] = '\0';
         st.DraftRestored = true;
     }
+    smatchet::drafts::DraftEntry remaining;
+    if (smatchet::drafts::Get(kWorklogRemainingDraftSurface, st.DraftScope, remaining)) {
+        std::strncpy(st.TimeRemaining, remaining.Text.c_str(), sizeof(st.TimeRemaining) - 1);
+        st.TimeRemaining[sizeof(st.TimeRemaining) - 1] = '\0';
+        st.TimeRemainingManuallyEdited = true; // it was typed: the spent time no longer derives it
+        st.DraftRestored = true;
+    }
     st.DraftSyncedSpent = st.TimeSpent;
     st.DraftSyncedDescription = st.WorkDescription;
+    st.DraftSyncedRemaining =
+        smatchet::worklog::WorklogRemainingDraftText(st.TimeRemainingManuallyEdited, st.TimeRemaining);
 }
 
-/// The "restored" line with its Clear button, above the time inputs. Clearing empties both boxes; the
-/// next SyncWorklogDraft erases the kept entry.
+/// The pane drawing right now (g_ui.activePaneForDraw), empty outside the pane windows.
+std::string DrawingPaneId() {
+    const GridPane* drawingPane = g_ui.activePaneForDraw;
+    return drawingPane != nullptr ? drawingPane->id : std::string();
+}
+
+/// Whether `target` names a tracker a worklog can go to. A pane with no live context latches a target with
+/// neither a backend nor a backend key: Save then says so in the dialog instead of sending, and nothing is
+/// kept, so no entry can land on another pane's site.
+bool WorklogTargetHasTracker(const PendingActionTarget& target) {
+    return target.Backend != nullptr || !target.BackendKey.empty();
+}
+
+/// Latches the pane this open acts for, then its draft scope, then puts back the kept entry. Called on every
+/// draw that hosts the popup and acts once, on the first, before any input reads the boxes. The pane is the
+/// one whose cell opened the dialog (OwnerPaneId), whichever pane holds focus: a click in a pane that is not
+/// focused opens the dialog before the pane focus follows it. Opened outside the pane windows, it is the
+/// focused pane. Save sends to this same target, so the kept entry and the worklog cannot name different sites.
+void LatchWorklogTarget(IAppTicketMutations& mutations) {
+    ActiveWorklogDialogState& st = s_ActiveWorklogState;
+    if (st.TargetLatched) {
+        return;
+    }
+    st.Target = st.OwnerPaneId.empty() ? mutations.LatchPendingActionTarget()
+                                       : mutations.LatchPendingActionTargetForPane(st.OwnerPaneId);
+    st.TargetLatched = true;
+    st.DraftScope.clear();
+    st.SubmitKey.clear();
+    if (!WorklogTargetHasTracker(st.Target)) {
+        LOG_WARN("Worklog: pane %s has no tracker, so the dialog for %s keeps no entry and cannot save",
+                 st.OwnerPaneId.c_str(), st.IssueId.c_str());
+    } else {
+        st.SubmitKey = smatchet::worklog::WorklogDraftScope(st.Target.BackendKey, st.IssueId);
+        if (!st.Target.BackendKey.empty()) {
+            st.DraftScope = st.SubmitKey;
+        }
+    }
+    // Seeded from this site's outstanding submit only (#2085): a re-open while it runs keeps Save disabled
+    // and the "Saving worklog..." cue up, while a submit for the same issue key on another site holds back
+    // neither Save nor this site's kept entry. Before the restore, which skips the text being sent.
+    st.SubmitInFlight = smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightKeys, st.SubmitKey);
+    RestoreWorklogDraft();
+}
+
+/// The dialog's open ends: nothing of it may outlive the close, least of all the target's strong handle
+/// on the tracker backend.
+void EndWorklogOpen() {
+    ActiveWorklogDialogState& st = s_ActiveWorklogState;
+    st.Initialized = false;
+    st.Target = PendingActionTarget();
+    st.TargetLatched = false;
+}
+
+/// Whether the owning pane hosted the popup on this frame or the one before. When it stopped (the pane was
+/// closed or hidden, or the row left the grid) the open is no longer seen: a save result must then go to a
+/// toast, not into a dialog nobody can read. Without an ImGui frame there is nothing to measure against.
+bool OpenIsSeen() {
+    if (ImGui::GetCurrentContext() == nullptr) {
+        return true;
+    }
+    return s_ActiveWorklogState.HostedFrame >= ImGui::GetFrameCount() - 1;
+}
+
+/// The "restored" line with its Clear button, above the time inputs. Clearing empties both boxes and puts
+/// back the issue's own Time remaining; the next SyncWorklogDraft erases the kept entry.
 void DrawWorklogDraftNotice() {
     ActiveWorklogDialogState& st = s_ActiveWorklogState;
     if (!st.DraftRestored) {
@@ -207,6 +325,9 @@ void DrawWorklogDraftNotice() {
     if (ImGui::SmallButton(SmatchetLocalization::T("worklog.draft_clear", "Clear"))) {
         st.TimeSpent[0] = '\0';
         st.WorkDescription[0] = '\0';
+        std::strncpy(st.TimeRemaining, st.TotalTimeRemaining.c_str(), sizeof(st.TimeRemaining) - 1);
+        st.TimeRemaining[sizeof(st.TimeRemaining) - 1] = '\0';
+        st.TimeRemainingManuallyEdited = false;
         st.DraftRestored = false;
         st.TimeSpentFocusFramesLeft = kTimeSpentFocusFrames;
     }
@@ -220,19 +341,6 @@ static bool s_WorklogTimeSpentActiveForTests = false;
 /// Monotonic submit-generation counter, deliberately OUTSIDE the dialog state so it survives
 /// the per-open reset (the #1713 lesson: a counter reset with the state makes the guard inert).
 static int s_WorklogGenCounter = 0;
-
-/// Issue ids whose worklog POST is still outstanding; the set is empty when none is. Also outside
-/// the dialog state, and for the same reason: `SubmitInFlight` is reset on every open, so tracking
-/// the POST there let Save → Cancel → re-open the SAME ticket enable Save again while the first
-/// request was still running — two worklogs for one intent. The POST cannot be cancelled (`AddWorklog`
-/// takes no cancel token), so Cancel closes the dialog while the request keeps running; these ids
-/// are what keep that fact visible. A SET, not one slot (#2167): submits on different tickets
-/// overlap, and a single slot let Save on B overwrite A's latch so re-opening A re-enabled Save
-/// mid-POST — the same duplicate class, reached by a two-ticket interleaving. Each post-back
-/// erases its OWN id UNCONDITIONALLY, before the stale-guard, so a cancelled dialog cannot strand
-/// a latch and lock its ticket out of Save forever, and a late post-back cannot clear another
-/// ticket's still-outstanding latch.
-static smatchet::worklog::WorklogSubmitInFlightSet s_WorklogSubmitInFlightIssueIds;
 
 // Computes the progress-bar logged/remaining seconds for the worklog dialog. Pure arithmetic on
 // the parsed durations — extracted so the modal draw body stays layout-focused. Mirrors the
@@ -255,13 +363,19 @@ void ComputeWorklogProgressSeconds(long long& outDisplaySpentSec, long long& out
 // while it is still this submit's, otherwise as a toast (the worklog was sent, saved or rejected, and
 // closing the dialog cannot undo that). A queued worklog always gets a toast — the dialog closes but
 // nothing has reached the tracker yet (Quality Pillar 6: say what actually happened).
-void ApplyWorklogSaveResult(int gen, const std::string& issueId, const PendingActionSubmitResult& result) {
+void ApplyWorklogSaveResult(int gen, const std::string& issueId, const std::string& submitKey,
+                            const std::string& draftScope, const PendingActionSubmitResult& result) {
     // Before any early-out: a latch left set would block Save on this ticket for the rest of the session.
-    // Erasing only THIS id leaves any other ticket's outstanding submit latched.
-    smatchet::worklog::ClearWorklogSubmitInFlight(s_WorklogSubmitInFlightIssueIds, issueId);
+    // Erasing only THIS key leaves any other submit latched.
+    smatchet::worklog::ClearWorklogSubmitInFlight(s_WorklogSubmitInFlightKeys, submitKey);
+    if (s_ActiveWorklogState.Initialized && !OpenIsSeen()) {
+        // No pane draws the dialog any more: end the open, so the outcome below takes the toast path and the
+        // target's backend handle goes with it.
+        EndWorklogOpen();
+    }
     const bool ok = result.K != PendingActionSubmitResult::Kind::Failed;
     if (ok) {
-        EraseWorklogDraft(issueId); // sent or saved to the queue: the kept entry is done
+        EraseWorklogDraft(draftScope); // sent or saved to the queue: the kept entry is done
     }
     const std::string err = result.Error.empty() ? std::string("the worklog could not be saved.") : result.Error;
     if (result.K == PendingActionSubmitResult::Kind::Queued && result.NeedsReview) {
@@ -285,10 +399,10 @@ void ApplyWorklogSaveResult(int gen, const std::string& issueId, const PendingAc
     // submit superseded this one, so nothing may be written into the dialog state.
     if (SmatchetCommentsModalGen::CallbackIsStale(s_ActiveWorklogState.Initialized, s_ActiveWorklogState.Gen, gen,
                                                   s_ActiveWorklogState.IssueId, issueId)) {
-        // Stale because the SAME ticket was re-opened mid-submit (#2168): that open seeded SubmitInFlight
-        // from the latch released above, so the re-opened dialog would otherwise keep Save disabled.
+        // Stale because the SAME ticket on the same site was re-opened mid-submit (#2168): that open seeded
+        // SubmitInFlight from the latch released above, so the re-opened dialog would otherwise keep Save disabled.
         if (smatchet::worklog::StalePostBackReleasesDialogSubmit(s_ActiveWorklogState.Initialized,
-                                                                 s_ActiveWorklogState.IssueId, issueId)) {
+                                                                 s_ActiveWorklogState.SubmitKey, submitKey)) {
             s_ActiveWorklogState.SubmitInFlight = false;
         }
         if (result.K == PendingActionSubmitResult::Kind::Sent) {
@@ -323,10 +437,16 @@ void HandleWorklogSave(IAppThreading& threading, IAppTicketMutations& mutations)
     // Two gates, not one: the dialog's own flag AND the cross-instance in-flight id set. The second
     // is what stops Save → Cancel → re-open → Save creating two worklogs for one intent.
     if (!smatchet::worklog::CanSubmitWorklog(s_ActiveWorklogState.SubmitInFlight) ||
-        smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightIssueIds, s_ActiveWorklogState.IssueId)) {
+        smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightKeys, s_ActiveWorklogState.SubmitKey)) {
         return; // a submit is already in flight — never queue a duplicate worklog
     }
     s_ActiveWorklogState.ErrorMsg.clear();
+    // The target is latched on the dialog's first draw, before any button exists. One without a tracker
+    // (the pane has no live context) is never sent: the send-or-queue route could neither send nor queue it.
+    if (!WorklogTargetHasTracker(s_ActiveWorklogState.Target)) {
+        s_ActiveWorklogState.ErrorMsg = "Failed: this pane has no tracker connected, so the worklog was not sent.";
+        return;
+    }
     const std::string validationError =
         smatchet::worklog::ValidateWorklogSubmission(s_ActiveWorklogState.TimeSpent, s_ActiveWorklogState.DateStarted);
     if (!validationError.empty()) {
@@ -343,9 +463,15 @@ void HandleWorklogSave(IAppThreading& threading, IAppTicketMutations& mutations)
     }
 
     IAppTicketMutations* mutationsPtr = &mutations;
-    // Latched at Save: the worklog goes to this pane's tracker even if focus moves before the worker runs.
-    const PendingActionTarget target = mutations.LatchPendingActionTarget();
+    // Latched for this open (LatchWorklogTarget): the worklog goes to the pane the dialog acts for,
+    // wherever focus is now, and to the site whose kept entry the boxes show. Whether the tracker is reachable
+    // is read now, not at the open: the dialog can stay up across a drop, and the send-or-queue route follows it.
+    PendingActionTarget target = s_ActiveWorklogState.Target;
+    target.Connectivity = mutations.GetLastTrackerConnectivityState();
     const std::string issueId = s_ActiveWorklogState.IssueId;
+    // The entry that is done when this lands is the one this dialog was keeping.
+    const std::string draftScope = s_ActiveWorklogState.DraftScope;
+    const std::string submitKey = s_ActiveWorklogState.SubmitKey;
     // What goes out is the canonical form ("1h 30m"), whatever natural spelling was typed.
     const std::string timeSpent = smatchet::worklog::CanonicalDurationText(s_ActiveWorklogState.TimeSpent);
     const std::string timeRemaining = smatchet::worklog::CanonicalDurationText(s_ActiveWorklogState.TimeRemaining);
@@ -357,7 +483,7 @@ void HandleWorklogSave(IAppThreading& threading, IAppTicketMutations& mutations)
     const int gen = SmatchetCommentsModalGen::AllocGen(s_WorklogGenCounter);
     s_ActiveWorklogState.Gen = gen;
     s_ActiveWorklogState.SubmitInFlight = true;
-    smatchet::worklog::MarkWorklogSubmitInFlight(s_WorklogSubmitInFlightIssueIds, issueId);
+    smatchet::worklog::MarkWorklogSubmitInFlight(s_WorklogSubmitInFlightKeys, submitKey);
     try {
         smatchet::ui::SubmitPendingActionAsync(
             threading,
@@ -365,11 +491,13 @@ void HandleWorklogSave(IAppThreading& threading, IAppTicketMutations& mutations)
                 return mutationsPtr->SubmitOrQueueWorklog(target, issueId, timeSpent, timeRemaining, adjEst,
                                                           description, startedDate);
             },
-            [gen, issueId](const PendingActionSubmitResult& result) { ApplyWorklogSaveResult(gen, issueId, result); });
+            [gen, issueId, submitKey, draftScope](const PendingActionSubmitResult& result) {
+                ApplyWorklogSaveResult(gen, issueId, submitKey, draftScope, result);
+            });
     } catch (const std::exception& ex) {
         // The launch failed (no thread): nothing was sent, so release both latches here.
         LOG_WARN("Worklog: could not start saving the worklog for %s: %s", issueId.c_str(), ex.what());
-        smatchet::worklog::ClearWorklogSubmitInFlight(s_WorklogSubmitInFlightIssueIds, issueId);
+        smatchet::worklog::ClearWorklogSubmitInFlight(s_WorklogSubmitInFlightKeys, submitKey);
         s_ActiveWorklogState.SubmitInFlight = false;
         s_ActiveWorklogState.ErrorMsg = "Failed: the worklog could not be saved. Try again.";
     }
@@ -566,43 +694,31 @@ bool ActiveFieldTextChanged(const ImGuiContext& g) {
 // dialog takes must not also reach the field or button that has the keyboard.
 // - Only while the dialog itself has the keyboard. A popup above it (suggestions, date picker,
 //   templates) keeps its keys, and so does any other window.
-// - Ctrl+Enter saves from anywhere. The field being typed in is left first, which commits its text
-//   the way clicking Save would. Nav activation is dropped for the frame, because ImGui activates the
-//   item under the keyboard cursor on Enter whatever the modifiers: without that, Ctrl+Enter with the
-//   cursor on Cancel would save and close, and on the date picker's reset would save a reset date.
+// - Ctrl+Enter saves from anywhere, once the dialog has had the keyboard for a frame. The field being
+//   typed in is left first, which commits its text the way clicking Save would. Nav activation is dropped
+//   for the frame, because ImGui activates the item under the keyboard cursor on Enter whatever the
+//   modifiers: without that, Ctrl+Enter with the cursor on Cancel would save and close, and on the date
+//   picker's reset would save a reset date.
 // - Esc: see smatchet::dialogkeys::ResolveEscape. Leaving the field here ends the edit the way clicking away does:
 //   Time spent, Time remaining and the description keep what was typed (ImGui's own Esc would put
 //   the field back to its text from before the caret entered); a start date or time that does not
 //   parse yet goes back to the last valid one, as it does on a click away.
+// Both are the dialog scope's (smatchet::ui::DialogReadKeys); this only says what "nothing typed" means here.
 WorklogKeys ReadWorklogKeys() {
     ActiveWorklogDialogState& st = s_ActiveWorklogState;
-    ImGuiContext& g = *ImGui::GetCurrentContext();
-    const bool ownsKeyboard =
-        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy);
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
     const bool fieldActive =
         g.ActiveId != 0 && g.ActiveIdWindow != nullptr && g.ActiveIdWindow->RootWindow == g.CurrentWindow->RootWindow;
-    WorklogKeys keys;
-    keys.Save = ownsKeyboard && (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Enter) ||
-                                 ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_KeypadEnter));
     // Nothing typed: Time spent and the description are empty, Time remaining and the start date
     // still show what the dialog opened with (Time remaining only moves by itself when Time spent
     // has a value), and the field holding the caret has not been typed in.
     const bool nothingTyped = st.TimeSpent[0] == '\0' && st.WorkDescription[0] == '\0' &&
                               st.TotalTimeRemaining == st.TimeRemaining && st.DateStarted == st.InitialDateStarted &&
                               !(fieldActive && ActiveFieldTextChanged(g));
-    const smatchet::dialogkeys::EscapeAction escape =
-        smatchet::dialogkeys::ResolveEscape(ImGui::IsKeyPressed(ImGuiKey_Escape, false), ownsKeyboard,
-                                            st.OwnedKeyboardLastFrame, fieldActive, nothingTyped);
-    st.OwnedKeyboardLastFrame = ownsKeyboard;
-    keys.Cancel = escape == smatchet::dialogkeys::EscapeAction::Cancel;
-    if (fieldActive && (keys.Save || escape != smatchet::dialogkeys::EscapeAction::None)) {
-        ImGui::ClearActiveID();
-    }
-    if (keys.Save) {
-        g.NavActivateId = 0;
-        g.NavActivateDownId = 0;
-        g.NavActivatePressedId = 0;
-    }
+    const smatchet::ui::DialogKeys dialogKeys = smatchet::ui::DialogReadKeys(st.Dialog, nothingTyped);
+    WorklogKeys keys;
+    keys.Save = dialogKeys.Submit;
+    keys.Cancel = dialogKeys.Esc == smatchet::dialogkeys::EscapeAction::Cancel;
     return keys;
 }
 
@@ -640,7 +756,7 @@ void DrawWorklogButtons(IAppThreading& threading, IAppTicketMutations& mutations
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(80, 0)) || keys.Cancel) {
         ImGui::CloseCurrentPopup();
-        st.Initialized = false;
+        EndWorklogOpen();
     }
     if (wasInFlight && ImGui::IsItemHovered()) {
         // Be honest about what Cancel does mid-submit: AddWorklog takes no cancel token, so the
@@ -700,6 +816,8 @@ namespace TicketFieldEditorWorklog {
 void OpenWorklogDialog(const CachedTicket& ticket, const std::string& ownerFieldId) {
     s_ActiveWorklogState.IssueId = ticket.id;
     s_ActiveWorklogState.OwnerFieldId = ownerFieldId;
+    // The grid cells open it from inside their pane's draw, so this is the pane whose cell was clicked.
+    s_ActiveWorklogState.OwnerPaneId = DrawingPaneId();
     s_ActiveWorklogState.TimeSpent[0] = '\0';
     s_ActiveWorklogState.OriginalEstimate = ticket.GetFieldValue("timeoriginalestimate");
     s_ActiveWorklogState.TotalTimeSpent = ticket.GetFieldValue("timespent");
@@ -716,17 +834,21 @@ void OpenWorklogDialog(const CachedTicket& ticket, const std::string& ownerField
     s_ActiveWorklogState.Initialized = true;
     s_ActiveWorklogState.JustOpened = true;
     s_ActiveWorklogState.TimeRemainingManuallyEdited = false;
-    // NOT an unconditional false: if this ticket's previous submit is still running (the user hit
-    // Save then Cancel, then re-opened), the dialog must re-open in the in-flight state so Save
-    // stays disabled and the "Saving worklog..." cue shows. Otherwise the second Save creates a
-    // duplicate worklog for one intent (#2085 review). Seeding it HERE rather than at the button
-    // means the `worklog` cell entry point added by #2088 gets the same guard for free.
-    s_ActiveWorklogState.SubmitInFlight =
-        smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightIssueIds, ticket.id);
+    // Seeded from this site's outstanding submit when the target is latched (LatchWorklogTarget), on the
+    // first draw and before any button exists. Both cell entry points share that draw, so both get the
+    // re-open guard (#2085).
+    s_ActiveWorklogState.SubmitInFlight = false;
+    s_ActiveWorklogState.SubmitKey.clear();
+    s_ActiveWorklogState.HostedFrame = ImGui::GetCurrentContext() != nullptr ? ImGui::GetFrameCount() : 0;
     s_ActiveWorklogState.CloseRequested = false;
     s_ActiveWorklogState.TimeSpentFocusFramesLeft = kTimeSpentFocusFrames;
-    s_ActiveWorklogState.OwnedKeyboardLastFrame = false;
-    RestoreWorklogDraft();
+    s_ActiveWorklogState.Dialog = smatchet::ui::DialogScopeState();
+    // The target, and with it the draft scope and the kept entry, is latched from the draw, which knows the
+    // pane; nothing left from the previous open may survive until then.
+    s_ActiveWorklogState.Target = PendingActionTarget();
+    s_ActiveWorklogState.TargetLatched = false;
+    s_ActiveWorklogState.DraftScope.clear();
+    s_ActiveWorklogState.DraftRestored = false;
     // Burn a fresh generation on every open (#1713 contract). Without this, a post-back from a
     // submit whose dialog was cancelled mid-flight would still match `Gen` after the user
     // re-opened the SAME ticket and would close the freshly-opened dialog under them.
@@ -762,24 +884,38 @@ void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& muta
           s_ActiveWorklogState.OwnerFieldId == columnFieldId)) {
         return;
     }
+    // Another visible pane showing the same issue in the same column: its popup id is not the open one, so
+    // its BeginDialog would fail. It leaves the open alone while the owning pane still hosts the popup, and
+    // ends it once that pane has stopped (closed, hidden, or the row left its grid), so no open outlives
+    // every pane that could show it.
+    if (!s_ActiveWorklogState.OwnerPaneId.empty() && s_ActiveWorklogState.OwnerPaneId != DrawingPaneId()) {
+        if (!OpenIsSeen()) {
+            EndWorklogOpen();
+        }
+        return;
+    }
     ImGui::SetNextWindowSize(ImVec2(450.0f, 0.0f), ImGuiCond_Always);
     if (s_ActiveWorklogState.JustOpened) {
         ImGui::OpenPopup("TimeTrackingPopup");
         s_ActiveWorklogState.JustOpened = false;
     }
-
-    if (!ImGui::BeginPopupModal("TimeTrackingPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        s_ActiveWorklogState.Initialized = false;
+    if (!smatchet::ui::BeginDialog(s_ActiveWorklogState.Dialog, "TimeTrackingPopup", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+        EndWorklogOpen();
         return;
     }
+    s_ActiveWorklogState.HostedFrame = ImGui::GetFrameCount();
+    // The target is latched here (OpenWorklogDialog has no controller), on the first draw that hosts the
+    // popup, so the kept entry is back before the inputs read it in the same frame.
+    LatchWorklogTarget(mutations);
 
     // Pillar 2 (#2043): the async submit's success post-back can only ask for the close; the
     // actual CloseCurrentPopup must happen inside the popup's own draw scope.
     if (s_ActiveWorklogState.CloseRequested) {
         s_ActiveWorklogState.CloseRequested = false;
-        s_ActiveWorklogState.Initialized = false;
+        EndWorklogOpen();
         ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        smatchet::ui::EndDialog(s_ActiveWorklogState.Dialog);
         return;
     }
 
@@ -820,7 +956,7 @@ void RenderTimeTrackingModal(IAppThreading& threading, IAppTicketMutations& muta
     DrawWorklogButtons(threading, mutations, keys, spentEnter);
     SyncWorklogDraft();
 
-    ImGui::EndPopup();
+    smatchet::ui::EndDialog(s_ActiveWorklogState.Dialog);
 }
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
@@ -831,6 +967,8 @@ WorklogDialogTestSnapshot GetWorklogDialogSnapshotForTests() {
     snap.TimeSpentActive = snap.Active && s_WorklogTimeSpentActiveForTests;
     snap.TimeSpent = s_ActiveWorklogState.TimeSpent;
     snap.Description = s_ActiveWorklogState.WorkDescription;
+    snap.TimeRemaining = s_ActiveWorklogState.TimeRemaining;
+    snap.TimeRemainingManuallyEdited = s_ActiveWorklogState.TimeRemainingManuallyEdited;
     snap.ErrorMsg = s_ActiveWorklogState.ErrorMsg;
     snap.DraftRestored = s_ActiveWorklogState.DraftRestored;
     return snap;

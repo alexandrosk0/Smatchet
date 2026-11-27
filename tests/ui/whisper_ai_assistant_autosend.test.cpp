@@ -25,10 +25,10 @@
 //   - Mirrors the proven Replica pattern from ai_assistant_enter_send.test.cpp
 //     and ai_assistant_panel_dock_swap.test.cpp.
 //
-// Drift warning — IF YOU CHANGE Source/Core/src/SmatchetAiAssistantUi.cpp
-// (specifically the lines 253-292 block: ConsumePendingReloadItemId +
-// ImGui::GetInputTextState + ReloadUserBufAndMoveToEnd → InputTextMultiline
-// → mirror back to d.assistantInputBuf), UPDATE THIS REPLICA to match.
+// Drift warning — IF YOU CHANGE SmatchetLocalizedImGui::ApplyPendingDictationReload
+// (Source/Core/src/SmatchetDictationHook.cpp: ConsumePendingReloadItemId +
+// ImGui::GetInputTextState + ReloadUserBufAndMoveToEnd, called from SmatchetUI
+// before the panels draw), UPDATE THIS REPLICA to match.
 
 #if defined(SMATCHET_BUILD_UI_TESTS) && defined(SMATCHET_WITH_AI) && defined(SMATCHET_WITH_WHISPER)
 
@@ -76,8 +76,8 @@ void ResetState() {
     g_state.lastInputItemId = 0;
 }
 
-// Faithful replica of SmatchetAiAssistantUi.cpp:253-292 — drain pending
-// reload + InputTextMultiline draw. The mirror-back to a std::string and
+// Faithful replica of SmatchetLocalizedImGui::ApplyPendingDictationReload
+// followed by the AI Assistant's InputTextMultiline draw. The mirror-back to a std::string and
 // the dispatchSend path are intentionally OUT-of-scope: this test pins the
 // ImGui half of the fix (splice survives the active-widget frame), not
 // the auto-send path (covered by tests/Core/DictationInsertionRouter.test.cpp
@@ -97,14 +97,13 @@ void DrawAutosendReplica(AutosendReplicaState& s) {
     const ImGuiInputTextFlags inputFlags =
         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine;
     const float inputH = ImGui::GetTextLineHeight() * 3.0f;
-    ImGui::InputTextMultiline("##AiAssistantInput", s.inputBuf, AutosendReplicaState::kBufCap,
-                              ImVec2(-1.0f, inputH), inputFlags);
+    ImGui::InputTextMultiline("##AiAssistantInput", s.inputBuf, AutosendReplicaState::kBufCap, ImVec2(-1.0f, inputH),
+                              inputFlags);
     s.lastInputItemId = ImGui::GetItemID();
 }
 
 void RegisterFixGuardVariant(ImGuiTestEngine* engine) {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "WhisperAutosend",
-                                     "FixGuard_SpliceSurvivesActiveInputText");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "WhisperAutosend", "FixGuard_SpliceSurvivesActiveInputText");
     t->UserData = &g_state;
 
     t->GuiFunc = [](ImGuiTestContext* ctx) {
@@ -141,8 +140,7 @@ void RegisterFixGuardVariant(ImGuiTestEngine* engine) {
         // wrapper hook). Update-in-place semantics mean the entry ends up
         // with ItemId = liveId.
         g_router.RegisterAiAssistantInputText(s->inputBuf, AutosendReplicaState::kBufCap, nullptr);
-        g_router.RegisterInputTextWithItemId(s->inputBuf, AutosendReplicaState::kBufCap, nullptr,
-                                              liveId);
+        g_router.RegisterInputTextWithItemId(s->inputBuf, AutosendReplicaState::kBufCap, nullptr, liveId);
         IM_CHECK(g_router.IsFocusedTargetAiAssistant());
 
         // Splice — mirrors MainThreadDispatcher.PostToMainThread →
@@ -181,15 +179,13 @@ void RegisterRouterProtocolVariant(ImGuiTestEngine* engine) {
     // exercising it through the engine surface also confirms the
     // SMATCHET_BUILD_UI_TESTS build links the right router TU
     // (DictationInsertionRouter_Whisper.cpp, not _Stubs.cpp).
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "WhisperAutosend",
-                                     "RouterProtocol_PendingReloadArmingMatchesEntry");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "WhisperAutosend", "RouterProtocol_PendingReloadArmingMatchesEntry");
     t->UserData = &g_state;
 
     t->GuiFunc = [](ImGuiTestContext* ctx) {
         // Minimal GuiFunc — engine requires SOMETHING is drawn each frame.
         ImGui::SetNextWindowSize(ImVec2(120, 60), ImGuiCond_Appearing);
-        if (ImGui::Begin("SmatchetTest::RouterProtocol", nullptr,
-                         ImGuiWindowFlags_NoSavedSettings)) {
+        if (ImGui::Begin("SmatchetTest::RouterProtocol", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
             ImGui::TextUnformatted("ok");
         }
         ImGui::End();

@@ -96,12 +96,12 @@ smatchet_add_fuzz_target(fuzz_callstack
 smatchet_add_fuzz_target(fuzz_markdown_adf
     SOURCES
         fuzz_markdown_adf.cpp
-        "${_fuzz_core}/src/Ui/MarkdownConvert.cpp"
+        "${_fuzz_core}/src/MarkdownConvert.cpp"
         # MarkdownConvert god-file split (god-file-splits plan): the ADF entry point in
         # the spine delegates to md_detail:: engines defined in these companion TUs.
-        "${_fuzz_core}/src/Ui/MarkdownToAdf.cpp"
-        "${_fuzz_core}/src/Ui/MarkdownToHtml.cpp"
-        "${_fuzz_core}/src/Ui/AdfToMarkdown.cpp"
+        "${_fuzz_core}/src/MarkdownToAdf.cpp"
+        "${_fuzz_core}/src/MarkdownToHtml.cpp"
+        "${_fuzz_core}/src/AdfToMarkdown.cpp"
         ${_fuzz_logger_srcs}
     INCLUDES
         "${_fuzz_core}/include"
@@ -224,10 +224,10 @@ set(_fuzz_jira_closure
     "${_fuzz_core}/src/Tracker/JiraCommentMappingPure.cpp"
     "${_fuzz_core}/src/Tracker/GitHubClientHelpers.cpp"
     "${_fuzz_core}/src/Tracker/CommentBlobFormatPure.cpp"
-    "${_fuzz_core}/src/Ui/MarkdownConvert.cpp"
-    "${_fuzz_core}/src/Ui/MarkdownToAdf.cpp"
-    "${_fuzz_core}/src/Ui/MarkdownToHtml.cpp"
-    "${_fuzz_core}/src/Ui/AdfToMarkdown.cpp"
+    "${_fuzz_core}/src/MarkdownConvert.cpp"
+    "${_fuzz_core}/src/MarkdownToAdf.cpp"
+    "${_fuzz_core}/src/MarkdownToHtml.cpp"
+    "${_fuzz_core}/src/AdfToMarkdown.cpp"
     "${_fuzz_core}/src/Config/ConfigManager.cpp"
     "${_fuzz_core}/src/Config/ConfigManager_Save.cpp"
     "${_fuzz_core}/src/Config/ConfigManager_Load.cpp"

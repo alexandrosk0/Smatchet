@@ -55,6 +55,7 @@ extern "C" void SmatchetRegisterDurationInlineEditCommitTests(ImGuiTestEngine* e
 extern "C" void SmatchetRegisterTolerantParseInlineErrorTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFilterDropdownTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterBulkFieldEditTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterGridSpreadsheetKeysTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileViewsConfirmModalTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileViewQuickSwitcherTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileDesktopLayoutRoundtripTests(ImGuiTestEngine* engine);
@@ -68,6 +69,7 @@ extern "C" void SmatchetRegisterCommandPaletteInlineTypingTests(ImGuiTestEngine*
 extern "C" void SmatchetRegisterCommandPaletteDeferredDispatchTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteInputRecoveryTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteCancelTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterDialogContractFormTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterGestureKeysTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterGridSearchApplyTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* engine);
@@ -138,6 +140,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterTolerantParseInlineErrorTests(engine);
     SmatchetRegisterFilterDropdownTests(engine);
     SmatchetRegisterBulkFieldEditTests(engine);
+    SmatchetRegisterGridSpreadsheetKeysTests(engine);
     SmatchetRegisterMobileViewsConfirmModalTests(engine);
     SmatchetRegisterMobileViewQuickSwitcherTests(engine);
     SmatchetRegisterMobileDesktopLayoutRoundtripTests(engine);
@@ -151,6 +154,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterCommandPaletteDeferredDispatchTests(engine);
     SmatchetRegisterCommandPaletteInputRecoveryTests(engine);
     SmatchetRegisterCommandPaletteCancelTests(engine);
+    SmatchetRegisterDialogContractFormTests(engine);
     SmatchetRegisterGridSearchApplyTests(engine);
     SmatchetRegisterOfflineConflictModalPanesTests(engine);
     SmatchetRegisterOfflineFirstTests(engine);

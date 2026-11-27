@@ -86,6 +86,10 @@ struct GridPane {
     // Sort + filter projection cache (per-pane so N panes don't thrash one cache).
     std::vector<size_t> cachedSortedIndices;
     std::vector<size_t> filteredIndices;
+    /// Bumped each time `filteredIndices` is rebuilt (a sort, filter or search change): the grid compares it to the
+    /// revision its selection and active cell were last expressed in, because a search that narrows the rows changes
+    /// the shown order without touching the sort signature.
+    std::uint64_t filteredRowsRevision = 0;
     /// Parent-issue hierarchy projection (populated only when the view's StoryGroupSort is on;
     /// empty otherwise so the row draw stays branch-free on the common path).
     std::vector<int> cachedDepths;                   ///< indexed by ticket index → nesting depth
@@ -170,6 +174,9 @@ struct GridPane {
     /// first routes to its own catalog; a focused / unpopulated pane reads the shared index.
     std::shared_ptr<const std::vector<TrackerField>> cachedPaneCatalogFields;
     std::shared_ptr<const TrackerFieldCatalogIndex> cachedPaneCatalogIndex;
+    /// Project cachedPaneCatalogFields was fetched for ("" = unscoped), read with it under one lock and replaced only
+    /// with it: the components cells compare their row's project against this, never against the live context.
+    std::string cachedPaneCatalogProjectKey;
     /// Per-context catalog revision the cached index was built from (staleness invalidation:
     /// a same-backend re-seed / a fetch bumps the context revision → the index rebuilds).
     std::uint64_t cachedPaneCatalogRevision = 0;

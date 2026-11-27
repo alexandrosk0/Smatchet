@@ -40,10 +40,12 @@
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "FakeNetworkSwitch.h" // hold the fixture tracker down so a resolved edit is not replayed mid-case
 #include "SmatchetUiSession.h"
+#include "Tracker/TrackerFieldValueParseExplain.h"
 #include "Ui/SmatchetGridUiSupport.h"         // SmatchetOfflineConflictUnsavedHintShownForTest
 #include "Ui/SmatchetInlineError.h"           // InlineErrorKindForTests — the parser's reason is on screen
 #include "Ui/SmatchetOfflineQueueActionsUi.h" // SmatchetOfflineConflictDraft*ForTest
 #include "Ui/SmatchetSubmitKeys.h"            // KeyHintDrawnForTest
+#include "Ui/SmatchetToast.h"                 // the "Edit discarded" Undo toast (#116)
 #include "UiTestWriteScope.h" // BucketE::UiTestWriteScope — disable fresh-install read-only so the write lands
 
 #include "imgui.h"
@@ -369,6 +371,45 @@ void CaseScalarEstimateFieldValidatesAsTyped(ImGuiTestContext* ctx, const Keyboa
     IM_CHECK_NO_RET(smatchet::ui::InlineErrorKindForTests() != "error");
 }
 
+// A Jira sprint is a custom field whose id does not say "sprint": the resolver takes the kind the queue service
+// recorded in the context, and falls back to the field id for a context written without one (#2513).
+const char* const kScalarSprintJson = "{\"kind\":\"scalar\",\"mine\":\"42\",\"theirs\":\"Sprint 43\","
+                                      "\"fieldId\":\"customfield_10020\",\"fieldKind\":\"sprint\"}";
+const char* const kScalarSprintByIdJson =
+    "{\"kind\":\"scalar\",\"mine\":\"42\",\"theirs\":\"Sprint 43\",\"fieldId\":\"customfield_sprint\"}";
+
+// Types a value into the scalar resolver on an id that is not queued, saves with Enter, and returns the
+// "turned down" text. Empty (checked) when the resolver did not open or the save did not run.
+std::string TurnedDownScalarSave(ImGuiTestContext* ctx, const char* contextJson, std::int64_t dbId) {
+    if (!OpenWithCaretIn(ctx, contextJson, dbId, kScalarField)) {
+        return std::string();
+    }
+    ctx->KeyCharsReplace("Sprint 99");
+    ctx->KeyPress(ImGuiKey_Enter);
+    const bool saveRan = YieldUntil(ctx, [] { return !g_ui.conflictResolveError.empty(); }, 30);
+    IM_CHECK_NO_RET(saveRan);
+    return g_ui.conflictResolveError;
+}
+
+void CaseScalarSprintKindFromContext(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    TrackerParseExplain::ParseMessage sprintMsg;
+    sprintMsg.Id = TrackerParseExplain::ParseMessageId::ConflictValueRejectedSprint;
+    const std::string sprintText = TrackerParseExplain::DescribeParseMessage(sprintMsg);
+    TrackerParseExplain::ParseMessage genericMsg;
+    genericMsg.Id = TrackerParseExplain::ParseMessageId::ConflictValueRejectedGeneric;
+    const std::string genericText = TrackerParseExplain::DescribeParseMessage(genericMsg);
+
+    const std::string byKind = TurnedDownScalarSave(ctx, kScalarSprintJson, c.EditId + kNotQueuedOffset);
+    IM_CHECK_NO_RET(byKind.find(sprintText) == 0);
+    IM_CHECK_NO_RET(byKind.find(genericText) == std::string::npos);
+
+    CancelConflictModal(ctx);
+    SmatchetOfflineConflictDraftsClearForTest();
+    g_ui.conflictResolveError.clear();
+    const std::string byId = TurnedDownScalarSave(ctx, kScalarSprintByIdJson, c.EditId + kNotQueuedOffset);
+    IM_CHECK_NO_RET(byId.find(sprintText) == 0);
+}
+
 // Ctrl+Enter does nothing while a conflict marker is left: the Save button is disabled then.
 void CaseTextCtrlEnterBlockedByMarkers(ImGuiTestContext* ctx, const KeyboardCase& c) {
     if (!OpenWithCaretIn(ctx, kTextJson, c.EditId + kNotQueuedOffset, kTextField)) {
@@ -469,6 +510,29 @@ void CaseTextEscKeepsTypedText(ImGuiTestContext* ctx, const KeyboardCase& c) {
     IM_CHECK_NO_RET(WindowIsLive(kModalTitle));
     IM_CHECK_NO_RET(ResolvedText().find('X') != std::string::npos);
     IM_CHECK_NO_RET(SmatchetOfflineConflictUnsavedHintShownForTest());
+}
+
+// The "not saved" hint after an Esc makes the same promise as the Cancel message: a cancelled resolution is
+// kept in the draft store, also if Smatchet closes (#2510).
+void CaseTextEscHintAgreesWithCancelMessage(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    if (!OpenWithCaretIn(ctx, kTextJson, c.EditId, kTextField)) {
+        return;
+    }
+    ctx->KeyChars("X");
+    ctx->KeyPress(ImGuiKey_Escape);
+    ctx->Yield(3);
+    ctx->KeyPress(ImGuiKey_Escape);
+    ctx->Yield(3);
+    IM_CHECK_NO_RET(SmatchetOfflineConflictUnsavedHintShownForTest());
+    const std::string hint = SmatchetOfflineConflictUnsavedHintTextForTest();
+    IM_CHECK_NO_RET(hint.find("until Smatchet closes") == std::string::npos);
+    IM_CHECK_NO_RET(hint.find("also if Smatchet closes") != std::string::npos);
+
+    g_ui.offlineQueuePanelStatus.clear();
+    ctx->SetRef(kModalTitle);
+    ctx->ItemClick("Cancel");
+    IM_CHECK_NO_RET(YieldUntil(ctx, [] { return !WindowIsLive(kModalTitle); }, 30));
+    IM_CHECK_NO_RET(g_ui.offlineQueuePanelStatus.find("also if Smatchet closes") != std::string::npos);
 }
 
 // Types into the text resolver and cancels with the button. Returns what the field held, or an empty
@@ -675,6 +739,80 @@ void CasePickKeysResolveToEachSide(ImGuiTestContext* ctx, const KeyboardCase& c)
     }
 }
 
+// Opens the resolver on the case's conflict row as the `unverified` kind and clicks "Discard my edit".
+// Returns true once the resolver closed.
+bool DiscardFromUnverifiedPane(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    const bool opened = OpenConflictModal(ctx, "{\"kind\":\"unverified\",\"mine\":\"mine-original\"}", c.EditId);
+    IM_CHECK_NO_RET(opened);
+    if (!opened) {
+        return false;
+    }
+    ctx->SetRef(kModalTitle);
+    ctx->ItemClick("Discard my edit");
+    const bool closed = YieldUntil(ctx, [] { return !WindowIsLive(kModalTitle); }, 30);
+    IM_CHECK_NO_RET(closed);
+    return closed;
+}
+
+// "Discard my edit" is undoable (INPUT_UX_AUDIT.md #116): the row is held, hidden from the panel and still
+// queued while the toast is live. Undo brings it back; a toast that settles (DismissAllLive commits) deletes
+// it. The fixture tracker is held down, though a conflict row is never replayed anyway.
+void CaseDiscardMyEditUndo(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    smatchet_tests::ScopedFakeNetworkReset networkReset;
+    smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+    SmatchetToastManager& toasts = SmatchetToastManager::Instance();
+    toasts.DismissAllLive();
+    const char* rowRef = MarkConflictAndFindRow(ctx, c);
+    if (rowRef == nullptr) {
+        return;
+    }
+    // Pinned by ID: the wildcard ref would also match another conflict row in the panel.
+    const ImGuiID rowId = ctx->ItemInfo(rowRef).ID;
+    IM_CHECK_NO_RET(rowId != 0);
+    const std::string title = "Edit discarded";
+    const std::string body = "Undo puts it back in the offline queue.";
+
+    // Discard, then Undo: the row was held and hidden but never left the queue, and it comes back.
+    if (!DiscardFromUnverifiedPane(ctx, c)) {
+        return;
+    }
+    IM_CHECK_NO_RET(SmatchetOfflineConflictDiscardHeldForTest(c.EditId));
+    IM_CHECK_NO_RET(toasts.LiveUndoableCount() == 1);
+    IM_CHECK_NO_RET(toasts.HasLive(title, body));
+    IM_CHECK_NO_RET(!QueuedPayload(c).empty());
+    ctx->SetRef(kHostTitle);
+    const bool hidden = YieldUntil(ctx, [&] { return !ctx->ItemExists(rowId); }, 30);
+    IM_CHECK_NO_RET(hidden);
+    IM_CHECK_NO_RET(toasts.UndoNewest());
+    IM_CHECK_NO_RET(!SmatchetOfflineConflictDiscardHeldForTest(c.EditId));
+    IM_CHECK_NO_RET(toasts.LiveUndoableCount() == 0);
+    const bool back = YieldUntil(ctx, [&] { return ctx->ItemExists(rowId); }, 30);
+    IM_CHECK_NO_RET(back);
+    IM_CHECK_NO_RET(!QueuedPayload(c).empty());
+
+    // Discard again and let the toast settle: the row is deleted, and it stays hidden until the published
+    // queue snapshot no longer has it (no flash of the deleted row), then the hold is forgotten.
+    if (!DiscardFromUnverifiedPane(ctx, c)) {
+        return;
+    }
+    IM_CHECK_NO_RET(SmatchetOfflineConflictDiscardHeldForTest(c.EditId));
+    toasts.DismissAllLive();
+    IM_CHECK_NO_RET(QueuedPayload(c).empty());
+    ctx->SetRef(kHostTitle);
+    bool flashed = false;
+    const bool forgotten = YieldUntil(
+        ctx,
+        [&] {
+            flashed = flashed || ctx->ItemExists(rowId);
+            return !SmatchetOfflineConflictDiscardHeldForTest(c.EditId);
+        },
+        60);
+    IM_CHECK_NO_RET(forgotten);
+    IM_CHECK_NO_RET(!flashed);
+    IM_CHECK_NO_RET(!ctx->ItemExists(rowId));
+    IM_CHECK_NO_RET(SmatchetOfflineConflictDiscardHeldCountForTest() == 0);
+}
+
 void RegisterKeyboardCase(ImGuiTestEngine* engine, const char* name, KeyboardCaseBody body) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineConflictModalPanes", name);
     t->UserData = reinterpret_cast<void*>(body);
@@ -694,11 +832,13 @@ extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* 
     RegisterKeyboardCase(engine, "Text_CaretInFieldOnOpen", CaseTextCaretInFieldOnOpen);
     RegisterKeyboardCase(engine, "Scalar_EnterSaves", CaseScalarEnterSaves);
     RegisterKeyboardCase(engine, "Scalar_EstimateFieldValidatesAsTyped", CaseScalarEstimateFieldValidatesAsTyped);
+    RegisterKeyboardCase(engine, "Scalar_SprintKindFromContext", CaseScalarSprintKindFromContext);
     RegisterKeyboardCase(engine, "Scalar_CtrlEnterDoesNotPressFocusedButton",
                          CaseScalarCtrlEnterDoesNotPressFocusedButton);
     RegisterKeyboardCase(engine, "Text_CtrlEnterBlockedByMarkers", CaseTextCtrlEnterBlockedByMarkers);
     RegisterKeyboardCase(engine, "Text_CtrlEnterSavesWhenClean", CaseTextCtrlEnterSavesWhenClean);
     RegisterKeyboardCase(engine, "Text_EscKeepsTypedText", CaseTextEscKeepsTypedText);
+    RegisterKeyboardCase(engine, "Text_EscHintAgreesWithCancelMessage", CaseTextEscHintAgreesWithCancelMessage);
     RegisterKeyboardCase(engine, "Text_CancelKeepsWhatWasTyped", CaseTextCancelKeepsWhatWasTyped);
     RegisterKeyboardCase(engine, "Text_KeptTextNotPutIntoChangedConflict", CaseKeptTextNotPutIntoChangedConflict);
     RegisterKeyboardCase(engine, "Untouched_EscCloses", CaseUntouchedEscCloses);
@@ -706,6 +846,7 @@ extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* 
     RegisterKeyboardCase(engine, "ConflictRow_EnterOpensResolver", CaseRowEnterOpensResolver);
     RegisterKeyboardCase(engine, "ConflictRow_ClickAndSpaceDoNotOpen", CaseRowClickAndSpaceDoNotOpen);
     RegisterKeyboardCase(engine, "Scalar_AltMAndAltTPickASide", CasePickKeysResolveToEachSide);
+    RegisterKeyboardCase(engine, "Unverified_DiscardMyEditUndo", CaseDiscardMyEditUndo);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

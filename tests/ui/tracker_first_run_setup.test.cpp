@@ -57,6 +57,8 @@
 #include "Ui/SmatchetDialogScope.h" // the dialog contract (piece 4.1) the field must work inside
 #include "Ui/SmatchetInput.h"       // the shared text field under test
 #include "Ui/SmatchetSecretInput.h" // SmatchetTextInputCommittedWithEnter — the real Enter-commit signal
+// Private companion header of the Preferences split TUs, not on this target's include path.
+#include "../../Source/Core/src/Ui/SmatchetPreferencesUi_detail.h" // DrawCommentTemplateBodyField
 
 #include "ui_test_skip.h" // SmatchetUiTestIsHeadlessSoftwareGl
 
@@ -923,6 +925,59 @@ static void RegisterTextFieldMultilineKeys(ImGuiTestEngine* engine) {
     };
 }
 
+// The comment-template Body box of Preferences > Editing (#2503). The docked Preferences body clips its lower
+// rows out of the engine's item table and the editor's selection is a function-static, so the probe hosts the
+// same function the editor calls.
+namespace {
+struct TemplateBodyProbe {
+    std::string body;
+    int edits = 0; // frames the field reported a change: each one is copied to cfg and autosaved
+};
+TemplateBodyProbe g_templateBody;
+
+void DrawTemplateBodyProbe() {
+    ImGui::SetNextWindowSize(ImVec2(520, 160), ImGuiCond_Appearing);
+    if (ImGui::Begin("SmatchetTest::TemplateBody", nullptr,
+                     ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings)) {
+        if (SmatchetPreferencesUiDetail::DrawCommentTemplateBodyField("##TemplateBody", g_templateBody.body)) {
+            ++g_templateBody.edits;
+        }
+    }
+    ImGui::End();
+}
+} // namespace
+
+static void RegisterTextFieldTemplateBodyEscKeepsText(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "TextField", "CommentTemplateBodyEscKeepsTypedText");
+    t->GuiFunc = [](ImGuiTestContext* /*ctx*/) { DrawTemplateBodyProbe(); };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        g_templateBody = TemplateBodyProbe{};
+        g_templateBody.body = "Seed for {key}";
+        ctx->SetRef("SmatchetTest::TemplateBody");
+        ctx->Yield(2);
+        const ImGuiWindow* probe = ImGui::FindWindowByName("SmatchetTest::TemplateBody");
+        IM_CHECK_NO_RET(probe != nullptr);
+        if (probe != nullptr) {
+            ctx->WindowFocus(probe->ID);
+        }
+        ctx->Yield();
+
+        ctx->ItemClick("##TemplateBody");
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_End); // caret at the end wherever the click landed
+        ctx->KeyChars(" typed");
+        ctx->Yield();
+        IM_CHECK_STR_EQ(g_templateBody.body.c_str(), "Seed for {key} typed");
+        const int editsBeforeEsc = g_templateBody.edits;
+        IM_CHECK(editsBeforeEsc > 0);
+
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ(g_templateBody.body.c_str(), "Seed for {key} typed"); // kept, not reverted to the seed
+        IM_CHECK_EQ(g_templateBody.edits, editsBeforeEsc);                    // Esc is not an edit: nothing to save
+        IM_CHECK(ImGui::GetActiveID() != ctx->ItemInfo("##TemplateBody", ImGuiTestOpFlags_NoError).ID); // left the box
+    };
+}
+
 // A text field inside a dialog scope (piece 4.1): DialogReadKeys takes the first Esc, leaves the field
 // and keeps what was typed, before the field is drawn. ImGui then never runs its own revert, so the
 // field must report a commit (trimmed, saved by a caller that saves on `committed`), not a revert.
@@ -1112,6 +1167,7 @@ extern "C" void SmatchetRegisterTrackerFirstRunSetupTests(ImGuiTestEngine* engin
     RegisterTextFieldRefocusAfterEnter(engine);
     RegisterTextFieldFocusOnAppear(engine);
     RegisterTextFieldMultilineKeys(engine);
+    RegisterTextFieldTemplateBodyEscKeepsText(engine);
     RegisterTextFieldInsideDialogScope(engine);
     RegisterPreferencesEmailEscReverts(engine);
     RegisterPreferencesEmailEnterTrims(engine);

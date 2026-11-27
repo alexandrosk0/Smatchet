@@ -47,6 +47,7 @@
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -121,8 +122,8 @@ void RegisterMainMenuBarRenderSmoke(ImGuiTestEngine* engine) {
 // language-stable ID).
 const char* const kToolbarEditorTitle = "Customize Toolbar###SmatchetToolbarEditor";
 
-// Closes the editor through its Cancel button: Esc does not close a modal, and Save
-// would persist the toolbar into later tests.
+// Closes the editor through its Cancel button: Save would persist the toolbar into
+// later tests.
 void CloseToolbarEditor(ImGuiTestContext* ctx) {
     if (!WindowIsLive(kToolbarEditorTitle)) {
         return;
@@ -229,7 +230,29 @@ void RegisterToolbarEditorArgsValidation(ImGuiTestEngine* engine) {
     };
 }
 
-// The command filter matches like the palette: any case, letters in order, trimmed.
+// Vertices in the toolbar editor's command list drawn in the match-mark colour (the theme's ImGuiCol_TextSelectedBg),
+// as of the last frame drawn. -1 when the list is not up.
+int CommandListMarkVertices() {
+    const ImU32 mark = ImGui::GetColorU32(ImGuiCol_TextSelectedBg);
+    for (ImGuiWindow* w : GImGui->Windows) {
+        // The palette has a "##cmdlist" child too; a child's name starts with its parent's, so require the editor's.
+        if (w == nullptr || !w->WasActive || w->DrawList == nullptr || std::strstr(w->Name, "##cmdlist") == nullptr ||
+            std::strstr(w->Name, "SmatchetToolbarEditor") == nullptr) {
+            continue;
+        }
+        int n = 0;
+        for (const ImDrawVert& v : w->DrawList->VtxBuffer) {
+            if (v.col == mark) {
+                ++n;
+            }
+        }
+        return n;
+    }
+    return -1;
+}
+
+// The command filter matches like the palette: any case, letters in order, trimmed. Listed rows mark the
+// letters that matched, and an empty filter marks nothing.
 void RegisterToolbarEditorCommandFilter(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizeMainUi", "ToolbarEditor_CommandFilterIsFuzzy");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -244,10 +267,13 @@ void RegisterToolbarEditorCommandFilter(ImGuiTestEngine* engine) {
             return;
         }
 
+        IM_CHECK_EQ_NO_RET(CommandListMarkVertices(), 0); // no filter yet: no marks
+
         ctx->ItemInputValue(kFilter, "VIEW.LIST");
         ctx->Yield(2);
         const bool upperCaseMatches = ctx->ItemExists(kCommand);
         IM_CHECK_NO_RET(upperCaseMatches);
+        IM_CHECK_GT_NO_RET(CommandListMarkVertices(), 0);
 
         ctx->ItemInputValue(kFilter, "  vwlst ");
         ctx->Yield(2);
@@ -258,6 +284,10 @@ void RegisterToolbarEditorCommandFilter(ImGuiTestEngine* engine) {
         ctx->Yield(2);
         const bool noMatchHidesIt = !ctx->ItemExists(kCommand);
         IM_CHECK_NO_RET(noMatchHidesIt);
+
+        ctx->ItemInputValue(kFilter, "");
+        ctx->Yield(2);
+        IM_CHECK_EQ_NO_RET(CommandListMarkVertices(), 0); // cleared: every row back, none marked
 
         CloseToolbarEditor(ctx);
     };

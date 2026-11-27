@@ -1,8 +1,9 @@
 # Plan — input UX Wave 2 piece 4.2: a shared text field
+<!-- plan-date: 2026-11-16 -->
 
 > **Slug**: `input-ux-w2-text-field` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — driving the Wave 2 piece 4.2 PR (stacked on PR #2433 until it merges, then retargeted to `develop`).
+> **Status**: `shipped` — Wave 2 piece 4.2, PR #2438 (squash `8866a7117`); the view rename (#5) followed in PR #2463 (squash `81b0bc3ab`). Leftovers: `docs/self-improvement/categories/debt/2026-11-16-text-field-migration-blocked-surfaces.md` and `2026-11-16-dictation-router-string-target.md`.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -137,7 +138,7 @@ Write set (plan-lock claim). Every path below is outside every other branch's li
 **Docs**
 
 18. `Source/Core/src/Ui/AGENTS.md`: one Before-you-edit bullet: new text fields use `SmatchetInput`. It also carries the dictation caveat for `std::string` fields.
-19. `docs/plans/active/input-ux-w2-text-field.md`: this plan.
+19. `docs/plans/input-ux-w2-text-field.md`: this plan.
 20. `docs/self-improvement/categories/debt/2026-11-16-text-field-migration-blocked-surfaces.md`: the deferred surfaces and the test relocation owed once the locks release.
 21. `docs/self-improvement/categories/debt/2026-11-16-dictation-router-string-target.md`: the router string-target follow-up.
 22. `.github/workflows/build-and-test.yml`: the bucket-E `--timeout` rises from 160000 to 230000 ms (comment updated). Added after the first CI runs: see § Deviations.
@@ -230,10 +231,11 @@ Single owner subsystem: `Source/Core/src/Ui/` (leaf `AGENTS.md`). One branch, th
 - **Toolbar icon-name feedback (#125)**: needs a new user-facing string, so a `SmatchetLocalization.cpp` row, which is locked. The name field moves to `std::string` with the hoist; the "No such icon" message is deferred.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `8866a7117` · squash-merge of PR #2438: the shared text field (`Ui/SmatchetInput.{h,cpp}`, `Ui/SmatchetInputPure.h`, `TextBuf`), the icon picker's `std::string` query and select-all, the Preferences Email row, the doctests and the 14 bucket-E cases (`TextField`, `IconPicker`), and the bucket-E wall-clock raise (160 s to 230 s).
+- `81b0bc3ab` · PR #2463 (the Wave 2 lock-deferrals): the view rename (#5) on `TextBuf` once its file was released.
 
 ## Deviations from plan
-*(Interim entries; the post-ship pass adds the rest.)*
 
 - **Icon picker follows piece 4.1, not this plan's first draft.** The plan first gave the picker "caret on open, Enter picks the first match". Piece 4.1 (`Ui/SmatchetDialogScope.h`, #2437) merged first and already owns dialog focus, Esc and Enter: the caret on open comes from `DialogFocusHere`, Esc cancels, Enter picks only when exactly one icon matches. This branch kept 4.1's rules and took only the `std::string` query and select-all; its picker tests follow 4.1's Enter rule. No second dialog helper was written.
 - **A dialog that takes Esc first makes the field report a commit.** Found in review: under 4.1's `DialogReadKeys` the dialog clears the active field before the field is drawn, so ImGui never reverts, but the field reported `reverted`. The field now notes whether it held the keyboard when drawn and reports `committed` otherwise (header `SmatchetInput.h`, test `EscTakenByTheDialogScopeKeepsTextAndReportsCommit`).
@@ -243,22 +245,11 @@ Single owner subsystem: `Source/Core/src/Ui/` (leaf `AGENTS.md`). One branch, th
 - **Plan-lock not claimed.** `lock-claim.sh` pushes `refs/locks/input-ux-w2-text-field`, which the session's git proxy refuses with HTTP 403 (two attempts, one from a clean `origin/develop` worktree). The write set was checked by hand against every live lock and overlaps none. No override was used.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.** Writing the actual basename here
-   > manufactures a `docs/plans/shipped/<name>.md` path that points at a file
-   > still living in `active/` (the move hasn't happened yet), which
-   > `test-plan-ref-integrity.sh` reports as a dangling self-reference. The gate
-   > carves out the *placeholder* form on the Archive `git mv` line; the
-   > expanded form defeats that carve-out. Run the literal command with your
-   > slug substituted at the shell — never bake the expansion into the file.
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+Recorded from PR #2438's test plan and checks at merge (2026-11-17):
 
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+- **Bucket A:** the text-field doctests in `tests/Core/SmatchetWorklogSubmitPure.test.cpp` (9 cases, 80 assertions) pass in `SmatchetTests` on CI; all 18 mutants of `SmatchetInputPure.h`, plus the trim-set equivalence test, were killed.
+- **Build:** syntax-only clang build of every touched TU against `posix-core-check`, and of both bucket-E test files against the pinned Test Engine: clean. The Windows MSVC builds passed on CI.
+- **Bucket E:** the 14 new cases passed on every attempt; the lane passed on the merged head once its wall-clock limit was raised (§ Deviations). `Bucket-E Jira fixture-backend` passed.
+- **Lint / docs:** `pre-ship.sh origin/develop` (lint delta gate and doc-validation mirror) passed.
+- **Not run:** the bucket-E mutation checks the PR listed as owed were not recorded before merge.

@@ -200,6 +200,80 @@ inline const ViewDefinition* ApplyPendingViewCreateCore(Views& viewState, bool& 
     return viewState.GetActiveView();
 }
 
+/// View-delete Undo (docs/plans/input-ux-w2-view-delete-undo.md): the ids of the panes that show `viewId`,
+/// taken before the delete. `Panes` is any container of items with string `id` and `viewId` members
+/// (GridPane in the app). Pure — bucket-A testable (tests/Core/ViewsPendingCreate.test.cpp).
+template <typename Panes> std::vector<std::string> PaneIdsShowingView(const Panes& panes, const std::string& viewId) {
+    std::vector<std::string> ids;
+    if (viewId.empty()) {
+        return ids;
+    }
+    for (const auto& pane : panes) {
+        if (pane.viewId == viewId) {
+            ids.push_back(pane.id);
+        }
+    }
+    return ids;
+}
+
+/// View-delete Undo: whether the restored view becomes the active one. The active view is the focused pane's
+/// view, so it does when the pane focused now is one that showed the deleted view (`paneIds`), even if focus
+/// moved there during the Undo window. It also does when the deleted view was the active one (`wasActive`) and
+/// focus is still on the pane focused at the delete (`focusedAtDelete`): in mobile mode the focused pane's
+/// `viewId` only follows the active view while the grid draws, so `paneIds` can miss it. It does not when focus
+/// moved to a pane that showed another view. With no focused pane in `panes`, `wasActive` decides. Pure.
+template <typename Panes>
+bool RestoredViewTakesFocus(const Panes& panes, const std::string& focusedPaneId, const std::string& focusedAtDelete,
+                            const std::vector<std::string>& paneIds, bool wasActive) {
+    bool focusedExists = false;
+    for (const auto& pane : panes) {
+        if (!focusedPaneId.empty() && pane.id == focusedPaneId) {
+            focusedExists = true;
+            break;
+        }
+    }
+    if (!focusedExists) {
+        return wasActive;
+    }
+    if (std::find(paneIds.begin(), paneIds.end(), focusedPaneId) != paneIds.end()) {
+        return true;
+    }
+    return wasActive && focusedPaneId == focusedAtDelete;
+}
+
+/// What a view-delete Undo needs to put grid panes back: the panes that showed the view, its tracker bucket,
+/// the deleted id, the view the panes fell back to, and the restored view's id (new when the old one was taken).
+struct PaneRestoreTarget {
+    std::vector<std::string> PaneIds;
+    std::string BackendKey;
+    std::string DeletedId;
+    std::string FallbackId;
+    std::string RestoredId;
+};
+
+/// View-delete Undo: bind the panes in `PaneIds` back to the restored view. In the frame after the delete each
+/// fell back to the view active then (SmatchetUI::resolvePaneView), so they no longer name it. Only panes of
+/// `BackendKey` that still show the deleted id or that fallback are touched (a pane the user switched to
+/// another view since stays there), and never the focused pane, which follows the active view. Returns true
+/// when a pane changed (the caller arms the panes save). `Panes` items need string `id`, `backendKey`, `viewId`.
+template <typename Panes>
+bool RebindPanesToRestoredView(Panes& panes, const std::string& focusedPaneId, const PaneRestoreTarget& target) {
+    bool changed = false;
+    for (auto& pane : panes) {
+        if (pane.id == focusedPaneId || pane.backendKey != target.BackendKey || pane.viewId == target.RestoredId) {
+            continue;
+        }
+        if (pane.viewId != target.DeletedId && pane.viewId != target.FallbackId) {
+            continue;
+        }
+        if (std::find(target.PaneIds.begin(), target.PaneIds.end(), pane.id) != target.PaneIds.end()) {
+            pane.viewId = target.RestoredId;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 /// DR13b — resolve a view's display name by id from the store, for the delete-confirm prompt +
 /// toast (the target may not be the active view). Returns `fallback` when the id is absent. Pure —
 /// bucket-A testable.

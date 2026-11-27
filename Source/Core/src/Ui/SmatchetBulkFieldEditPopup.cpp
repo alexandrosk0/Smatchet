@@ -11,6 +11,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "StringUtil.h"
+#include "LearnedWorkflowPure.h"
 #include "Tracker/ProjectResolver.h"
 #include "Tracker/TrackerFieldValueUtils.h"
 #include "Tracker/TrackerLabelsPure.h"
@@ -23,6 +24,8 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -49,23 +52,215 @@ struct PopupEnv {
 // The option list the picker offers. Components are scoped to the clicked row's own Jira project (the same rule as the
 // grid's components cell: PickProjectComponents); every other field uses the catalog's list.
 struct OptionList {
-    ProjectComponentsLookup Holder; // keeps the project list alive
+    ProjectComponentsLookup Holder;                // keeps the project list alive
+    std::vector<TrackerFieldOption> StatusOptions; // the status list: the moves every row allows
+    // Never points at StatusOptions: the struct is returned by value, so a pointer to its own member would dangle.
     const std::vector<TrackerFieldOption>* Options = nullptr;
     smatchet::offline::DataFreshness Freshness = smatchet::offline::DataFreshness::Fresh;
+    bool IsTransitionList = false; // the list is StatusOptions, built from the rows' transitions
+    smatchet::statuscombo::StatusOptionsSource StatusFrom = smatchet::statuscombo::StatusOptionsSource::Live;
+
+    const std::vector<TrackerFieldOption>& Opts() const { return IsTransitionList ? StatusOptions : *Options; }
 };
 
 bool IsComponentsField(const TrackerField& field) { return ToLowerAsciiCopy(field.Id) == "components"; }
 
-OptionList ResolveOptionList(AppController& app, const BulkEditPopupRequest& req) {
+bool IsStatusField(const TrackerField& field) { return field.Id == "status"; }
+
+// Live transitions fetches the status picker keeps in flight at once (one thread each): a selection of hundreds of rows
+// must not send a request per row. Rows that are not live yet take turns (FetchCursor), so a row held back by the
+// failure backoff never starves the others.
+constexpr int kStatusFetchesInFlight = 6;
+// The list is recomputed this often (in frames), not every frame: each row costs a cache lookup and a list copy.
+constexpr int kStatusRefreshFrames = 10;
+// Above this many rows one live fetch per (project, issue type, status) group is enough: it teaches the remembered
+// workflow that every sibling row reads.
+constexpr size_t kStatusGroupFetchAbove = 8;
+
+bool IsFetching(const TransitionsLookup& lookup) {
+    return !lookup.fromLive && (lookup.freshness == smatchet::offline::DataFreshness::Refreshing ||
+                                lookup.freshness == smatchet::offline::DataFreshness::LoadingNoCache);
+}
+
+// The rows that read the same remembered workflow share this key; empty when the row's workflow cannot be keyed.
+std::string StatusGroupKey(const TransitionsQuery& query) {
+    return smatchet::workflow::BuildLearnedTransitionsKey(query.ProjectKey, query.IssueTypeKey, query.FromStatusKey);
+}
+
+// Re-reads every row's query from one snapshot of the pane, so the grouping, the coverage and the fetches below all see
+// the status each row has now: the learned workflow is written under the row's status key, so a status a row left
+// since the popup opened must not label the answer for the one it has now. A row that left its group no longer speaks
+// for it. The snapshot is immutable, so the same one as the last pass means no row changed: nothing is rebuilt then.
+void RefreshStatusQueries(AppController& app, BulkEditPopupRequest& req, bool byGroup) {
+    BulkEditPopupRequest::StatusPickCache& cache = req.StatusCache;
+    const std::shared_ptr<const std::vector<CachedTicket>> tickets =
+        app.TicketsSnapshotForTarget(app.LatchPendingActionTargetForPane(req.PaneId));
+    if (!tickets || tickets == cache.QuerySnapshot) {
+        return;
+    }
+    cache.QuerySnapshot = tickets; // held, so a freed snapshot's address is never mistaken for a new one
+    std::unordered_map<std::string, const CachedTicket*> byId;
+    byId.reserve(tickets->size());
+    for (const CachedTicket& ticket : *tickets) {
+        byId.emplace(ticket.id, &ticket);
+    }
+    for (TransitionsQuery& query : req.StatusQueries) {
+        const auto ticket = byId.find(query.IssueId);
+        if (ticket == byId.end()) {
+            continue;
+        }
+        const std::string before = byGroup ? StatusGroupKey(query) : std::string();
+        query = smatchet::statuscombo::BuildStatusTransitionsQuery(app, *ticket->second, req.Field,
+                                                                   ticket->second->GetFieldValue(req.Field.Id));
+        if (!before.empty() && before != StatusGroupKey(query)) {
+            const auto rep = cache.GroupRep.find(before);
+            if (rep != cache.GroupRep.end() && rep->second == query.IssueId) {
+                cache.GroupRep.erase(rep);
+            }
+        }
+    }
+}
+
+// Starts the live transitions fetches this pass may start: up to kStatusFetchesInFlight in flight, rows taking turns
+// from FetchCursor (each row is looked at once per pass), and above kStatusGroupFetchAbove rows one fetching row per
+// group.
+void StartStatusFetches(AppController& app, BulkEditPopupRequest& req, std::vector<TransitionsLookup>& lookups,
+                        std::unordered_set<std::string>& covered, bool byGroup, int inFlight) {
+    BulkEditPopupRequest::StatusPickCache& cache = req.StatusCache;
+    const size_t rowCount = req.StatusQueries.size();
+    const size_t start = cache.FetchCursor % rowCount; // fixed for the pass: the cursor moves as fetches start
+    for (size_t k = 0; k < rowCount && inFlight < kStatusFetchesInFlight; ++k) {
+        const size_t i = (start + k) % rowCount;
+        if (lookups[i].fromLive || IsFetching(lookups[i])) {
+            continue;
+        }
+        const std::string group = byGroup ? StatusGroupKey(req.StatusQueries[i]) : std::string();
+        if (!group.empty()) {
+            // One row per group fetches for all of them, and keeps doing so after a failed fetch, so a tracker that
+            // errors on one issue is not asked about every sibling in turn.
+            const auto rep = cache.GroupRep.find(group);
+            if (covered.count(group) != 0 ||
+                (rep != cache.GroupRep.end() && rep->second != req.StatusQueries[i].IssueId)) {
+                continue;
+            }
+        }
+        const TransitionsQuery query = req.StatusQueries[i];
+        app.EnsureIssueTransitionsLoaded(query);
+        lookups[i] = app.GetAvailableTransitionsForIssue(query); // report the fetch this pass, not the next
+        cache.FetchCursor = i + 1;
+        if (!group.empty()) {
+            cache.GroupRep.emplace(group, query.IssueId);
+        }
+        if (IsFetching(lookups[i]) || lookups[i].fromLive) { // a backed-off or offline row starts nothing
+            ++inFlight;
+            if (!group.empty()) {
+                covered.insert(group);
+            }
+        }
+    }
+}
+
+// Recomputes the status picker's list: the statuses every row the job will touch can move to. Each row's list is what
+// its own status combo offers (live transitions, else the remembered workflow, else every status; its current status
+// stays in it), so a row already at a status never rules that status out. The cue covers the least live row.
+//
+// The cost of a pass: one cache lookup per row, then one list per DISTINCT non-live answer (rows that read the same
+// remembered workflow from the same status share one), so a thousand siblings cost about as much as one. When the
+// pane's ticket snapshot changed since the last pass, one index of it and one query rebuild per row come first.
+void RefreshStatusPick(AppController& app, BulkEditPopupRequest& req) {
+    BulkEditPopupRequest::StatusPickCache& cache = req.StatusCache;
+    cache.Valid = true;
+    cache.Applicable = false;
+    const size_t rowCount = req.StatusQueries.size();
+    if (rowCount == 0) {
+        return;
+    }
+    std::vector<TransitionsLookup> lookups;
+    lookups.reserve(rowCount);
+    std::unordered_set<std::string> covered; // groups with a live row or a fetch running
+    const bool byGroup = rowCount > kStatusGroupFetchAbove;
+    RefreshStatusQueries(app, req, byGroup);
+    int inFlight = 0;
+    for (const TransitionsQuery& query : req.StatusQueries) {
+        lookups.push_back(app.GetAvailableTransitionsForIssue(query));
+        const TransitionsLookup& lookup = lookups.back();
+        if (!lookup.applicable) {
+            return; // the tracker has no transitions: the catalog's list stands, as for any other choice field
+        }
+        if (IsFetching(lookup)) {
+            ++inFlight;
+        }
+        if (byGroup && (lookup.fromLive || IsFetching(lookup))) {
+            covered.insert(StatusGroupKey(query));
+        }
+    }
+    StartStatusFetches(app, req, lookups, covered, byGroup, inFlight);
+    std::vector<std::vector<TrackerFieldOption>> lists;
+    std::unordered_set<std::string> seen; // non-live answers already listed (same workflow, status and freshness)
+    cache.From = smatchet::statuscombo::StatusOptionsSource::Live;
+    cache.Freshness = smatchet::offline::DataFreshness::Fresh;
+    for (size_t i = 0; i < rowCount; ++i) {
+        const TransitionsQuery& query = req.StatusQueries[i];
+        if (!lookups[i].fromLive) {
+            const std::string key =
+                StatusGroupKey(query) + '\x1f' + query.FromStatusKey + '\x1f' + query.FromStatusName + '\x1f' +
+                std::to_string(static_cast<int>(lookups[i].freshness)) + (lookups[i].fromLearned ? 'L' : 'C');
+            if (!seen.insert(key).second) {
+                continue; // the same list, and so the same intersection and cue, as an earlier row
+            }
+        }
+        smatchet::statuscombo::TicketStatusOptions status =
+            smatchet::statuscombo::PickTicketStatusOptions(lookups[i], query, req.Field);
+        if (!status.Applicable) {
+            return;
+        }
+        cache.From = smatchet::statuscombo::LessLiveSource(cache.From, status.Pick.From);
+        cache.Freshness = smatchet::statuscombo::LeastFresh(cache.Freshness, status.Freshness);
+        lists.push_back(std::move(status.Pick.Options));
+    }
+    cache.Options = smatchet::statuscombo::IntersectStatusOptions(lists);
+    cache.Applicable = true;
+}
+
+void ResolveStatusOptions(AppController& app, BulkEditPopupRequest& req, OptionList& list) {
+    BulkEditPopupRequest::StatusPickCache& cache = req.StatusCache;
+    const int frame = ImGui::GetFrameCount();
+    if (!cache.Valid || frame < cache.Frame || frame - cache.Frame >= kStatusRefreshFrames) {
+        RefreshStatusPick(app, req);
+        cache.Frame = frame;
+    }
+    if (!cache.Applicable) {
+        return;
+    }
+    list.StatusOptions = cache.Options;
+    list.IsTransitionList = true;
+    list.StatusFrom = cache.From;
+    list.Freshness = cache.Freshness;
+}
+
+// The components list (the clicked row's own project); any other field keeps the catalog's list.
+OptionList ResolveCatalogOptionList(AppController& app, const BulkEditPopupRequest& req) {
     OptionList list;
     list.Options = &req.Field.AllowedValueOptions;
     if (!IsComponentsField(req.Field)) {
         return list;
     }
+    // req.Field's options are the catalog's as it was when the popup opened: PickProjectComponents trusts them for this
+    // row only when that catalog was fetched for the row's project (the scope captured with the field), never by the
+    // live catalog.
     const smatchet::components::ComponentOptionsPick pick = smatchet::components::PickProjectComponents(
-        app, smatchet::ExtractIssueKeyPrefix(req.ClickedIssueId), req.Field, list.Holder);
+        app, smatchet::ExtractIssueKeyPrefix(req.ClickedIssueId), req.Field, req.FieldCatalogProjectKey, list.Holder);
     list.Options = pick.Options;
     list.Freshness = pick.Freshness;
+    return list;
+}
+
+// What the picker offers this frame: the status rows' common moves (cached, see RefreshStatusPick), else the above.
+OptionList ResolveOptionList(AppController& app, BulkEditPopupRequest& req) {
+    OptionList list = ResolveCatalogOptionList(app, req);
+    if (IsStatusField(req.Field)) {
+        ResolveStatusOptions(app, req, list);
+    }
     return list;
 }
 
@@ -75,10 +270,10 @@ OptionList ResolveOptionList(AppController& app, const BulkEditPopupRequest& req
 TrackerField EffectiveField(AppController& app, const BulkEditPopupRequest& req) {
     TrackerField field = req.Field;
     if (IsComponentsField(field)) {
-        const OptionList list = ResolveOptionList(app, req);
-        if (list.Options && !list.Options->empty()) {
-            field.AllowedValueOptions = *list.Options;
-        }
+        // Always the row's resolved list, even when it is empty: keeping req.Field's catalog options would let the
+        // before-values and the entry check use another project's components (Ui AGENTS.md, Pillar 6).
+        const OptionList list = ResolveCatalogOptionList(app, req);
+        field.AllowedValueOptions = list.Opts();
     }
     return field;
 }
@@ -162,6 +357,38 @@ void CollectLabelSuggestions(AppController& app, BulkEditPopupRequest& req) {
     req.LabelSuggestions = TrackerLabelsPure::SortAndUniqueLabels(std::move(labels));
 }
 
+// The status field's transitions query for each row the job will touch (a skipped row never moves, so it does not
+// narrow the list), in row order. Taken once when the popup opens (a pane can hold thousands of tickets): a background
+// sync that moves a row meanwhile is harmless, because the job re-reads each row's status when it starts.
+void CollectStatusQueries(AppController& app, BulkEditPopupRequest& req) {
+    req.StatusQueries.clear();
+    const PendingActionTarget target = app.LatchPendingActionTargetForPane(req.PaneId);
+    const std::shared_ptr<const std::vector<CachedTicket>> tickets = app.TicketsSnapshotForTarget(target);
+    if (!tickets) {
+        return;
+    }
+    std::unordered_map<std::string, const CachedTicket*> byId;
+    for (const BulkRow& row : req.Preview.Rows) {
+        if (row.State != BulkRowState::Skipped) {
+            byId.emplace(row.IssueId, nullptr);
+        }
+    }
+    for (const CachedTicket& ticket : *tickets) {
+        const auto it = byId.find(ticket.id);
+        if (it != byId.end()) {
+            it->second = &ticket;
+        }
+    }
+    for (const BulkRow& row : req.Preview.Rows) {
+        const auto it = byId.find(row.IssueId);
+        if (row.State == BulkRowState::Skipped || it == byId.end() || it->second == nullptr) {
+            continue;
+        }
+        req.StatusQueries.push_back(smatchet::statuscombo::BuildStatusTransitionsQuery(
+            app, *it->second, req.Field, it->second->GetFieldValue(req.Field.Id)));
+    }
+}
+
 // The popup was just requested: take the snapshot the header and the skip list read.
 void PrepareOpen(PopupEnv& e) {
     BulkEditPopupRequest& req = e.Req;
@@ -171,10 +398,16 @@ void PrepareOpen(PopupEnv& e) {
     req.Picked.clear();
     req.PendingValues.clear();
     req.Clear = false;
-    req.Preview = PrepareBulkFieldEditJob(e.App, req.PaneId, req.Field, req.IssueIds, std::vector<std::string>(),
-                                          BulkMode::Replace, nullptr);
+    // The preview's before-values resolve against the row's own list too (EffectiveField), as the apply does.
+    req.Preview = PrepareBulkFieldEditJob(e.App, req.PaneId, EffectiveField(e.App, req), req.IssueIds,
+                                          std::vector<std::string>(), BulkMode::Replace, nullptr);
     if (smatchet::grid::bulk::ClassifyBulkField(req.Field) == BulkFieldKind::Labels) {
         CollectLabelSuggestions(e.App, req);
+    }
+    req.StatusQueries.clear();
+    req.StatusCache = BulkEditPopupRequest::StatusPickCache();
+    if (IsStatusField(req.Field)) {
+        CollectStatusQueries(e.App, req);
     }
     ImGui::OpenPopup(kPickSuffix);
 }
@@ -229,8 +462,8 @@ std::vector<smatchet::dropdown::Item> BuildItems(const BulkEditPopupRequest& req
         }
         return items;
     }
-    items.reserve(list.Options->size());
-    for (const TrackerFieldOption& option : *list.Options) {
+    items.reserve(list.Opts().size());
+    for (const TrackerFieldOption& option : list.Opts()) {
         smatchet::dropdown::Item item = smatchet::dropdown::ItemForOption(option);
         item.Disabled = option.Disabled;
         if (kind == BulkFieldKind::MultiChoice) {
@@ -313,7 +546,9 @@ void DrawPickBody(PopupEnv& e) {
     ImGui::Separator();
 
     const OptionList list = ResolveOptionList(e.App, req);
-    if (list.Freshness != smatchet::offline::DataFreshness::Fresh) {
+    if (list.IsTransitionList) {
+        smatchet::statuscombo::DrawStatusOptionsCue(list.StatusFrom, list.Freshness); // the status combo's own cue
+    } else if (list.Freshness != smatchet::offline::DataFreshness::Fresh) {
         DataFreshnessCue::Draw(list.Freshness);
         ImGui::Separator();
     }
@@ -341,6 +576,9 @@ void DrawPickBody(PopupEnv& e) {
     options.AllowCreate = kind == BulkFieldKind::Labels;
     if (kind == BulkFieldKind::Labels) {
         options.EmptyText = SmatchetLocalization::T("field.no_labels", "(no labels discovered yet)");
+    } else if (list.IsTransitionList) {
+        options.EmptyText =
+            SmatchetLocalization::T("grid.bulk.no_common_status", "(no status that every selected row can move to)");
     }
     const smatchet::dropdown::Event ev = smatchet::dropdown::DrawBody(items, options);
 

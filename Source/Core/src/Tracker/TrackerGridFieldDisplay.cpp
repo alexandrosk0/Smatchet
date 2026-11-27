@@ -6,6 +6,7 @@
 #include "DataFreshnessCue.h"
 #include "TunableLimits.h"
 #include "Logger.h"
+// SMATCHET_DEVIATION(rule=no-ui-include-in-domain; reason=this TU draws grid cells through the shared Ui field renderer and predates the rule matching bare-name includes, and inverting that seam is a design change; owner=orchestrator; revisit=2027-05-25)
 #include "SmatchetFieldRender.h"
 #include "SmatchetLocalization.h"
 #include "StringUtil.h"

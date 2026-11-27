@@ -1,4 +1,5 @@
 #include "SmatchetUI.h"
+#include "SmatchetActiveProjectGridIds.h"
 #include "SmatchetActiveProjectGridUi_Internal.h"
 #include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (HIGH-1) + ChoosePaneColumnsSource
 #include "SmatchetGridUiSupport.h"
@@ -82,7 +83,7 @@ static void PromoteActiveRowToSelection(GridPane& pane, RectSelT& sel, const std
     if (activeRow >= 0) {
         sel.Rows.insert(activeRow);
         sel.PrimaryRow = activeRow;
-        sel.Active = false;
+        sel.Clear();
         sel.SortSignature = gridSortSig;
     }
 }
@@ -277,6 +278,22 @@ void PendingCellBadge(const ActiveProjectDrawCtx& ctx, const std::string& issueK
                         : SmatchetLocalization::T("grid.pending.cell_queued_tip",
                                                   "This edit is waiting to be sent to the tracker; the value shown "
                                                   "is yours. See the Offline Queue panel.");
+}
+
+// A cell whose save the tracker rejected reopens with the rejected value (#31): the text editor reads it, and the
+// tracker's message, from the grid state for the span of the cell's draw. Sets nothing when the cell has no such entry.
+void BindRejectedCellFeedback(SpreadsheetState& gridState,
+                              const std::unordered_map<std::string, CellWriteFeedback>& feedbackByKey,
+                              const std::string& cellKey) {
+    if (feedbackByKey.empty()) {
+        return;
+    }
+    const auto it = feedbackByKey.find(cellKey);
+    if (it == feedbackByKey.end() || it->second.State != CellWriteState::Error || it->second.RejectedValue.empty()) {
+        return;
+    }
+    gridState.CellRejectedValue = &it->second.RejectedValue;
+    gridState.CellRejectedMessage = &it->second.Message;
 }
 
 } // namespace
@@ -486,10 +503,13 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
         const bool allowEditsForCell = !readOnlyMode && column.NeedsAllowEditsCheck &&
                                        app.CanEditFieldForIssue(ticket.id, column.FieldId, fieldMeta);
         ImGui::BeginGroup();
-        TicketFieldEditor::RenderFieldCell(app, ticket, column, colIndex, fieldMeta, currentValue, valueAvailWidth,
-                                           d.cfg.EnableFieldOverflowTooltips, allowEditsForCell, ctx.pane.gridState,
-                                           pendingEdits, d.trackerGridAsync, d.cfg.DateFormatOption,
-                                           d.cfg.DateCompactRelativeThresholdDays, d.cfg.SingleClickToEditGridCells);
+        BindRejectedCellFeedback(ctx.pane.gridState, d.cellFeedbackByKey, cellKey);
+        TicketFieldEditor::RenderFieldCell(
+            app, ticket, column, colIndex, fieldMeta, currentValue, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips,
+            allowEditsForCell, ctx.pane.gridState, pendingEdits, d.trackerGridAsync, d.cfg.DateFormatOption,
+            d.cfg.DateCompactRelativeThresholdDays, d.cfg.SingleClickToEditGridCells, ctx.catalogProjectKey);
+        ctx.pane.gridState.CellRejectedValue = nullptr;
+        ctx.pane.gridState.CellRejectedMessage = nullptr;
         ImGui::EndGroup();
         // Fields with a viewer window (History) open it on a plain left click: the release must not end
         // a drag (rect-selection) and Ctrl/Shift stay multi-select. The hover tooltip is unchanged.
@@ -519,21 +539,166 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
                                    false, ticket.id, false);
 }
 
+// Whether the cell at (shown row, drawn column) opens an editor: an editor column the tracker lets this user write for
+// this issue, in a view that is not read-only. The same test the cell draw makes (`allowEditsForCell`), so a key that
+// starts an edit, or a commit-and-move that skips read-only cells, agrees with what a click would do.
+bool GridCellEditable(ActiveProjectDrawCtx& ctx, int row, int col) {
+    const auto& shown = ctx.pane.filteredIndices;
+    if (ctx.readOnlyMode || row < 0 || col < 0 || static_cast<size_t>(row) >= shown.size() ||
+        static_cast<size_t>(col) >= ctx.columns.size() || shown[static_cast<size_t>(row)] >= ctx.tickets.size()) {
+        return false;
+    }
+    const TicketGridColumn& column = ctx.columns[static_cast<size_t>(col)];
+    switch (column.Plan) {
+    case TicketGridColumn::RenderPlan::TextEditor:
+    case TicketGridColumn::RenderPlan::SingleSelect:
+    case TicketGridColumn::RenderPlan::MultiSelect:
+    case TicketGridColumn::RenderPlan::Cascading:
+    case TicketGridColumn::RenderPlan::Labels:
+    case TicketGridColumn::RenderPlan::DateTimeEditor:
+        break;
+    default:
+        return false;
+    }
+    if (column.ColumnKind == TicketGridColumn::Kind::Id || !column.NeedsAllowEditsCheck) {
+        return false;
+    }
+    const CachedTicket& ticket = ctx.tickets[shown[static_cast<size_t>(row)]];
+    return ctx.app.CanEditFieldForIssue(ticket.id, column.FieldId, ctx.catalogIndex.Find(column.FieldId));
+}
+
+// Makes anchor..extent (shown row, drawn column; inclusive, any order) the pane's cell range, snapshotting the
+// identities of its rows and columns (SpreadsheetState::SetRange). Runs on a gesture, never per cell.
+static void SetPaneCellRange(ActiveProjectDrawCtx& ctx, int anchorRow, int anchorCol, int extentRow, int extentCol) {
+    const GridShownRowIds shownIds{ctx.pane.filteredIndices, ctx.tickets};
+    const GridDrawnColumnFieldIds columnIds{ctx.columns};
+    ctx.pane.gridState.RectSel.SetRange(anchorRow, anchorCol, extentRow, extentCol,
+                                        static_cast<int>(ctx.pane.filteredIndices.size()), shownIds,
+                                        static_cast<int>(ctx.columns.size()), columnIds);
+}
+
+// A press on a row's key cell: the row-header gestures (Shift = range of rows, Ctrl = toggle, plain = this row). The
+// key cell is also a cell, so it becomes the active cell.
+static void ApplyKeyCellClick(ActiveProjectDrawCtx& ctx, int rowIdx, int colIdx, const std::string& issueId,
+                              bool activeIssueWasThisRow, bool shiftHeld, bool ctrlHeld) {
+    SpreadsheetState& gs = ctx.pane.gridState;
+    auto& sel = gs.RectSel;
+    if (!issueId.empty()) {
+        gs.SetActiveCell(issueId, GridDrawnColumnFieldIds{ctx.columns}(colIdx), rowIdx, colIdx, ctx.gridSortSig);
+    }
+    if (shiftHeld) {
+        const int anchorRow = (sel.PrimaryRow >= 0) ? sel.PrimaryRow : rowIdx;
+        std::set<int> baseBefore = sel.Rows;
+        const int lo = (anchorRow < rowIdx) ? anchorRow : rowIdx;
+        const int hi = (anchorRow > rowIdx) ? anchorRow : rowIdx;
+        for (int i = lo; i <= hi; ++i)
+            sel.Rows.insert(i);
+        sel.PrimaryRow = anchorRow;
+        sel.DragRowMode = true;
+        sel.DragStartRow = anchorRow;
+        sel.DragBaseRows = std::move(baseBefore);
+        sel.Clear(); // the row gesture replaces any cell range
+        sel.Dragging = true;
+    } else if (ctrlHeld) {
+        auto it = sel.Rows.find(rowIdx);
+        if (it == sel.Rows.end()) {
+            sel.Rows.insert(rowIdx);
+        } else {
+            sel.Rows.erase(it);
+            if (activeIssueWasThisRow) {
+                gs.ClearActiveCell();
+            }
+        }
+        sel.PrimaryRow = rowIdx;
+        sel.DragRowMode = false;
+        sel.DragStartRow = -1;
+        sel.DragBaseRows.clear();
+        sel.Clear();
+    } else {
+        sel.Rows.clear();
+        sel.Rows.insert(rowIdx);
+        sel.PrimaryRow = rowIdx;
+        sel.DragRowMode = true;
+        sel.DragStartRow = rowIdx;
+        sel.DragBaseRows.clear();
+        sel.Clear();
+        sel.Dragging = true;
+    }
+}
+
+// A press on a value cell. Shift grows the range from its anchor (from the active cell when there is no range yet; the
+// active cell stays where it is, and a drag from here keeps extending it). A plain press makes the cell the active
+// cell and starts a one-cell range (selecting never edits: the editor opens on the cell's own release gesture, not
+// here); a drag extends the range.
+static void ApplyValueCellClick(ActiveProjectDrawCtx& ctx, int rowIdx, int colIdx, const std::string& issueId,
+                                bool extendRange) {
+    SpreadsheetState& gs = ctx.pane.gridState;
+    auto& sel = gs.RectSel;
+    if (extendRange) {
+        const int anchorRow = sel.Active ? sel.AnchorRow : gs.ActiveRow;
+        const int anchorCol = sel.Active ? sel.AnchorCol : gs.ActiveCol;
+        sel.Rows.clear();
+        sel.PrimaryRow = -1;
+        SetPaneCellRange(ctx, anchorRow, anchorCol, rowIdx, colIdx);
+        sel.DragRowMode = false;
+    } else {
+        sel.ClearAll();
+        if (!issueId.empty()) {
+            gs.SetActiveCell(issueId, GridDrawnColumnFieldIds{ctx.columns}(colIdx), rowIdx, colIdx, ctx.gridSortSig);
+        }
+        SetPaneCellRange(ctx, rowIdx, colIdx, rowIdx, colIdx);
+    }
+    sel.Dragging = sel.Active;
+}
+
+// The mouse is held over (rowIdx, colIdx) during a drag: extend the gesture that is under way.
+static void ExtendCellDrag(ActiveProjectDrawCtx& ctx, int rowIdx, int colIdx) {
+    auto& sel = ctx.pane.gridState.RectSel;
+    if (sel.DragRowMode) {
+        const int lo = (sel.DragStartRow < rowIdx) ? sel.DragStartRow : rowIdx;
+        const int hi = (sel.DragStartRow > rowIdx) ? sel.DragStartRow : rowIdx;
+        sel.Rows = sel.DragBaseRows;
+        for (int i = lo; i <= hi; ++i)
+            sel.Rows.insert(i);
+    } else if (sel.Active && (rowIdx != sel.ExtentRow || colIdx != sel.ExtentCol)) {
+        SetPaneCellRange(ctx, sel.AnchorRow, sel.AnchorCol, rowIdx, colIdx);
+    }
+}
+
+// What a cell shows of the selection: a multi-cell range or a selected row is filled; the active cell always gets the
+// focus ring (2 px, so it is not colour-only), unless its own editor is open. Two int compares and two byte reads per
+// cell, no allocation. Then the scroll request of a keyboard move: the row's ID cell is always drawn (frozen), so it
+// carries the request even when the target column is scrolled out of view and its own cell is clipped.
+static void DrawCellSelectionMarks(ActiveProjectDrawCtx& ctx, int rowIdx, int colIdx, bool isIdCol,
+                                   const std::string& issueId, const ImVec2& hitMin, const ImVec2& hitMax) {
+    SpreadsheetState& gs = ctx.pane.gridState;
+    const auto& sel = gs.RectSel;
+    if (sel.RowSelected(rowIdx) || (sel.RangeMulti && sel.RectContains(rowIdx, colIdx))) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(hitMin, hitMax, IM_COL32(66, 135, 245, 60));
+        dl->AddRect(hitMin, hitMax, IM_COL32(66, 135, 245, 180));
+    }
+    if (rowIdx == gs.ActiveRow && colIdx == gs.ActiveCol &&
+        !gs.IsEditingField(issueId, GridDrawnColumnFieldIds{ctx.columns}(colIdx)) &&
+        !(gs.EditingId == issueId && gs.EditingColumn == colIdx)) {
+        ImGui::GetWindowDrawList()->AddRect(hitMin, hitMax, ImGui::GetColorU32(ImGuiCol_NavCursor), 0.0f, 0, 2.0f);
+    }
+    if (gs.ScrollToRow == rowIdx && (gs.ScrollToCol == colIdx || isIdCol)) {
+        ScrollGridCellIntoView(hitMin.y, hitMax.y, gs.ScrollToCol);
+        gs.ScrollToRow = gs.ScrollToCol = -1;
+    }
+}
+
 // Google-Sheets-style per-cell selection gesture (formerly the handleCellRectSel lambda).
 // Cell geometry arrives as floats (cellOriginX / cellWidth / groupMinY / groupMaxY) so the
 // declaration needs no imgui include in the header.
 void SmatchetUI::handleActiveProjectCellRectSel(ActiveProjectDrawCtx& ctx, int rowIdx, int colIdx, float cellOriginX,
                                                 float cellWidth, float groupMinY, float groupMaxY, bool isIdCol,
                                                 const std::string& issueId, bool activeIssueWasThisRow) {
-    GridPane& pane = ctx.pane;
-    bool& rectCellClickedThisFrame = ctx.rectCellClickedThisFrame;
-    const std::uint64_t gridSortSig = ctx.gridSortSig;
-
-    const bool shiftHeld = ImGuiEffectiveKeyShift();
-    const bool ctrlHeld = ImGuiEffectiveKeyCtrl();
+    SpreadsheetState& gs = ctx.pane.gridState;
+    auto& sel = gs.RectSel;
     const ImVec2 hitMin(cellOriginX, groupMinY);
     const ImVec2 hitMax(cellOriginX + cellWidth, groupMaxY);
-    auto& sel = pane.gridState.RectSel;
     // IsMouseHoveringRect is geometry-only: a click on the cell menu / a popup drawn over this cell must not count as
     // a grid click, or the mouse-down changes the selection before the menu item (which fires on release) can read it
     // — "Set <Field> for N rows..." vanished under the cursor. A popup opened from this window counts as its child
@@ -545,81 +710,23 @@ void SmatchetUI::handleActiveProjectCellRectSel(ActiveProjectDrawCtx& ctx, int r
     const bool mouseClick = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
 
     if (hovering && mouseClick && sel.Contains(rowIdx, colIdx)) {
-        rectCellClickedThisFrame = true;
+        ctx.rectCellClickedThisFrame = true;
     }
-
     if (hovering && mouseClick) {
-        if (!issueId.empty()) {
-            pane.gridState.SetActiveIssue(issueId);
-        }
+        const bool shiftHeld = ImGuiEffectiveKeyShift();
+        const bool ctrlHeld = ImGuiEffectiveKeyCtrl();
         if (isIdCol) {
-            // Row-header gestures on the key column.
-            if (shiftHeld) {
-                const int anchorRow = (sel.PrimaryRow >= 0) ? sel.PrimaryRow : rowIdx;
-                std::set<int> baseBefore = sel.Rows;
-                const int lo = (anchorRow < rowIdx) ? anchorRow : rowIdx;
-                const int hi = (anchorRow > rowIdx) ? anchorRow : rowIdx;
-                for (int i = lo; i <= hi; ++i)
-                    sel.Rows.insert(i);
-                sel.PrimaryRow = anchorRow;
-                sel.DragRowMode = true;
-                sel.DragStartRow = anchorRow;
-                sel.DragBaseRows = std::move(baseBefore);
-                sel.Active = false;
-                sel.Dragging = true;
-            } else if (ctrlHeld) {
-                auto it = sel.Rows.find(rowIdx);
-                const bool wasSelected = (it != sel.Rows.end());
-                if (!wasSelected) {
-                    sel.Rows.insert(rowIdx);
-                } else {
-                    sel.Rows.erase(it);
-                    if (activeIssueWasThisRow) {
-                        pane.gridState.ActiveIssueId.clear();
-                    }
-                }
-                sel.PrimaryRow = rowIdx;
-                sel.DragRowMode = false;
-                sel.DragStartRow = -1;
-                sel.DragBaseRows.clear();
-                sel.Active = false;
-                sel.Dragging = false;
-            } else {
-                sel.Rows.clear();
-                sel.Rows.insert(rowIdx);
-                sel.PrimaryRow = rowIdx;
-                sel.DragRowMode = true;
-                sel.DragStartRow = rowIdx;
-                sel.DragBaseRows.clear();
-                sel.Active = false;
-                sel.Dragging = true;
-            }
-            sel.SortSignature = gridSortSig;
-            rectCellClickedThisFrame = true;
+            ApplyKeyCellClick(ctx, rowIdx, colIdx, issueId, activeIssueWasThisRow, shiftHeld, ctrlHeld);
         } else {
-            sel.ClearAll();
-            sel.SortSignature = gridSortSig;
-            rectCellClickedThisFrame = true;
+            ApplyValueCellClick(ctx, rowIdx, colIdx, issueId,
+                                shiftHeld && !ctrlHeld && (sel.Active || (gs.ActiveRow >= 0 && gs.ActiveCol >= 0)));
         }
+        sel.SortSignature = ctx.gridSortSig;
+        ctx.rectCellClickedThisFrame = true;
     } else if (sel.Dragging && hovering && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        // Drag update: extend the active gesture while the mouse is held.
-        if (sel.DragRowMode) {
-            const int lo = (sel.DragStartRow < rowIdx) ? sel.DragStartRow : rowIdx;
-            const int hi = (sel.DragStartRow > rowIdx) ? sel.DragStartRow : rowIdx;
-            sel.Rows = sel.DragBaseRows;
-            for (int i = lo; i <= hi; ++i)
-                sel.Rows.insert(i);
-        } else {
-            sel.ExtentRow = rowIdx;
-            sel.ExtentCol = colIdx;
-        }
+        ExtendCellDrag(ctx, rowIdx, colIdx);
     }
-
-    if (sel.Contains(rowIdx, colIdx)) {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(hitMin, hitMax, IM_COL32(66, 135, 245, 60));
-        dl->AddRect(hitMin, hitMax, IM_COL32(66, 135, 245, 180));
-    }
+    DrawCellSelectionMarks(ctx, rowIdx, colIdx, isIdCol, issueId, hitMin, hitMax);
 }
 
 void SmatchetUI::drawActiveProjectGridNewIssue(ActiveProjectDrawCtx& ctx) {
@@ -683,7 +790,7 @@ void SmatchetUI::drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx) {
             windowHovered && !io.WantTextInput && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
             !rectCellClickedThisFrame && !ticketGridLeftClickInsideTableHit) {
             sel.ClearAll();
-            pane.gridState.ActiveIssueId.clear();
+            pane.gridState.ClearActiveCell();
         }
         const bool windowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         // Ctrl+A selects every row. Outside the HasAnySelection() guard below
@@ -707,4 +814,6 @@ void SmatchetUI::drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx) {
             PromoteActiveRowToSelection(pane, sel, tickets, gridSortSig);
         }
     }
+    drawActiveProjectGridCursorKeys(
+        ctx); // the cell cursor (arrows, Home / End, Page keys) runs after the gestures above
 }
