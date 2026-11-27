@@ -136,6 +136,12 @@ class TicketSyncService {
     /// than the probe saw. Any thread.
     std::uint64_t SessionEpoch() const { return sessionEpoch_.load(); }
 
+    /// The query the most recently started session ran (its `TrackerConfig::JqlQuery`; empty means the backend's
+    /// default query), copied into `outJql`. False, with `outJql` untouched, while no session has started. Every
+    /// sync of the pane goes through StartStreamingSync, whatever started it (a pane kick, a view opened in place,
+    /// a refresh), so this is the query the pane's rows answer; the change monitor polls with it. UI thread.
+    bool LastSessionQuery(std::string& outJql) const;
+
     /// How many times the apply drain built its id -> index map from scratch (cumulative). A session builds it once
     /// and rebuilds only when the roster changed behind it; diagnostics and tests. UI thread.
     std::size_t MergeIndexBuilds() const { return mergeIndex_.Builds; }

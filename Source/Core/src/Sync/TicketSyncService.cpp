@@ -751,6 +751,16 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
     }
 }
 
+bool TicketSyncService::LastSessionQuery(std::string& outJql) const {
+    // sessionEpoch_ moves in StartStreamingSync, on the UI thread, right before sessionCfg_ is latched there; this
+    // reader is on the UI thread too, so a non-zero epoch always comes with the session's config.
+    if (sessionEpoch_.load() == 0) {
+        return false;
+    }
+    outJql = sessionCfg_.JqlQuery;
+    return true;
+}
+
 smatchet::sync::SyncSessionStats TicketSyncService::LastSessionStats() const {
     std::lock_guard<std::mutex> lock(statsMutex_);
     return lastStats_;

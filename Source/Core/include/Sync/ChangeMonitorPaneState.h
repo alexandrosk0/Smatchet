@@ -26,6 +26,32 @@ struct ChangeProbeCycleNotes {
     std::vector<std::string> RefusedKeys;
 };
 
+/// The query one monitor cycle runs for a pane. `Known` false: the pane has no query of its own yet, and the cycle
+/// keeps the focused config's query.
+struct MonitorProbeQuery {
+    bool Known = false;
+    std::string Jql;
+};
+
+/// Picks the query a monitor cycle polls a pane with. The pane's rows answer the query of its latest sync session
+/// (`sessionStarted` / `sessionJql`, an empty query included: it is the backend's default query, not "unknown"), so
+/// that query wins. `kickedJql` (GridLiveContext::lastSyncedJql) is written only by a pane kick or a focus switch:
+/// opening another view in the same pane leaves it naming the previous view, and polling with it added that view's
+/// rows to the grid and dropped the open view's rows as "left the view". It is only the fallback for a pane whose
+/// sync service has not started a session.
+inline MonitorProbeQuery ChooseMonitorProbeQuery(bool sessionStarted, const std::string& sessionJql,
+                                                 const std::string& kickedJql) {
+    MonitorProbeQuery query;
+    if (sessionStarted) {
+        query.Known = true;
+        query.Jql = sessionJql;
+    } else if (!kickedJql.empty()) {
+        query.Known = true;
+        query.Jql = kickedJql;
+    }
+    return query;
+}
+
 struct ChangeMonitorPaneState {
     /// A refused key stays in the roster diff every cycle (its stamp never matches a held row), and isolating it
     /// costs about 2 * log2(n) extra requests each time. The set is bounded so a hostile tracker cannot grow it.

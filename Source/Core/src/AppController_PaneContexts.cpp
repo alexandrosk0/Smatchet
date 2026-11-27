@@ -27,6 +27,7 @@
 #include "Views.h"
 
 #include "Sync/LazyEnrichmentCarryForwardPure.h"
+#include "Sync/ChangeMonitorPaneState.h"
 #include "Sync/ChangeMonitorRosterProbe.h"
 #include "Sync/WalkOwnedKeysPure.h"
 #include "Tracker/ParentHierarchyPure.h" // ParentKeyOf: the parent-field contract the walk-owned check applies
@@ -127,7 +128,8 @@ struct MonitorProbeJob {
     std::string PaneId;
     std::shared_ptr<ITrackerBackend> Backend; // strong handle: a live backend swap must not free it mid-fetch
     TrackerConfig Cfg;
-    std::string PaneJql;
+    std::string PaneJql;       // the query the pane's rows answer (ChooseMonitorProbeQuery)
+    bool PaneJqlKnown = false; // false: keep Cfg's (the focused pane's) query
     std::vector<std::string> SalientFieldIds;
     std::vector<std::string> CachedKeys;                          // the membership baseline (changed-since path)
     std::unordered_map<std::string, std::string> ResidentUpdated; // id -> held stamp (roster path only)
@@ -148,8 +150,8 @@ struct MonitorProbeResult {
 // Worker half of one monitor cycle. False = soft failure (logged by the cycle): the caller skips the apply.
 bool RunMonitorProbe(MonitorProbeJob& job, MonitorProbeResult& result) {
     ViewsStore views = ConfigManager::LoadViewsOrBootstrap(job.Cfg);
-    if (!job.PaneJql.empty()) {
-        job.Cfg.JqlQuery = job.PaneJql;
+    if (job.PaneJqlKnown) {
+        job.Cfg.JqlQuery = job.PaneJql; // an empty query is the backend's default one, not "unknown"
     }
     result.ProbedCfg = job.Cfg;
     smatchet::sync::RosterProbeContext probeContext;
@@ -670,7 +672,14 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
         job.PaneId = paneId;
         job.Backend = backend;
         job.Cfg = cfg;
-        job.PaneJql = ctx.lastSyncedJql; // pane's own query (empty -> cfg's focused query)
+        // The pane's own query: the one its latest sync session ran, not lastSyncedJql (a view opened in the same
+        // pane leaves that naming the previous view, and the cycle then swapped the grid to it).
+        std::string sessionJql;
+        const bool sessionStarted = ctx.ticketSync_ && ctx.ticketSync_->LastSessionQuery(sessionJql);
+        const smatchet::sync::MonitorProbeQuery paneQuery =
+            smatchet::sync::ChooseMonitorProbeQuery(sessionStarted, sessionJql, ctx.lastSyncedJql);
+        job.PaneJql = paneQuery.Jql;
+        job.PaneJqlKnown = paneQuery.Known;
         job.SalientFieldIds = salientFieldIds;
         job.Window = window;
         // A backend that lists versions needs ONE roster call per cycle instead of the changed-since query plus the
