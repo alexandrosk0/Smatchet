@@ -102,7 +102,7 @@ ti::SingleLineEnd ReadSingleLineEnd(bool heldKeyboardWhenDrawn) {
 
 void ApplyEnd(TextResult& r, const ti::SingleLineEnd& end) {
     r.committed = end.committed;
-    r.enterCommitted = end.enterCommitted;
+    r.enterCommitted = end.committed; // MUTANT A5
     r.reverted = end.reverted;
 }
 
@@ -167,6 +167,12 @@ TextResult TextBuf(const char* label, char* buf, std::size_t bufSize, const Text
     r.active = ImGui::IsItemActive();
     SmatchetLocalizedImGui::HookDictationOnLastItem(buf, bufSize);
     ApplyEnd(r, ReadSingleLineEnd(heldKeyboard));
+    if (ImGui::IsItemDeactivated() && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !r.reverted) { // MUTANT D1 (probe)
+        buf[0] = 'x';
+        if (bufSize > 1u) {
+            buf[1] = '\0';
+        }
+    }
     if (r.committed && opts.trimOnCommit && ti::TrimEdgeWhitespace(buf, bufSize)) {
         r.edited = true;
     }

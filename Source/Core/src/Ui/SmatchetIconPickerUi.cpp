@@ -87,7 +87,7 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
                                   ImGuiWindowFlags_NoSavedSettings)) {
         const smatchet::ui::DialogKeys keys = smatchet::ui::DialogReadKeys(s_iconPickerDialog, true);
         ImGui::SetNextItemWidth(-1.0f);
-        smatchet::ui::DialogFocusHere(s_iconPickerDialog);
+        // MUTANT F1: the picker no longer asks for the caret on open
         // The query is a std::string (a long paste is kept whole) and a click selects it so a new one
         // replaces it. The dialog scope above owns the opening caret and Esc; this field only reports Enter.
         SmatchetInput::TextOptions searchOpts;
