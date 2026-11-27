@@ -3,7 +3,7 @@
 
 > **Slug**: `input-ux-w2-dialog-contract-esc-sites` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — follow-up to `docs/plans/input-ux-w2-dialog-contract.md` (shipped: PRs #2437, #2468, #2469, test housekeeping #2520). It closes the bullet "Row 25, four Esc sites not on the scope" of `docs/self-improvement/categories/debt/2026-11-22-dialog-contract-deferred.md`.
+> **Status**: `shipped` — commit `b96807a` (the change) on top of the wip plan commit `e267a5f`; follow-up to `docs/plans/input-ux-w2-dialog-contract.md` (shipped: PRs #2437, #2468, #2469, test housekeeping #2520). It closes the bullet "Row 25, four Esc sites not on the scope" of `docs/self-improvement/categories/debt/2026-11-22-dialog-contract-deferred.md`.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -122,11 +122,12 @@ Single slice, owner subsystem `Source/Core/src/Ui/` (leaf `AGENTS.md`), plus `So
 - Shortcut-capture popups (#77, #81), Esc Esc in Zen mode (#93), the annotate assignee modal's per-frame `ConfigManager::Load()`, the stale comments in `tests/CMakeLists.txt`: each stays its own bullet in the debt entry.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `e267a5f` · wip(plan): this plan.
+- `b96807a` · the four Esc sites: `DialogReadKeys` takes an optional typing field (`DialogScopeState::TypingField`); the offline conflict resolver and the field viewer shell read Esc / Ctrl+Enter through the scope; the Comments post box loses its Esc block, `CloseRequested` and `ConsumeCloseRequest` (and `IFieldViewerContent::ConsumeCloseRequest` is deleted); the long-text editor gets the exception comment; three bucket-E cases; docs, the debt entry and a self-improvement entry for the fail-open `OfflineConflictModalPanes` harness.
 
 ## Deviations from plan
 
-- **`readSubmit = false` for the shell** (plan § Approach 3 was updated in the same PR): `DialogReadKeys` already had a `readSubmit` parameter by the time this was written. The Comments box posts with Ctrl+Enter, so the shell must leave that chord to its content; with the default `true` the scope clears the field and drops nav activation on Ctrl+Enter and the post never happens. The mutation that restored the default failed `Comments_CtrlEnterPosts`, `Comments_BlankBoxCannotPost` and `Comments_ReopenWhilePostingClearsPostedDraft`.
+- **`readSubmit = false` for the shell** (plan § Approach 3 was updated in the same PR): `DialogReadKeys` already had a `readSubmit` parameter on develop when this was written (`Source/Core/include/Ui/SmatchetDialogScope.h:61`). The Comments box posts with Ctrl+Enter, so the shell must leave that chord to its content; with the default `true` the scope clears the field and drops nav activation on Ctrl+Enter and the post never happens. The mutation that restored the default failed `Comments_CtrlEnterPosts`, `Comments_BlankBoxCannotPost` and `Comments_ReopenWhilePostingClearsPostedDraft`.
 - **The History viewer has no text input**, so the shell's old `!WantTextInput` heuristic only ever mattered through the Comments box. The migration therefore changes no History behaviour; it removes the duplicate Esc code and the `CloseRequested` / `ConsumeCloseRequest` hand-off.
 - **No new strings, no CMake or registry edit**: the three new bucket-E cases went into two already-registered files.
 - **`grill-with-docs` was not run as an interactive session.** The plan was checked against the code by reading every site, its callers and its tests before writing it (that is how the read-only-pane and `readSubmit` points were found); no user Q&A took place.
@@ -142,13 +143,3 @@ Run on a Linux build of `SmatchetStandalone` (clang, `SMATCHET_BUILD_UI_TESTS=ON
 - **Build**: `posix-core-check` compiles every Core TU; the Windows dual-target build runs in CI.
 - **Local gates**: `bash scripts/dev/pre-ship.sh origin/develop` (format, comment-noise, duplication, function-size, include-cycle, markdown, test list, doc suite) clean; code review in the PR body.
 - **Manual residue**: none.
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. In the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.**
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md`.*
