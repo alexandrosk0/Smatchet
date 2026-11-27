@@ -152,8 +152,7 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
             ImGui::CloseCurrentPopup();
         }
         if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)) ||
-            (!picked && keys.Esc == smatchet::dialogkeys::EscapeAction::Cancel &&
-             matches.size() > 100000u)) { // MUTANT C3
+            (!picked && keys.Esc == smatchet::dialogkeys::EscapeAction::Cancel)) {
             ImGui::CloseCurrentPopup();
         }
         smatchet::ui::EndDialog(s_iconPickerDialog);
