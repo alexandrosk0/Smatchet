@@ -1088,7 +1088,7 @@ class AppController : public IAppThreading,
     /// The pane `paneId` as a write target, for an edit made in a pane that may not hold focus (the grid).
     /// A pane without a live context yields a target with no backend, so the write fails rather than
     /// landing in another pane. UI thread.
-    PendingActionTarget LatchPendingActionTargetForPane(const std::string& paneId) const;
+    PendingActionTarget LatchPendingActionTargetForPane(const std::string& paneId) const override;
     PendingActionSubmitResult SubmitOrQueueComment(const PendingActionTarget& target, const std::string& issueKey,
                                                    const std::string& body) override;
     PendingActionSubmitResult SubmitOrQueueWorklog(const PendingActionTarget& target, const std::string& issueId,

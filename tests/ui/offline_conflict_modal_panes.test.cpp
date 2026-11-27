@@ -40,6 +40,7 @@
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "FakeNetworkSwitch.h" // hold the fixture tracker down so a resolved edit is not replayed mid-case
 #include "SmatchetUiSession.h"
+#include "Tracker/TrackerFieldValueParseExplain.h"
 #include "Ui/SmatchetGridUiSupport.h"         // SmatchetOfflineConflictUnsavedHintShownForTest
 #include "Ui/SmatchetInlineError.h"           // InlineErrorKindForTests — the parser's reason is on screen
 #include "Ui/SmatchetOfflineQueueActionsUi.h" // SmatchetOfflineConflictDraft*ForTest
@@ -370,6 +371,45 @@ void CaseScalarEstimateFieldValidatesAsTyped(ImGuiTestContext* ctx, const Keyboa
     IM_CHECK_NO_RET(smatchet::ui::InlineErrorKindForTests() != "error");
 }
 
+// A Jira sprint is a custom field whose id does not say "sprint": the resolver takes the kind the queue service
+// recorded in the context, and falls back to the field id for a context written without one (#2513).
+const char* const kScalarSprintJson = "{\"kind\":\"scalar\",\"mine\":\"42\",\"theirs\":\"Sprint 43\","
+                                      "\"fieldId\":\"customfield_10020\",\"fieldKind\":\"sprint\"}";
+const char* const kScalarSprintByIdJson =
+    "{\"kind\":\"scalar\",\"mine\":\"42\",\"theirs\":\"Sprint 43\",\"fieldId\":\"customfield_sprint\"}";
+
+// Types a value into the scalar resolver on an id that is not queued, saves with Enter, and returns the
+// "turned down" text. Empty (checked) when the resolver did not open or the save did not run.
+std::string TurnedDownScalarSave(ImGuiTestContext* ctx, const char* contextJson, std::int64_t dbId) {
+    if (!OpenWithCaretIn(ctx, contextJson, dbId, kScalarField)) {
+        return std::string();
+    }
+    ctx->KeyCharsReplace("Sprint 99");
+    ctx->KeyPress(ImGuiKey_Enter);
+    const bool saveRan = YieldUntil(ctx, [] { return !g_ui.conflictResolveError.empty(); }, 30);
+    IM_CHECK_NO_RET(saveRan);
+    return g_ui.conflictResolveError;
+}
+
+void CaseScalarSprintKindFromContext(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    TrackerParseExplain::ParseMessage sprintMsg;
+    sprintMsg.Id = TrackerParseExplain::ParseMessageId::ConflictValueRejectedSprint;
+    const std::string sprintText = TrackerParseExplain::DescribeParseMessage(sprintMsg);
+    TrackerParseExplain::ParseMessage genericMsg;
+    genericMsg.Id = TrackerParseExplain::ParseMessageId::ConflictValueRejectedGeneric;
+    const std::string genericText = TrackerParseExplain::DescribeParseMessage(genericMsg);
+
+    const std::string byKind = TurnedDownScalarSave(ctx, kScalarSprintJson, c.EditId + kNotQueuedOffset);
+    IM_CHECK_NO_RET(byKind.find(sprintText) == 0);
+    IM_CHECK_NO_RET(byKind.find(genericText) == std::string::npos);
+
+    CancelConflictModal(ctx);
+    SmatchetOfflineConflictDraftsClearForTest();
+    g_ui.conflictResolveError.clear();
+    const std::string byId = TurnedDownScalarSave(ctx, kScalarSprintByIdJson, c.EditId + kNotQueuedOffset);
+    IM_CHECK_NO_RET(byId.find(sprintText) == 0);
+}
+
 // Ctrl+Enter does nothing while a conflict marker is left: the Save button is disabled then.
 void CaseTextCtrlEnterBlockedByMarkers(ImGuiTestContext* ctx, const KeyboardCase& c) {
     if (!OpenWithCaretIn(ctx, kTextJson, c.EditId + kNotQueuedOffset, kTextField)) {
@@ -470,6 +510,29 @@ void CaseTextEscKeepsTypedText(ImGuiTestContext* ctx, const KeyboardCase& c) {
     IM_CHECK_NO_RET(WindowIsLive(kModalTitle));
     IM_CHECK_NO_RET(ResolvedText().find('X') != std::string::npos);
     IM_CHECK_NO_RET(SmatchetOfflineConflictUnsavedHintShownForTest());
+}
+
+// The "not saved" hint after an Esc makes the same promise as the Cancel message: a cancelled resolution is
+// kept in the draft store, also if Smatchet closes (#2510).
+void CaseTextEscHintAgreesWithCancelMessage(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    if (!OpenWithCaretIn(ctx, kTextJson, c.EditId, kTextField)) {
+        return;
+    }
+    ctx->KeyChars("X");
+    ctx->KeyPress(ImGuiKey_Escape);
+    ctx->Yield(3);
+    ctx->KeyPress(ImGuiKey_Escape);
+    ctx->Yield(3);
+    IM_CHECK_NO_RET(SmatchetOfflineConflictUnsavedHintShownForTest());
+    const std::string hint = SmatchetOfflineConflictUnsavedHintTextForTest();
+    IM_CHECK_NO_RET(hint.find("until Smatchet closes") == std::string::npos);
+    IM_CHECK_NO_RET(hint.find("also if Smatchet closes") != std::string::npos);
+
+    g_ui.offlineQueuePanelStatus.clear();
+    ctx->SetRef(kModalTitle);
+    ctx->ItemClick("Cancel");
+    IM_CHECK_NO_RET(YieldUntil(ctx, [] { return !WindowIsLive(kModalTitle); }, 30));
+    IM_CHECK_NO_RET(g_ui.offlineQueuePanelStatus.find("also if Smatchet closes") != std::string::npos);
 }
 
 // Types into the text resolver and cancels with the button. Returns what the field held, or an empty
@@ -769,11 +832,13 @@ extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* 
     RegisterKeyboardCase(engine, "Text_CaretInFieldOnOpen", CaseTextCaretInFieldOnOpen);
     RegisterKeyboardCase(engine, "Scalar_EnterSaves", CaseScalarEnterSaves);
     RegisterKeyboardCase(engine, "Scalar_EstimateFieldValidatesAsTyped", CaseScalarEstimateFieldValidatesAsTyped);
+    RegisterKeyboardCase(engine, "Scalar_SprintKindFromContext", CaseScalarSprintKindFromContext);
     RegisterKeyboardCase(engine, "Scalar_CtrlEnterDoesNotPressFocusedButton",
                          CaseScalarCtrlEnterDoesNotPressFocusedButton);
     RegisterKeyboardCase(engine, "Text_CtrlEnterBlockedByMarkers", CaseTextCtrlEnterBlockedByMarkers);
     RegisterKeyboardCase(engine, "Text_CtrlEnterSavesWhenClean", CaseTextCtrlEnterSavesWhenClean);
     RegisterKeyboardCase(engine, "Text_EscKeepsTypedText", CaseTextEscKeepsTypedText);
+    RegisterKeyboardCase(engine, "Text_EscHintAgreesWithCancelMessage", CaseTextEscHintAgreesWithCancelMessage);
     RegisterKeyboardCase(engine, "Text_CancelKeepsWhatWasTyped", CaseTextCancelKeepsWhatWasTyped);
     RegisterKeyboardCase(engine, "Text_KeptTextNotPutIntoChangedConflict", CaseKeptTextNotPutIntoChangedConflict);
     RegisterKeyboardCase(engine, "Untouched_EscCloses", CaseUntouchedEscCloses);

@@ -11,7 +11,6 @@
 #include "SmatchetUI.h"
 #include "Logger.h"
 #include "SmatchetHelpMarker.h"
-#include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "StringUtil.h"
@@ -453,8 +452,7 @@ void DrawCommentTemplateDetailAndAdd(UiDrawSession& d, const char* titleWidgetId
         }
 
         ImGui::TextUnformatted("Body:");
-        if (SmatchetInput::InputTextMultilineStdString(SmatchetLocalization::LabelFromSource(bodyWidgetId), t.Text,
-                                                       ImVec2(-FLT_MIN, 60.0f))) {
+        if (SmatchetPreferencesUiDetail::DrawCommentTemplateBodyField(bodyWidgetId, t.Text)) {
             cfgField = st.workingList;
             MarkPrefsDirty(d);
         }
@@ -531,6 +529,20 @@ void DrawAnnotateCommentsSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemp
 }
 
 } // namespace
+
+namespace SmatchetPreferencesUiDetail {
+
+bool DrawCommentTemplateBodyField(const char* bodyWidgetId, std::string& text) {
+    // Prose over several lines with nothing to submit: Enter types a newline and Ctrl+Enter only leaves the box.
+    // The shared field takes the first Esc itself, so the box lets go of the keyboard and keeps the text. ImGui's
+    // own Esc would put back the text the box held when it was clicked and report that as an edit, which this
+    // autosaving page would then store.
+    SmatchetInput::MultilineOptions opts;
+    opts.submitOnCtrlEnter = false;
+    return SmatchetInput::Multiline(bodyWidgetId, text, ImVec2(-FLT_MIN, 60.0f), opts).edited;
+}
+
+} // namespace SmatchetPreferencesUiDetail
 
 void DrawEditingPreferencesTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
     namespace Detail = SmatchetPreferencesUiDetail;

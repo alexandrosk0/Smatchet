@@ -159,10 +159,15 @@ ParseMessage CheckDangling(const std::vector<Token>& tokens, bool jql) {
         return MakeParseMessage(ParseMessageId::QueryDanglingOperator, "ORDER BY", tokens[tokens.size() - 2].At,
                                 last.At + last.Len - tokens[tokens.size() - 2].At);
     }
-    // A trailing "!" or "~" is plain text in a field:value search ("is:open crash!"); only a comparison that
-    // needs a right-hand side leaves the query unfinished there.
-    const bool plainPunctuation = !jql && (last.Text == "!" || last.Text == "~");
-    if ((last.Kind == TokenKind::Operator && !plainPunctuation) || last.Kind == TokenKind::Comma) {
+    // A trailing "!", "~" or "," is plain text in a field:value search ("is:open crash!", "is:open crash,"). Only a
+    // comparison that needs a right-hand side leaves the query unfinished there, and a comma right after one
+    // ("state =,") does not supply it.
+    const auto isPlainMark = [](const Token& t) { return t.Text == "!" || t.Text == "~"; };
+    const bool commaAfterComparison = last.Kind == TokenKind::Comma && tokens.size() >= 2 &&
+                                      tokens[tokens.size() - 2].Kind == TokenKind::Operator &&
+                                      !isPlainMark(tokens[tokens.size() - 2]);
+    const bool plainPunctuation = !jql && !commaAfterComparison && (last.Kind == TokenKind::Comma || isPlainMark(last));
+    if (!plainPunctuation && (last.Kind == TokenKind::Operator || last.Kind == TokenKind::Comma)) {
         return MakeParseMessage(ParseMessageId::QueryDanglingOperator, last.Text.empty() ? "," : last.Text, last.At,
                                 last.Len);
     }

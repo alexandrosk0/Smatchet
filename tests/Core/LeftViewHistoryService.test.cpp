@@ -293,6 +293,27 @@ TEST_SUITE("LeftViewHistoryService") {
         CHECK(stored[0].reasonKind == LeftViewReasonKind::QueryFieldChanged);
     }
 
+    TEST_CASE("a retried lookup still sees a field that was empty when the issue left") {
+        const std::string query = "assignee is EMPTY";
+        Rig rig;
+        rig.service->RecordListing(rig.Capture(query), {"A", "B"}, {}, {});
+        rig.reader->rowsFail = true;
+        LeftViewDeparture left = Row("B", "Open");
+        left.fieldValues["assignee"] = "";
+        rig.service->RecordListing(rig.Capture(query), {"A"}, {}, {left});
+        REQUIRE(rig.service->Rows().size() == 1);
+        REQUIRE(rig.service->Rows()[0].reasonKind == LeftViewReasonKind::Unavailable);
+
+        rig.reader->rowsFail = false;
+        CachedTicket fresh = Fresh("B", "Open");
+        fresh.fieldValues["assignee"] = "Bob";
+        rig.reader->rows.push_back(fresh);
+        rig.service->RecordListing(rig.Capture(query), {"A"}, {}, {});
+        REQUIRE(rig.service->Rows().size() == 1);
+        CHECK(rig.service->Rows()[0].reasonKind == LeftViewReasonKind::QueryFieldChanged);
+        CHECK(rig.service->Rows()[0].reason == "Assignee: set to Bob");
+    }
+
     TEST_CASE("no retry while offline, and none for an issue the tracker answered without") {
         Rig rig;
         rig.service->RecordListing(rig.Capture(), {"A", "B", "C"}, {}, {});
