@@ -38,6 +38,7 @@ on:
       - 'Source/Core/src/Config/**'
       - 'Source/Core/src/GridLiveContext.cpp'
       - '.github/workflows/tsan-linux-nightly.yml'
+      - '.github/actions/apt-install/**'
 
 permissions:
   contents: read
@@ -63,9 +64,9 @@ jobs:
           persist-credentials: false
 
       - name: Install toolchain (clang, lld, ninja, TLS/zlib headers)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang lld ninja-build libssl-dev zlib1g-dev libcurl4-openssl-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: clang lld ninja-build libssl-dev zlib1g-dev libcurl4-openssl-dev
 
       - name: Verify clang
         run: clang++ --version

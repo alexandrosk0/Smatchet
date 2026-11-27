@@ -45,17 +45,15 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      # clang/lld: host Linux toolchain. xorg-dev + libgl1-mesa-dev: GLFW's
+      # add_subdirectory runs find_package(X11 REQUIRED) at configure time, and
+      # — unlike the compile-only posix-core gate — this target LINKS the core
+      # archive (which carries glfw on its PRIVATE link interface), so glfw is
+      # actually built + linked here. The smoke never opens a window.
       - name: Install clang + X11/GL dev headers
-        shell: bash
-        run: |
-          set -euo pipefail
-          # clang/lld: host Linux toolchain. xorg-dev + libgl1-mesa-dev: GLFW's
-          # add_subdirectory runs find_package(X11 REQUIRED) at configure time, and
-          # — unlike the compile-only posix-core gate — this target LINKS the core
-          # archive (which carries glfw on its PRIVATE link interface), so glfw is
-          # actually built + linked here. The smoke never opens a window.
-          sudo apt-get update
-          sudo apt-get install -y clang lld xorg-dev libgl1-mesa-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: clang lld xorg-dev libgl1-mesa-dev
 
       - name: Cache FetchContent _deps (posix-core-check)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

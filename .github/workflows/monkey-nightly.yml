@@ -50,15 +50,13 @@ jobs:
           ref: develop
           persist-credentials: false
 
+      # Same toolchain the mobile-posix-core-check lane uses: host clang/lld, plus
+      # the X11/GL headers GLFW 3.3.8 needs at CONFIGURE time (it is fetched but
+      # never built here — only SmatchetCore_PosixCheck + SmatchetMonkeyCli link).
       - name: Install clang + X11/GL dev headers (glfw configure-time deps)
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Same toolchain the mobile-posix-core-check lane uses: host clang/lld, plus
-          # the X11/GL headers GLFW 3.3.8 needs at CONFIGURE time (it is fetched but
-          # never built here — only SmatchetCore_PosixCheck + SmatchetMonkeyCli link).
-          sudo apt-get update
-          sudo apt-get install -y clang lld xorg-dev libgl1-mesa-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: clang lld xorg-dev libgl1-mesa-dev
 
       - name: Cache FetchContent _deps (posix-core-check asan)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
