@@ -1233,8 +1233,10 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     LOG_INFO("TicketSyncService: Spawning background worker for async streaming fetch request ID=%llu",
              static_cast<unsigned long long>(reqId));
 
-    activeStreamingSync_.WorkerThread = std::thread(
-        [this, reqId, cfgCopy, viewsCopy, mode]() { RunStreamingWorkerBody(reqId, cfgCopy, viewsCopy, mode); });
+    // The worker reads the same immutable store the session latched (sessionViews_), not a second copy.
+    activeStreamingSync_.WorkerThread = std::thread([this, reqId, cfgCopy, views = sessionViews_, mode]() {
+        RunStreamingWorkerBody(reqId, cfgCopy, *views, mode);
+    });
 }
 
 std::string TicketSyncService::LoadSessionMeta() {

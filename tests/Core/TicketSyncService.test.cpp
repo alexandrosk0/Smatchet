@@ -2917,6 +2917,64 @@ TEST_CASE("Monitor probe config: before a session the focused config is kept, it
     CHECK(probed.GitHubRepo == "repo-y");
 }
 
+TEST_CASE("Monitor probe config: a token saved after the pane's sync reaches its probes on the same site") {
+    using smatchet::sync::ChooseMonitorProbeConfig;
+    TrackerConfig session;
+    session.TrackerType = "Jira";
+    session.Domain = "acme.atlassian.net";
+    session.Email = "dev@acme.test";
+    session.ApiToken = "revoked-token";
+    session.JqlQuery = "project = A";
+    TrackerConfig global = session;
+    global.ApiToken = "fresh-token"; // the user saved a new token; only the focused pane re-synced
+    global.JqlQuery = "project = B";
+
+    const TrackerConfig probed = ChooseMonitorProbeConfig(global, true, session, "");
+    CHECK(probed.ApiToken == "fresh-token");
+    CHECK(probed.Email == "dev@acme.test");
+    CHECK(probed.JqlQuery == "project = A"); // the pane's own query still wins
+
+    // A Plane pane on the focused workspace takes the fresh key the same way.
+    TrackerConfig planeSession;
+    planeSession.TrackerType = "Plane";
+    planeSession.PlaneUrl = "https://api.plane.so";
+    planeSession.PlaneWorkspaceSlug = "ws";
+    planeSession.PlaneApiKey = "old-key";
+    TrackerConfig planeGlobal = planeSession;
+    planeGlobal.PlaneApiKey = "new-key";
+    CHECK(ChooseMonitorProbeConfig(planeGlobal, true, planeSession, "").PlaneApiKey == "new-key");
+}
+
+TEST_CASE("Monitor probe config: a pane on another site or account keeps its own secrets") {
+    using smatchet::sync::ChooseMonitorProbeConfig;
+    TrackerConfig session;
+    session.TrackerType = "Jira";
+    session.Domain = "acme.atlassian.net";
+    session.Email = "dev@acme.test";
+    session.ApiToken = "acme-token";
+
+    TrackerConfig otherSite = session;
+    otherSite.Domain = "other.atlassian.net";
+    otherSite.ApiToken = "other-token";
+    TrackerConfig probed = ChooseMonitorProbeConfig(otherSite, true, session, "");
+    CHECK(probed.Domain == "acme.atlassian.net");
+    CHECK(probed.ApiToken == "acme-token"); // never the other site's token against this host
+
+    TrackerConfig otherAccount = session;
+    otherAccount.Email = "someone-else@acme.test";
+    otherAccount.ApiToken = "someone-else-token";
+    probed = ChooseMonitorProbeConfig(otherAccount, true, session, "");
+    CHECK(probed.Email == "dev@acme.test");
+    CHECK(probed.ApiToken == "acme-token");
+
+    // The GitHub pane on repo X keeps its PAT while repo Y has focus.
+    TrackerConfig repoX = UnfocusedPaneSessionConfigForProbe();
+    repoX.GitHubPat = "pat-x";
+    TrackerConfig repoY = FocusedPaneConfigForProbe();
+    repoY.GitHubPat = "pat-y";
+    CHECK(ChooseMonitorProbeConfig(repoY, true, repoX, "").GitHubPat == "pat-x");
+}
+
 TEST_CASE("Monitor pane state: the remembered refusals are bounded") {
     smatchet::sync::ChangeMonitorPaneState state;
     smatchet::sync::ChangeProbeCycleNotes notes;
