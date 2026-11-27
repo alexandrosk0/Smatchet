@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <ctime>
 #include <iterator>
+#include <memory>
 #include <numeric>
 #include <string>
 #include <utility>
@@ -253,7 +254,7 @@ CommandResult RunGridEditBurstOnUi(AppController& app, int count, const std::str
     }
 
     TrackerField field;
-    if (const TrackerField* meta = app.FindFieldById(fieldId)) {
+    if (const std::shared_ptr<const TrackerField> meta = app.FindFieldSnapshotById(fieldId)) {
         field = *meta;
     } else {
         field.Id = fieldId;

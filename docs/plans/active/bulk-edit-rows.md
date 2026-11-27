@@ -139,7 +139,7 @@ Core `.cpp` files are picked up by `file(GLOB_RECURSE CORE_SOURCES …)`, so no 
 - `AppController::CanEditFieldForIssue`: called at `SmatchetActiveProjectGridCells.cpp:481`. The per-row pre-flight check.
 - `SmatchetToastManager::PushClickable` + `ToastRowAction`: `include/Ui/SmatchetToast.h`. The summary toast and its click action.
 - `smatchet::dropdown::DrawBody` + `Options::RecentsScope`: `include/FilterDropdown.h` on PR #2432's branch. The shared value picker and recent picks.
-- `ticket.set_field`: `BuiltinCommands_TicketMutations.cpp:52-97`. The pattern for dry-run, `FindFieldById`, `LatchPendingActionTarget()` and the `{ok, queued, offlineId}` result.
+- `ticket.set_field`: `BuiltinCommands_TicketMutations.cpp:52-97`. The pattern for dry-run, `FindFieldSnapshotById`, `LatchPendingActionTarget()` and the `{ok, queued, offlineId}` result.
 - `FieldEditAuditSource::ScopedOverride`: `include/Persistence/FieldEditAuditSource.h:13`. The command path tags rows `mcp` / `lua`.
 
 ## Extraction sizing (when this plan EXTRACTS or SPLITS code/docs)

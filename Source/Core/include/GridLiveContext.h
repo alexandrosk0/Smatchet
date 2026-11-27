@@ -74,6 +74,26 @@ struct GridContextFieldCatalog {
     std::string currentCatalogProjectKey_;
     // Per-project component options are not per-pane: ProjectComponentsCacheService keys them by
     // tracker and project, so panes on one tracker share them.
+
+    /// The catalog field with this id, or null when the catalog has none. The handle shares the lifetime of
+    /// the generation it was found in, so the field stays readable after a writer swaps the catalog. Costs one
+    /// lock and one refcount bump, never a field copy. Safe on any thread.
+    std::shared_ptr<const TrackerField> FindFieldSnapshot(const std::string& fieldId) const {
+        std::shared_ptr<const std::vector<TrackerField>> generation;
+        {
+            std::lock_guard<std::mutex> lock(availableFieldsMutex_);
+            generation = AvailableFields;
+        }
+        if (!generation) {
+            return nullptr;
+        }
+        for (const TrackerField& field : *generation) {
+            if (field.Id == fieldId) {
+                return std::shared_ptr<const TrackerField>(generation, &field);
+            }
+        }
+        return nullptr;
+    }
 };
 
 /// Per-context lazy in-memory group roster (user-info-window Slice 3, plan item 15;

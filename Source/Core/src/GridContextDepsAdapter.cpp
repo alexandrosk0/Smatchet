@@ -319,8 +319,10 @@ GridContextDepsAdapter::GetActiveTicketsSnapshotsAllPanes() const {
     return app_.CollectActiveTicketSnapshotsAcrossContexts();
 }
 
-const TrackerField* GridContextDepsAdapter::FindFieldById(const std::string& fieldId) const {
-    return app_.FindFieldById(fieldId);
+// Per-context, like AvailableFields above: a pane-frozen adapter answers from its own pane's catalog, so an
+// edit-meta check for an unfocused pane is never judged against the focused pane's field ids.
+std::shared_ptr<const TrackerField> GridContextDepsAdapter::FindFieldSnapshotById(const std::string& fieldId) const {
+    return ctx().fieldCatalog.FindFieldSnapshot(fieldId);
 }
 
 // CONST overload, distinct from the non-const RequestDeferredLiveTrackerBackendSuccessNotify above —

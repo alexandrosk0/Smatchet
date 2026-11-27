@@ -191,7 +191,9 @@ bool EditMetaCacheService::CanEditFieldImpl(const std::string& backendKey, const
     if (IsEditableTimetrackingEstimateFieldId(fieldId)) {
         return true;
     }
-    const TrackerField* meta = fieldMeta ? fieldMeta : deps_.FindFieldById(fieldId);
+    const std::shared_ptr<const TrackerField> found =
+        fieldMeta ? std::shared_ptr<const TrackerField>() : deps_.FindFieldSnapshotById(fieldId);
+    const TrackerField* meta = fieldMeta ? fieldMeta : found.get();
     if (meta && TrackerFieldPayloadPure::IsSprintField(*meta)) {
         return true;
     }

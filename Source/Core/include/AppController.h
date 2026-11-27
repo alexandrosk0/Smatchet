@@ -1154,7 +1154,14 @@ class AppController : public IAppThreading,
     /// True while a prefetch of `issueKey` from the focused pane's tracker is in flight. UI thread, per row.
     bool IsBulkImportPrefetchInFlight(const std::string& issueKey) const;
 
-    const TrackerField* FindFieldById(const std::string& fieldId) const override;
+    /// The focused pane's catalog field with this id, or null. Any thread. The handle shares the lifetime of
+    /// the catalog generation the field was found in, so the field stays readable while the handle is held,
+    /// even after a worker replaces the catalog or a tracker switch clears it.
+    std::shared_ptr<const TrackerField> FindFieldSnapshotById(const std::string& fieldId) const override;
+    /// Legacy raw-pointer form of FindFieldSnapshotById. The pointer is valid until the calling thread's next
+    /// FindFieldById call: read or copy the field at once, and never store the pointer or hand it to another
+    /// thread. New code uses FindFieldSnapshotById.
+    const TrackerField* FindFieldById(const std::string& fieldId) const;
 
     /** Component options for one Jira project key (e.g. "PROJ") in the focused tracker, from
      *  ProjectComponentsCacheService (Quality Pillar 6): the live list, else the list saved from an

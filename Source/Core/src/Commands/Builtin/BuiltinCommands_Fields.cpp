@@ -10,6 +10,7 @@
 #include "ConfigManager.h"
 #include "Tracker/TrackerFieldSchema.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -49,10 +50,13 @@ void RegisterFieldsCommands(CommandRegistry& reg, IAppFields& app) {
     }
 
     {
+        // clang-format off
+        // SMATCHET_DEVIATION(rule=duplication; reason=per-command MakeCommand registration boilerplate (arg reads, one lookup, Params, Register) shared by construction with unrelated command buckets; retyping the lookup to a shared field handle re-hashed the clone window, and a shared helper would couple independent buckets; owner=command-system; revisit=when a shared command-registration builder lands)
+        // clang-format on
         Command c = MakeCommand("fields.get", "Get metadata for a single field by id.",
                                 [&app](const nlohmann::json& args, const CommandContext&) {
                                     const std::string id = args.value("id", std::string());
-                                    const TrackerField* f = app.FindFieldById(id);
+                                    const std::shared_ptr<const TrackerField> f = app.FindFieldSnapshotById(id);
                                     if (!f) {
                                         return CommandResult::Failure(ErrorCode::NotFound,
                                                                       "Field '" + id + "' not found in catalog.",
@@ -94,13 +98,17 @@ void RegisterFieldsCommands(CommandRegistry& reg, IAppFields& app) {
     }
 
     {
+        // clang-format off
+        // SMATCHET_DEVIATION(rule=duplication; reason=per-command MakeCommand registration boilerplate (arg reads, one lookup, Params, Register) shared by construction with unrelated command buckets; retyping the lookup to a shared field handle re-hashed the clone window, and a shared helper would couple independent buckets; owner=command-system; revisit=when a shared command-registration builder lands)
+        // clang-format on
         Command c = MakeCommand("fields.icon_for", "Resolve the icon asset path/URL for a field+value pair.",
                                 [&app](const nlohmann::json& args, const CommandContext&) {
                                     const std::string fieldId = args.value("field", std::string());
                                     const std::string rawValue = args.value("value", std::string());
-                                    const TrackerField* f = app.FindFieldById(fieldId);
+                                    const std::shared_ptr<const TrackerField> f = app.FindFieldSnapshotById(fieldId);
                                     std::string outPathOrUrl;
-                                    const bool found = app.TryGetFieldIconMapTarget(fieldId, f, rawValue, outPathOrUrl);
+                                    const bool found =
+                                        app.TryGetFieldIconMapTarget(fieldId, f.get(), rawValue, outPathOrUrl);
                                     nlohmann::json out;
                                     out["found"] = found;
                                     out["pathOrUrl"] = found ? outPathOrUrl : std::string();

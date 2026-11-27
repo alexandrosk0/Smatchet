@@ -890,7 +890,7 @@ void DrawAssignIssueAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitI
     const std::string& selectedJiraIssueKey = ctx.SelectedJiraIssueKey;
     ImGui::BeginDisabled(readOnlyMode || commitInFlight);
     if (ImGui::Selectable("Assign issue to user", false)) {
-        const TrackerField* f = app.FindFieldById("assignee");
+        const std::shared_ptr<const TrackerField> f = app.FindFieldSnapshotById("assignee");
         if (!hasJiraAccount) {
             LOG_ERROR("Annotate UI: assign skipped — no Jira account match for this Perforce user.");
             State().lastUiStatus =
@@ -996,7 +996,7 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
     }
     ImGui::BeginDisabled(!hasJiraAccount || readOnlyMode || commitInFlight);
     if (ImGui::Selectable("Assign and add Annotate context", false)) {
-        const TrackerField* f = app.FindFieldById("assignee");
+        const std::shared_ptr<const TrackerField> f = app.FindFieldSnapshotById("assignee");
         if (!f) {
             State().lastUiStatus = "Error: the assignee field isn't in the loaded field catalog - refresh the catalog "
                                    "(Preferences > Tracker > Save & Sync) and retry.";

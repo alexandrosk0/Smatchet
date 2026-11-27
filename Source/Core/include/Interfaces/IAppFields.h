@@ -10,10 +10,13 @@
 // return / const-ref + pointer params don't require completeness at the declaration point; the
 // fields.* TU includes the full types.
 //
-// FindFieldById is also declared on IAppTicketMutations and GetFieldCatalogError on IAppSync;
-// both are mirrored here so the fields.* TU rides a single facet. A single AppController override
+// FindFieldSnapshotById is also declared on IAppTicketMutations, and GetFieldCatalogError on IAppSync.
+// Both are mirrored here so the fields.* TU rides a single facet. A single AppController override
 // is the final overrider for every base carrying the same signature — no diamond, the facets are
 // unrelated bases.
+//
+// FindFieldSnapshotById returns a handle that shares the lifetime of the catalog generation the field
+// was found in: the field stays readable while the handle is held, even after a worker swaps the catalog.
 //
 // Pillar-1 note: GetAvailableFields is header-inlined and has per-frame callers (SmatchetUI's
 // grid-frame catalog index, SmatchetGridHeaderUi's draft build), but every one of them binds a
@@ -39,7 +42,7 @@ class IAppFields {
     virtual ~IAppFields() = default;
 
     virtual std::shared_ptr<const std::vector<TrackerField>> GetAvailableFields() const = 0;
-    virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
+    virtual std::shared_ptr<const TrackerField> FindFieldSnapshotById(const std::string& fieldId) const = 0;
     virtual bool RefreshFieldCatalog(const TrackerConfig& cfg) = 0;
     virtual const std::string& GetFieldCatalogError() const = 0;
     virtual bool TryGetFieldIconMapTarget(const std::string& fieldId, const TrackerField* field,

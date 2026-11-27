@@ -13,6 +13,7 @@
 #include "Ui/SmatchetInput.h"
 
 #include <algorithm>
+#include <memory>
 #include <string>
 
 namespace AnnotateInternal {
@@ -74,7 +75,7 @@ void DrawJiraFieldCombo(const std::vector<TrackerField>& availableFields, const 
                         std::string& cfgField, const char* idSuffix, const char* reason) {
     std::string preview = "(none)";
     if (!cfgField.empty()) {
-        const TrackerField* mf = ticketMutations.FindFieldById(cfgField);
+        const std::shared_ptr<const TrackerField> mf = ticketMutations.FindFieldSnapshotById(cfgField);
         preview = (mf && !mf->Name.empty()) ? (mf->Name + " (" + mf->Id + ")") : cfgField;
     }
     const std::string comboId = std::string(label) + "##" + idSuffix;

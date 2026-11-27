@@ -154,7 +154,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const override;
     /// Every live pane's roster, for the process-wide editmeta prune (see IEditMetaDeps).
     std::vector<std::shared_ptr<const std::vector<CachedTicket>>> GetActiveTicketsSnapshotsAllPanes() const override;
-    const TrackerField* FindFieldById(const std::string& fieldId) const override;
+    std::shared_ptr<const TrackerField> FindFieldSnapshotById(const std::string& fieldId) const override;
     // CONST overload — distinct from the non-const RequestDeferredLiveTrackerBackendSuccessNotify()
     // above (shared by IOfflineQueueDeps + ITicketSyncDeps). Both are needed; they forward to the
     // same AppController method.

@@ -58,8 +58,9 @@ class IEditMetaDeps {
     }
 
     /// Catalog lookup for a field id (avoids re-scanning); used by `CanEditFieldForIssue` to
-    /// detect sprint fields. Returns null when the field is unknown.
-    virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
+    /// detect sprint fields. Returns null when the field is unknown. The handle keeps the field
+    /// readable while it is held, even after the catalog is replaced.
+    virtual std::shared_ptr<const TrackerField> FindFieldSnapshotById(const std::string& fieldId) const = 0;
 
     /// Arm the deferred live-tracker-backend success notify (a successful editmeta fetch counts
     /// as a reachable-backend signal). CONST — a distinct overload from the existing non-const
