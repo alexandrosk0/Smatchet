@@ -29,6 +29,10 @@ PY="${PYTHON:-python}"
 TEST_PORT="${SMATCHET_TEST_PORT:-58780}"
 FILTER="${UI_TEST_FILTER:-GridSpreadsheet}"
 MAX_ATTEMPTS="${UI_TEST_WARMUP_RETRIES:-8}"
+# Wall-clock budget of one --spawn run. Without --timeout the CLI derives it from the frame count (600 frames ->
+# 40 s, ScenarioWaitMs in CliArgCoercion.cpp), and under llvmpipe a test of this group costs ~3 s: 11 tests used
+# 32 s, and 15 ran past 40 s on both attempts. 120 s is ~2.7x the ~44 s that 15 tests need.
+SPAWN_TIMEOUT_MS="${UI_TEST_SPAWN_TIMEOUT_MS:-120000}"
 # This lane owns its fixture: the CI loop exports basic-grid.json for the other drivers, and the test needs 60 rows.
 FIXTURE="${SMATCHET_FIXTURE_DIR:-tests/fixtures/jira_backend}/grid-spreadsheet.json"
 
@@ -65,7 +69,7 @@ while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
     echo "[test-ui-grid-spreadsheet] attempt $attempt/$MAX_ATTEMPTS — launching ephemeral Smatchet (port $PORT)..."
     echo "  fixture: $FIXTURE"
     RAW_OUTPUT="$(SMATCHET_TEST_JIRA_BACKEND_FIXTURE="$FIXTURE" \
-        "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
+        "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes --timeout="$SPAWN_TIMEOUT_MS" \
         --mcp-port="$PORT" ${UI_TEST_OUTLOG:+--outLog="$UI_TEST_OUTLOG"} 2>&1 || true)"
     echo "$RAW_OUTPUT" | tail -12
 
