@@ -164,10 +164,12 @@ TEST_CASE("ValidateQuery skips the field check without a catalog, and for the fi
 TEST_CASE("ValidateQuery: in the field:value dialects an apostrophe and a trailing 'in' are plain text") {
     // GitHub, Plane and Linear searches carry no JQL keywords: these were refused before.
     for (const char* q : {"is:open sign in", "state:done order", "is:open label:bug can't login", "label:bug by",
-                          "is:pr or", "is:open 'tis broken", "is:open login crash!", "label:bug urgent~"}) {
+                          "is:pr or", "is:open 'tis broken", "is:open login crash!", "label:bug urgent~",
+                          "is:open crash,", "label:bug, urgent,", "is:open crash!,"}) {
         INFO("query: " << std::string(q));
         CHECK_FALSE(ValidateQuery(q, QueryDialect::FieldValue, nullptr).IsError());
     }
+    CHECK_FALSE(IsBlockingQueryError(ValidateQuery("is:open crash,", QueryDialect::FieldValue, nullptr)));
     // The same text is still a JQL fault: there the words are keywords and the apostrophe opens a string.
     CHECK(ValidateQuery("status = Open and", QueryDialect::Jql, nullptr).Id == ParseMessageId::QueryDanglingOperator);
     CHECK(ValidateQuery("summary ~ can't login", QueryDialect::Jql, nullptr).Id == ParseMessageId::QueryUnclosedQuote);
@@ -177,8 +179,11 @@ TEST_CASE("ValidateQuery: in the field:value dialects an apostrophe and a traili
     CHECK(ValidateQuery("state:open (label:bug", QueryDialect::FieldValue, nullptr).Id ==
           ParseMessageId::QueryUnbalancedOpen);
     CHECK(ValidateQuery("state =", QueryDialect::FieldValue, nullptr).Id == ParseMessageId::QueryDanglingOperator);
+    CHECK(ValidateQuery("state =,", QueryDialect::FieldValue, nullptr).Id == ParseMessageId::QueryDanglingOperator);
     // In JQL a trailing "!" is an unfinished "!=": the same text there is refused.
     CHECK(ValidateQuery("status crash!", QueryDialect::Jql, nullptr).Id == ParseMessageId::QueryDanglingOperator);
+    // In JQL a trailing comma leaves a list unfinished.
+    CHECK(ValidateQuery("labels in Open,", QueryDialect::Jql, nullptr).Id == ParseMessageId::QueryDanglingOperator);
 }
 
 TEST_CASE("IsBlockingQueryError: structural problems block, everything else does not") {

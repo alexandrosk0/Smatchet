@@ -620,6 +620,9 @@ TEST_CASE("ExtractIssueKey: a pasted issue link names its key (pasted URLs)") {
     // A link with no key in it is not a parent: the caller keeps its own error for an empty key.
     CHECK(ExtractIssueKey("https://example.com/") == "");
     CHECK(ExtractIssueKey("https://acme.atlassian.net/jira/your-work") == "");
+    // A link to a page or file whose name looks like a key is not a parent.
+    CHECK(ExtractIssueKey("https://wiki.acme.com/display/ENG/Release-2") == "");
+    CHECK(ExtractIssueKey("https://github.com/o/r/blob/main/docs/ADR-12") == "");
     // A GitHub link yields a GitHub key, which is no Jira-style parent.
     CHECK(ExtractIssueKey("https://github.com/octo/repo/issues/12") == "");
     // The "KEY - Summary" form is untouched, even when the summary has a slash in it.

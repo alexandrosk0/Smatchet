@@ -70,7 +70,8 @@ std::string s_quickCreateSyncedSummary;
 std::string s_quickCreateSyncedDescription;
 // The fields were filled from a kept entry at this open (the restored line shows).
 bool s_quickCreateDraftRestored = false;
-// The open passed its own text (summary= / description=): the kept entry is left alone until the user edits.
+// The open passed its own text (summary= / description=): the kept entry is left alone until the user edits,
+// then the edited text replaces it whole (TakeOverQuickCreateDraft).
 bool s_quickCreateSyncSuspended = false;
 
 const char* BufCStr(const std::vector<char>& buf) { return buf.empty() ? "" : buf.data(); }
@@ -111,9 +112,23 @@ void EraseQuickCreateDraft() {
     s_quickCreateSyncedDescription.clear();
 }
 
+// The user edited text the open passed in: it is theirs now and replaces the kept entry whole (one popup,
+// one entry). The entry is dropped here, not left to the sync: the sync only rewrites a field that differs
+// from what this process last synced, and after a restart that is nothing while the store holds the draft
+// read from the file, so a kept description would stay under the new summary. The marker belongs to the
+// draft being replaced and goes with it. The sync at the end of this frame keeps the edited text.
+void TakeOverQuickCreateDraft() {
+    if (!s_quickCreateSyncSuspended) {
+        return;
+    }
+    s_quickCreateSyncSuspended = false; // cleared first: the erase leaves a suspended entry alone
+    EraseQuickCreateDraft();
+}
+
 // At open, after the seed: puts back a kept summary / description, unless the open passed its own text
 // (`summary=` / `description=` arguments are what the caller wants in the fields). Then neither comes back,
-// and the kept entry stays as it is until the user edits a field.
+// and the kept entry stays as it is until the user edits a field; then the edited text replaces it whole
+// (TakeOverQuickCreateDraft).
 void RestoreQuickCreateDraft(UiDrawSession& d, bool openPassedText) {
     s_quickCreateDraftRestored = false;
     s_quickCreateSyncSuspended = openPassedText;
@@ -592,7 +607,7 @@ void SmatchetQuickCreateIssueUi_Draw(AppController& app, UiDrawSession& d) {
                                                d.quickCreateSummaryBuf.size(), ImGuiInputTextFlags_EnterReturnsTrue);
     if (ImGui::IsItemEdited() && !d.quickCreateInFlight) {
         // The user's text now. Not while a create runs: its result settles the entry as it was when sent.
-        s_quickCreateSyncSuspended = false;
+        TakeOverQuickCreateDraft();
     }
 
     ImGui::TextUnformatted(SmatchetLocalization::T("quickcreate.description", "Description"));
@@ -607,7 +622,7 @@ void SmatchetQuickCreateIssueUi_Draw(AppController& app, UiDrawSession& d) {
                                   ImVec2(-1.0f, 240.0f))) {
         d.quickCreateDescUserEdited = true;
         if (!d.quickCreateInFlight) {
-            s_quickCreateSyncSuspended = false;
+            TakeOverQuickCreateDraft();
         }
     }
 

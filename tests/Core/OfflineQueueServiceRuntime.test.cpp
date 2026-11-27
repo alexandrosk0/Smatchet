@@ -519,6 +519,7 @@ TEST_CASE("OfflineQueueServiceRuntime: scalar conflict suspends with kind:scalar
     const auto row = svc.GetPendingFieldEdits().front();
     CHECK(row.HasMergeConflict);
     CHECK(row.ConflictContextJson.find("\"kind\":\"scalar\"") != std::string::npos);
+    CHECK(row.ConflictContextJson.find("fieldKind") == std::string::npos);
     CHECK(svc.GetDeadPendingFieldEdits().empty());
     CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
 }
@@ -1298,6 +1299,45 @@ TEST_CASE("OfflineQueueServiceRuntime: a sprint conflict shows the queued sprint
     CHECK(ctx["mine"] == "42");
     CHECK(ctx["theirs"] == "Sprint 43");
     CHECK(deps.BackendImpl->AddIssueToSprintCallCount() == 0u);
+}
+
+// A Jira sprint is a custom field whose id does not say "sprint", so the conflict context names the kind the
+// resolver needs for its hint and rejection text (#2513).
+TEST_CASE("OfflineQueueServiceRuntime: a sprint conflict on a custom field id records fieldKind sprint") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    CachedTicket fresh;
+    fresh.id = "PROJ-66";
+    fresh.fieldValues["customfield_10020"] = "Sprint 43"; // theirs moved from the captured base
+    deps.BackendImpl->SetFetchIssuesForKeysResult(true, {fresh});
+
+    nlohmann::json payload = {{"sprint_add", "42"}};
+    SUBCASE("a queued sprint payload, catalog not loaded") {}
+    SUBCASE("the catalog field's family") {
+        deps.Fields = {MakeField("customfield_10020", TrackerFieldFamily::Sprint)};
+        payload = {{"customfield_10020", "Sprint 42"}};
+    }
+    SUBCASE("the catalog field's gh-sprint schema") {
+        TrackerField f = MakeField("customfield_10020");
+        f.SchemaCustom = "com.pyxis.greenhopper.jira:gh-sprint";
+        deps.Fields = {f};
+        payload = {{"customfield_10020", "Sprint 42"}};
+    }
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    REQUIRE(svc.QueueFieldEditOffline("PROJ-66", "customfield_10020", payload.dump(), err, std::string(), "Sprint 41",
+                                      true) > 0);
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    const auto row = svc.GetPendingFieldEdits().front();
+    REQUIRE(row.HasMergeConflict);
+    const nlohmann::json ctx = nlohmann::json::parse(row.ConflictContextJson);
+    CHECK(ctx["kind"] == "scalar");
+    CHECK(ctx["fieldId"] == "customfield_10020");
+    CHECK(ctx.value("fieldKind", std::string()) == "sprint");
 }
 
 // Resolving a sprint / estimate conflict rebuilds the payload in its own shape; a value that names no

@@ -1171,6 +1171,59 @@ void RegisterQuickCreateDraftArgsAndMaybeCreated(ImGuiTestEngine* engine) {
     };
 }
 
+// An entry this process never synced (read from the file at start) is replaced whole once the user edits a
+// summary= open: the old description and the old may-have-been-created marker do not stay under the new
+// summary (#2508).
+void RegisterQuickCreateCallerTextReplacesKeptDraft(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "QuickCreate_CallerTextEditReplacesKeptDraft");
+    t->GuiFunc = ClearActiveIdGui;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        // A plain open over an empty store: the popup's memory of what it synced is empty, as after a restart.
+        g_ui.quickCreateArgSummary.clear();
+        g_ui.quickCreateArgDescription.clear();
+        EraseQuickCreateDraftForTest();
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        DeactivateFieldForTest(ctx);
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield(2);
+
+        // The store holds an entry the popup never handed it, as the file load leaves it.
+        smatchet::drafts::Put("quickcreate.summary", "popup", "Old title");
+        smatchet::drafts::Put("quickcreate.description", "popup", "Old body");
+        smatchet::drafts::Put("quickcreate.maybe_created", "popup", "1");
+
+        // Opened with summary= and not edited: the kept entry stays whole.
+        g_ui.quickCreateArgSummary = "From the caller";
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "Old title");
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.description", "popup").c_str(), "Old body");
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.maybe_created", "popup").c_str(), "1");
+
+        // The user edits the caller's summary: it replaces the kept entry, description and marker included.
+        ctx->KeyPress(ImGuiKey_End);
+        ctx->KeyChars("!");
+        ctx->Yield(2);
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.summary", "popup").c_str(), "From the caller!");
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.description", "popup").c_str(), "");
+        IM_CHECK_STR_EQ_NO_RET(KeptDraftText("quickcreate.maybe_created", "popup").c_str(), "");
+
+        // The next plain open restores the edited summary only, with no old description behind it.
+        DeactivateFieldForTest(ctx);
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(OpenQuickCreateWithCaret(ctx));
+        IM_CHECK_STR_EQ_NO_RET(QuickCreateSummaryText().c_str(), "From the caller!");
+        IM_CHECK_NO_RET(!g_ui.quickCreateDescUserEdited);
+
+        DeactivateFieldForTest(ctx);
+        g_ui.showQuickCreateIssue = false;
+        ctx->Yield(2);
+        EraseQuickCreateDraftForTest();
+        ctx->Yield();
+    };
+}
+
 // Audit #50: Esc in the quick-create popup with a summary typed keeps the text and asks before
 // discarding; Esc with nothing typed closes it.
 void RegisterQuickCreateEscKeys(ImGuiTestEngine* engine) {
@@ -1440,6 +1493,7 @@ extern "C" void SmatchetRegisterDataDependentWindowsSmokeTests(ImGuiTestEngine* 
     RegisterQuickCreateEscKeys(engine);
     RegisterQuickCreateDraftKept(engine);
     RegisterQuickCreateDraftArgsAndMaybeCreated(engine);
+    RegisterQuickCreateCallerTextReplacesKeptDraft(engine);
     RegisterQuickCreateEscIgnoresOtherWindowsPopups(engine);
     RegisterOfflineQueuePanelRenderSmoke(engine);
 }

@@ -3,9 +3,14 @@
 // Pure (ImGui-free) helpers extracted from LuaConsolePlugin::OnDraw so they are
 // bucket-A unit-testable without an ImGui context. Header-only inline functions
 // keep the plugin a single translation unit while still being linkable from the
-// test target. Behaviour is byte-identical to the original inline code.
+// test target. Each helper's own comment says what it reads and returns.
+// CollectPaneSelectedTicketIds takes the GridPane itself and maps its selected
+// shown rows through the pane's filtered rows.
+
+#include "GridPane.h"
 
 #include <algorithm>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -41,6 +46,31 @@ inline std::vector<std::string> CollectSelectedTicketIds(const RowContainer& row
     std::sort(selectedIds.begin(), selectedIds.end());
     selectedIds.erase(std::unique(selectedIds.begin(), selectedIds.end()), selectedIds.end());
     return selectedIds;
+}
+
+/// Issue ids of the rows selected in `pane`: the key-column row picks plus the member rows of the cell range
+/// (a range a re-sort split is not its bounding box, hence RectContains). Selection rows are SHOWN-row
+/// indices, positions in `pane.filteredIndices` (the rows the grid draws once the search box and hide-parents
+/// dropped some), so they map through that vector and never through `cachedSortedIndices` (#2499). Its values
+/// index `pane.ticketsSnapshot`, the snapshot the pane drew. No shown rows or no snapshot: nothing is selected.
+inline std::vector<std::string> CollectPaneSelectedTicketIds(const GridPane& pane) {
+    const GridRectSelection& rectSel = pane.gridState.RectSel;
+    std::set<int> selectedRows = rectSel.Rows;
+    if (rectSel.Active) {
+        for (int r = rectSel.MinRow(); r <= rectSel.MaxRow(); ++r) {
+            if (rectSel.RectContains(r, rectSel.MinCol())) {
+                selectedRows.insert(r);
+            }
+        }
+    }
+    std::vector<std::string> ticketIds;
+    if (pane.ticketsSnapshot) {
+        ticketIds.reserve(pane.ticketsSnapshot->size());
+        for (const CachedTicket& t : *pane.ticketsSnapshot) {
+            ticketIds.push_back(t.id);
+        }
+    }
+    return CollectSelectedTicketIds(selectedRows, false, 0, -1, pane.filteredIndices, ticketIds);
 }
 
 /// Resolve the display index of a tracked selection (identified by its script

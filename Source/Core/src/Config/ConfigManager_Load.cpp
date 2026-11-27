@@ -603,10 +603,27 @@ void MigrateZoomHotkeyAliasesV3(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMultiHotkeyZoomV3 = true;
 }
 
+// Index of the first ENABLED binding that already holds `hotkey`, or -1. A disabled row dispatches
+// nothing, so it does not hold the chord (the editor's conflict check applies the same rule). Exact
+// spec compare: config stores the canonical StringifyImGuiHotkey spelling (the HasHotkey contract).
+// ImGui-free on purpose: this TU links into the TSan, Lua and fuzz rigs, which do not carry
+// Ui/ImGuiHotkey.cpp.
+int FindEnabledBindingHoldingHotkey(const KeybindingsConfig& kb, const std::string& hotkey) {
+    for (std::size_t i = 0; i < kb.Bindings.size(); ++i) {
+        if (kb.Bindings[i].Enabled && kb.Bindings[i].HasHotkey(hotkey)) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
 // One-shot migration: seed the primary-action bindings the input UX audit added (§ 4.4:
 // preferences.search.focus, view.next, view.previous) into a config saved before those commands
 // existed. Same replace-not-merge rationale as MigrateMenuShortcutKeybindingsV1. Each row is copied
-// from Defaults(), and a command the user already bound keeps the user's binding.
+// from Defaults(), and a command the user already bound keeps the user's binding. A default combo
+// that an enabled binding for another command already holds is not seeded (#2507). A row left with
+// no combo is not added, and the user can still give the command a key from the editor's
+// 'Add shortcut for a command...' list.
 void MigrateActionKeysV1(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedActionKeysV1 = j.value("migrated_action_keys_v1", false);
     if (cfg.MigratedActionKeysV1) {
@@ -616,10 +633,29 @@ void MigrateActionKeysV1(const nlohmann::json& j, TrackerConfig& cfg) {
     int seeded = 0;
     for (const char* commandId : {"preferences.search.focus", "view.next", "view.previous"}) {
         const int di = defaults.FindBindingIndex(commandId, "{}");
-        if (di >= 0 && cfg.Keybindings.FindBindingIndex(commandId, "{}") < 0) {
-            cfg.Keybindings.Bindings.push_back(defaults.Bindings[static_cast<std::size_t>(di)]);
-            ++seeded;
+        if (di < 0 || cfg.Keybindings.FindBindingIndex(commandId, "{}") >= 0) {
+            continue;
         }
+        const Keybinding& def = defaults.Bindings[static_cast<std::size_t>(di)];
+        Keybinding row = def;
+        // A chord the user already gave another command stays theirs. Dispatch fires every enabled
+        // binding that matches a key press, so seeding the default onto that chord would run both
+        // commands at once.
+        for (const std::string& hotkey : def.Hotkeys) {
+            const int held = FindEnabledBindingHoldingHotkey(cfg.Keybindings, hotkey);
+            if (held >= 0) {
+                LOG_INFO("ConfigManager: not seeding %s for \"%s\": the chord is already bound to \"%s\" "
+                         "(migrated_action_keys_v1)",
+                         hotkey.c_str(), commandId,
+                         cfg.Keybindings.Bindings[static_cast<std::size_t>(held)].CommandId.c_str());
+                row.RemoveHotkey(hotkey);
+            }
+        }
+        if (row.Hotkeys.empty()) {
+            continue; // every default combo is taken, so the command gets no row
+        }
+        cfg.Keybindings.Bindings.push_back(row);
+        ++seeded;
     }
     if (seeded > 0) {
         LOG_INFO("ConfigManager: seeded %d primary-action keybinding(s) into an existing config "

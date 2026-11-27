@@ -88,7 +88,9 @@ inline bool CanSubmitWorklog(bool submitInFlight) { return !submitInFlight; }
 /// The set of issue ids whose worklog POST is still outstanding. A SET, not a single id: the
 /// submits are per-ticket and can overlap, so one slot let ticket B's Save overwrite ticket A's
 /// outstanding latch and re-enable Save on A mid-POST — a second worklog for one intent, the
-/// #2085 duplicate class reopened by a two-ticket interleaving (#2167).
+/// #2085 duplicate class reopened by a two-ticket interleaving (#2167). The Log work dialog keys it
+/// by WorklogDraftScope (the tracker site and the issue), so a submit on one site neither blocks Save
+/// nor holds back the kept entry for an issue with the same key on another site.
 typedef std::set<std::string> WorklogSubmitInFlightSet;
 
 /// Whether a worklog POST for `issueId` is still outstanding. This is deliberately NOT the
@@ -136,6 +138,13 @@ inline bool StalePostBackReleasesDialogSubmit(bool dialogInitialized, const std:
 /// pin an estimate that is stale by then. Empty means keep nothing (the draft store erases on empty text).
 inline std::string WorklogRemainingDraftText(bool manuallyEdited, const std::string& timeRemaining) {
     return manuallyEdited ? timeRemaining : std::string();
+}
+
+/// Draft-store scope of the Log work entry: the tracker site (the pane's cache backend key) plus the
+/// issue, so two sites that share an issue key never share a kept entry (#2505). Same shape as the
+/// comments box's scope.
+inline std::string WorklogDraftScope(const std::string& backendKey, const std::string& issueId) {
+    return backendKey + "|" + issueId;
 }
 
 } // namespace worklog

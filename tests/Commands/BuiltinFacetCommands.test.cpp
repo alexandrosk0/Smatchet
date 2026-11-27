@@ -312,6 +312,11 @@ struct FakeMutations : IAppTicketMutations {
         return r;
     }
     PendingActionTarget LatchPendingActionTarget() const override { return PendingActionTarget(); }
+    PendingActionTarget LatchPendingActionTargetForPane(const std::string& paneId) const override {
+        PendingActionTarget target;
+        target.PaneId = paneId;
+        return target;
+    }
     PendingActionSubmitResult SubmitFieldEditOrQueue(const PendingActionTarget&, const std::string& issueId,
                                                      const TrackerField&,
                                                      const std::vector<std::string>& values) override {

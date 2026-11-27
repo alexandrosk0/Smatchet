@@ -527,7 +527,9 @@ bool TryParseNumericDate(const std::string& s, const CivilDate& today, DateOrder
         out = CheckedDate(a, b, std::atoi(groups[2].c_str()), s); // ISO order
         return true;
     }
-    if (groups[0].size() > 2 || groups[1].size() > 2 || (groups.size() == 3 && groups[2].size() == 3)) {
+    // A year is two or four digits. A one- or three-digit year is a half-typed one, not 200x.
+    const bool badYearGroup = groups.size() == 3 && (groups[2].size() == 1 || groups[2].size() == 3);
+    if (groups[0].size() > 2 || groups[1].size() > 2 || badYearGroup) {
         out = DateFailure(ParseMessageId::DateUnrecognised, s);
         return true;
     }
@@ -844,10 +846,40 @@ std::string QueryParam(const std::string& query, const std::string& name) {
 
 bool IsGitHubHost(const std::string& host) { return host == "github.com" || host == "www.github.com"; }
 
-/// The issue key a URL names, or empty.
+/// The path segment a tracker puts directly before an issue key: Jira "/browse/KEY" and "/issues/KEY" (the issue
+/// navigator, a project's issue list), Linear and YouTrack "/issue/KEY".
+bool IsIssueRouteSegment(const std::string& segment) {
+    return segment == "browse" || segment == "issue" || segment == "issues";
+}
+
+/// The key a Jira Service Management link ends on, or empty. Those links put the key last, after a queue or
+/// a portal: ".../servicedesk/projects/SD/queues/custom/1/SD-12" and ".../servicedesk/customer/portal/2/SD-12".
+std::string KeyFromServiceDeskSegments(const std::vector<std::string>& seg) {
+    bool serviceDesk = false;
+    bool queueOrPortal = false;
+    for (std::size_t i = 0; i + 1 < seg.size(); ++i) {
+        if (seg[i] == "servicedesk") {
+            serviceDesk = true;
+        } else if (serviceDesk && (seg[i] == "queues" || seg[i] == "portal")) {
+            queueOrPortal = true;
+        }
+    }
+    if (!queueOrPortal || !LooksLikeProjectIssueKey(seg.back())) {
+        return std::string();
+    }
+    return ToUpperAsciiCopy(seg.back());
+}
+
+/// The issue key a URL names, or empty. A key is read only where a tracker puts one: a GitHub issue or pull
+/// request, a "selectedIssue" query parameter, the segment right after an issue route, or the end of a Jira
+/// Service Management queue or portal link. A key-shaped segment anywhere else (a wiki page "Release-2", a
+/// file "ADR-12") is not an issue, because the key can become the parent in a write.
 std::string KeyFromUrl(const UrlParts& url) {
     const std::vector<std::string>& seg = url.Segments;
-    if (IsGitHubHost(url.Host) && seg.size() >= 4 && (seg[2] == "issues" || seg[2] == "pull" || seg[2] == "pulls")) {
+    if (IsGitHubHost(url.Host)) {
+        if (seg.size() < 4 || (seg[2] != "issues" && seg[2] != "pull" && seg[2] != "pulls")) {
+            return std::string();
+        }
         const std::string key = seg[0] + "/" + seg[1] + "#" + seg[3];
         return LooksLikeGitHubIssueKey(key) ? key : std::string();
     }
@@ -856,19 +888,11 @@ std::string KeyFromUrl(const UrlParts& url) {
         return ToUpperAsciiCopy(selected);
     }
     for (std::size_t i = 0; i + 1 < seg.size(); ++i) {
-        if ((seg[i] == "browse" || seg[i] == "issue") && LooksLikeProjectIssueKey(seg[i + 1])) {
+        if (IsIssueRouteSegment(seg[i]) && LooksLikeProjectIssueKey(seg[i + 1])) {
             return ToUpperAsciiCopy(seg[i + 1]);
         }
     }
-    if (EndsWithAscii(url.Host, "linear.app")) {
-        return std::string(); // a Linear URL names its key after "/issue/"; anything else is a list page
-    }
-    for (std::size_t i = seg.size(); i-- > 0;) {
-        if (LooksLikeProjectIssueKey(seg[i])) {
-            return ToUpperAsciiCopy(seg[i]);
-        }
-    }
-    return std::string();
+    return KeyFromServiceDeskSegments(seg);
 }
 
 } // namespace

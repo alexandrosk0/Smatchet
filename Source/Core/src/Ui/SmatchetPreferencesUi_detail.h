@@ -99,6 +99,13 @@ void ResetKeybindingsCaptureState();
 bool DrawKeybindingCombosCellForTest(Keybinding& b, const std::string& rowKey, std::string& capturingKey);
 #endif
 
+/// The Body box of the comment-template editors (Editing > Quick comments / Annotate
+/// comments). It is the shared multiline field, so the first Esc leaves the box and keeps
+/// the text. `bodyWidgetId` is the "##..." ImGui id; returns true on a frame the text
+/// changed. Its own function so bucket-E can host the real field in a floating window.
+/// Defined in SmatchetPreferencesUi_Templates.cpp.
+bool DrawCommentTemplateBodyField(const char* bodyWidgetId, std::string& text);
+
 /// Fold a keybindings-revision edge into the Preferences keybinding-row match cache.
 /// `seenRevision` is the revision the cached scan last ran against and `dirty` its
 /// rescan flag; both are updated in place. Returns true when this call armed a rescan.
