@@ -2552,19 +2552,17 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      # clang/lld: the host Linux toolchain (Slice 0b — this is the #else side
+      # of every platform #ifdef). xorg-dev + libgl1-mesa-dev: GLFW 3.3.8's
+      # add_subdirectory runs find_package(X11 REQUIRED) at CONFIGURE time and
+      # FATALs without them (3.3.8 predates GLFW_BUILD_X11=OFF, added in 3.4).
+      # glfw IS fetched on Linux (its guard is `NOT ANDROID AND NOT IOS`) but is
+      # never BUILT: the build step targets only SmatchetCore_PosixCheck + its
+      # non-glfw deps (cpr/sqlite/md4c), none of which pull glfw.
       - name: Install clang + X11/GL dev headers (glfw configure-time deps)
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          # clang/lld: the host Linux toolchain (Slice 0b — this is the #else side
-          # of every platform #ifdef). xorg-dev + libgl1-mesa-dev: GLFW 3.3.8's
-          # add_subdirectory runs find_package(X11 REQUIRED) at CONFIGURE time and
-          # FATALs without them (3.3.8 predates GLFW_BUILD_X11=OFF, added in 3.4).
-          # glfw IS fetched on Linux (its guard is `NOT ANDROID AND NOT IOS`) but is
-          # never BUILT: the build step targets only SmatchetCore_PosixCheck + its
-          # non-glfw deps (cpr/sqlite/md4c), none of which pull glfw.
-          sudo apt-get install -y clang lld xorg-dev libgl1-mesa-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: clang lld xorg-dev libgl1-mesa-dev
 
       - name: Cache FetchContent _deps (posix-core-check)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -2647,11 +2645,9 @@ jobs:
           persist-credentials: false
 
       - name: Install OpenSSL build prereqs (make + perl)
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y make perl
+        uses: ./.github/actions/apt-install
+        with:
+          packages: make perl
 
       - name: Install + pin Android NDK
         shell: bash
@@ -2778,11 +2774,9 @@ jobs:
           java-version: "17"
 
       - name: Install OpenSSL build prereqs + ninja
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y make perl ninja-build
+        uses: ./.github/actions/apt-install
+        with:
+          packages: make perl ninja-build
 
       - name: Install + pin Android NDK
         shell: bash
@@ -2963,12 +2957,13 @@ jobs:
           persist-credentials: false
 
       - name: Install cppcheck
+        uses: ./.github/actions/apt-install
+        with:
+          packages: cppcheck
+
+      - name: Report cppcheck version
         shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y cppcheck
-          cppcheck --version
+        run: cppcheck --version
 
       - name: Resolve diff range (first-party C++ only)
         id: range

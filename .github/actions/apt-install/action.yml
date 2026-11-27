@@ -1,0 +1,58 @@
+name: Install apt packages
+description: >-
+  Refreshes the apt indexes and installs the given packages on an Ubuntu runner.
+  `apt-get update` exits non-zero when ANY configured source fails, even though
+  every other source refreshed. The runner image ships third-party sources (for
+  example packages.microsoft.com) that no job here installs from, and an outage
+  of one of them used to fail every Linux lane at its first step. So an update
+  failure is retried, then REPORTED as a warning annotation, and the job carries
+  on with the indexes that did refresh. The install is the real gate: it fails
+  the job when a requested package cannot be installed. Single source of the
+  update + install step pair the Linux lanes share.
+
+inputs:
+  packages:
+    description: Space-separated apt package names, e.g. "clang lld ninja-build".
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: apt-get update + install
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -euo pipefail
+        # -d '' reads the whole input, so a multi-line `packages:` value is not cut at its
+        # first line; read returns non-zero at end of input, hence `|| true`.
+        read -r -d '' -a pkgs <<< "$PACKAGES" || true
+        if [ "${#pkgs[@]}" -eq 0 ]; then
+          echo "::error title=apt-install::no packages given"
+          exit 2
+        fi
+        log="$(mktemp)"
+        trap 'rm -f "$log"' EXIT
+
+        # A mask may suppress blocking, never reporting: the failed source is
+        # named in the annotation below.
+        attempt=1
+        until sudo apt-get update 2>&1 | tee "$log"; do
+          if [ "$attempt" -ge 3 ]; then
+            failed="$(grep -E '^E: ' "$log" | head -n 3 | tr '\n' ' ' || true)"
+            echo "::warning title=apt-get update failed::continuing with the indexes that did refresh. ${failed}"
+            break
+          fi
+          sleep "$((attempt * 10))"
+          attempt=$((attempt + 1))
+        done
+
+        attempt=1
+        until sudo apt-get install -y "${pkgs[@]}"; do
+          if [ "$attempt" -ge 3 ]; then
+            echo "::error title=apt-get install failed::could not install: ${PACKAGES}"
+            exit 1
+          fi
+          sleep "$((attempt * 10))"
+          attempt=$((attempt + 1))
+        done
