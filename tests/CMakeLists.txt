@@ -152,6 +152,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # user fields arrive as display names). Self-contained, no extra closure to link.
         Core/TicketGridFilterPure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridFilterPure.cpp"
+        # The grid's "every cell read-only because of the field catalog" test and the cue it shows
+        # above the table (TicketGridModel.h). Header-only decisions; no production .cpp to link.
+        Core/PaneCatalogReadOnly.test.cpp
         # Gap map Tier 1 #6 — the merge-watch notify endpoint's request-validation core
         # (SECURITY_AUDIT-flagged localhost listener). Pure decision surface; no httplib.
         Core/MergeWatchNotifyPure.test.cpp
@@ -924,6 +927,9 @@ add_executable(SmatchetTests
     # PaneSyncKickPolicy.h decision helpers (sync-storm damping + stale-kick drop). Links the
     # TicketSyncService + OfflineQueueService TUs already pulled in below.
     Core/BackendSwitchRace1081.test.cpp
+    # The grid's "every cell read-only because of the field catalog" test and the cue it shows above
+    # the table (TicketGridModel.h). Header-only pure decisions.
+    Core/PaneCatalogReadOnly.test.cpp
     # ISyncCache contract (ADR-0020): dual-impl spec for the cache seam — identical assertions
     # against the real LocalCacheManager(":memory:") AND FakeSyncCache (the fake-fidelity gate).
     # SQLite-backed by design (real half) — named-exempt from the purity guard below.

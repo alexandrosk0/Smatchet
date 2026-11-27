@@ -1269,6 +1269,35 @@ const TranslationEntry kEntries[] = {
      "This edit was not sent and needs attention. Open the Offline Queue panel to retry, resolve or discard it.",
      u8"Cette modification n'a pas été envoyée et demande votre attention. Ouvrez le panneau File hors "
      u8"ligne pour réessayer, résoudre ou abandonner."},
+    {"grid.catalog_loading", "Loading the field catalog for this grid \xE2\x80\x94 cells are read-only until it loads.",
+     u8"Chargement du catalogue de champs de cette grille — les cellules sont en lecture seule jusqu'à son "
+     u8"chargement."},
+    {"grid.catalog_awaiting_backend",
+     "Waiting for this grid's tracker connection \xE2\x80\x94 cells are read-only until its field catalog loads.",
+     u8"En attente de la connexion au tracker de cette grille — les cellules sont en lecture seule jusqu'au "
+     u8"chargement de son catalogue de champs."},
+    {"grid.catalog_read_only",
+     "Field catalog not loaded for this grid yet \xE2\x80\x94 cells are read-only until it loads.",
+     u8"Catalogue de champs pas encore chargé pour cette grille — les cellules sont en lecture seule jusqu'à son "
+     u8"chargement."},
+    {"grid.catalog_unavailable", "Field catalog not available for this grid \xE2\x80\x94 cells are read-only.",
+     u8"Catalogue de champs indisponible pour cette grille — les cellules sont en lecture seule."},
+    {"grid.catalog_unresolved",
+     "None of this view's fields are in this grid's field catalog \xE2\x80\x94 cells are read-only.",
+     u8"Aucun champ de cette vue ne figure dans le catalogue de champs de cette grille — les cellules sont en "
+     u8"lecture seule."},
+    {"grid.catalog_retry", "Retry", u8"Réessayer"},
+    {"grid.catalog_read_only_tip",
+     "None of this view's %d field column(s) is in the field catalog this grid resolved, so no cell can be edited. "
+     "Editing comes back once the catalog loads.",
+     u8"Aucune des %d colonne(s) de champ de cette vue ne figure dans le catalogue de champs de cette grille : "
+     u8"aucune cellule n'est modifiable. La modification revient une fois le catalogue chargé."},
+    {"grid.catalog_unavailable_tip", "The field catalog could not be loaded, so no cell can be edited. Last error: %s",
+     u8"Le catalogue de champs n'a pas pu être chargé : aucune cellule n'est modifiable. Dernière erreur : %s"},
+    {"grid.catalog_unresolved_tip",
+     "This grid's field catalog has none of this view's %d field column(s), so no cell can be edited.",
+     u8"Le catalogue de champs de cette grille ne contient aucune des %d colonne(s) de champ de cette vue : "
+     u8"aucune cellule n'est modifiable."},
     {"prefs.local_db.recreating", "Recreating the database...", u8"Recréation de la base de données..."},
     {"views.fields.loading_saved", "Loading saved fields...", u8"Chargement des champs enregistrés..."},
     {"comments.discard_confirm", "Discard the comment you're writing?",

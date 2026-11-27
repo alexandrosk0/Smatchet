@@ -215,6 +215,7 @@ std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefiniti
         column.IsDateLike = IsTrackerDateOrDateTimeField(fieldId, field);
         column.CatalogReadOnly = field != nullptr && field->ReadOnly;
         column.NeedsAllowEditsCheck = RequiresAllowEditsCheck(column.Plan);
+        column.CatalogResolved = field != nullptr;
         columns.push_back(std::move(column));
     }
 

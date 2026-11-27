@@ -98,4 +98,12 @@ void ScrollGridCellIntoView(float minY, float maxY, int colIdx);
 // SmatchetActiveProjectGridCells.cpp (it needs the tracker permission check).
 bool GridCellEditable(ActiveProjectDrawCtx& ctx, int row, int col);
 
+// Logs each change of the pane's "every cell read-only because of the field catalog" state and, while it holds and
+// neither the Read-only preference nor the error banner explains it, draws the cue above the table. Defined in
+// SmatchetActiveProjectGridUi.cpp; drawn from drawActiveProjectTable once the welcome / loading / error states, which
+// replace the table, are ruled out. `d` tells it whether the session's grid catalog fetch is loading this pane's
+// catalog.
+void NoteAndCueCatalogReadOnly(AppController& app, const UiDrawSession& d, GridPane& pane,
+                               const std::vector<TicketGridColumn>& columns, bool readOnlyMode);
+
 #endif // SMATCHET_UI_SMATCHET_ACTIVE_PROJECT_GRID_UI_INTERNAL_H
