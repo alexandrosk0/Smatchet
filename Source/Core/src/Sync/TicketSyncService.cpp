@@ -751,13 +751,14 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
     }
 }
 
-bool TicketSyncService::LastSessionQuery(std::string& outJql) const {
-    // sessionEpoch_ moves in StartStreamingSync, on the UI thread, right before sessionCfg_ is latched there; this
-    // reader is on the UI thread too, so a non-zero epoch always comes with the session's config.
+bool TicketSyncService::LastSessionConfig(TrackerConfig& outCfg, std::shared_ptr<const ViewsStore>& outViews) const {
+    // sessionEpoch_ moves in StartStreamingSync, on the UI thread, right before sessionCfg_ and sessionViews_ are
+    // latched there; this reader is on the UI thread too, so a non-zero epoch always comes with the session's state.
     if (sessionEpoch_.load() == 0) {
         return false;
     }
-    outJql = sessionCfg_.JqlQuery;
+    outCfg = sessionCfg_;
+    outViews = sessionViews_;
     return true;
 }
 
@@ -1197,6 +1198,7 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     ++sessionEpoch_;
     activeMode_ = mode;
     sessionCfg_ = cfgCopy;
+    sessionViews_ = std::make_shared<const ViewsStore>(viewsCopy);
     const ViewDefinition* sessionView = ConfigManager::FindActiveViewOrFirst(viewsCopy.Views, viewsCopy.ActiveViewId);
     sessionViewId_ = sessionView != nullptr ? sessionView->Id : std::string();
     sessionViewName_ = sessionView != nullptr ? sessionView->Name : std::string();
