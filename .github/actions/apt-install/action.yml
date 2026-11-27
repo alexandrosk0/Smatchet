@@ -1,14 +1,15 @@
 name: Install apt packages
 description: >-
   Refreshes the apt indexes and installs the given packages on an Ubuntu runner.
-  `apt-get update` exits non-zero when ANY configured source fails, even though
-  every other source refreshed. The runner image ships third-party sources (for
-  example packages.microsoft.com) that no job here installs from, and an outage
-  of one of them used to fail every Linux lane at its first step. So an update
-  failure is retried, then REPORTED as a warning annotation, and the job carries
-  on with the indexes that did refresh. The install is the real gate: it fails
-  the job when a requested package cannot be installed. Single source of the
-  update + install step pair the Linux lanes share.
+  `apt-get update` exits non-zero when a configured source fails with a persistent
+  error (a 403, a bad signature), even though every other source refreshed. The
+  runner image ships third-party sources (for example packages.microsoft.com) that
+  no job here installs from, and an outage of one of them used to fail every Linux
+  lane at its first step. So an update failure of any kind is retried, then
+  REPORTED as a warning annotation, and the job carries on with the indexes that
+  did refresh. The install is the real gate: it fails the job when a requested
+  package cannot be installed. Single source of the update + install step pair the
+  Linux lanes share.
 
 inputs:
   packages:
@@ -35,9 +36,12 @@ runs:
         trap 'rm -f "$log"' EXIT
 
         # A mask may suppress blocking, never reporting: the failed source is
-        # named in the annotation below.
+        # named in the annotation below. By default apt reports a transient
+        # failure (timeout, refused connection) as a warning and exits 0, which
+        # would skip both the retry and the annotation; Error-Mode=any makes
+        # every failed source a non-zero exit.
         attempt=1
-        until sudo apt-get update 2>&1 | tee "$log"; do
+        until sudo apt-get -o APT::Update::Error-Mode=any update 2>&1 | tee "$log"; do
           if [ "$attempt" -ge 3 ]; then
             failed="$(grep -E '^E: ' "$log" | head -n 3 | tr '\n' ' ' || true)"
             echo "::warning title=apt-get update failed::continuing with the indexes that did refresh. ${failed}"
