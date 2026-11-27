@@ -37,6 +37,7 @@
 #include "Sync/PendingOverlayPure.h" // PendingOverlay (the grid's pending-edit cue)
 #include "Ui/CachedProjectsPure.h"   // RemoveForgottenProjects (a stale read must not resurrect a Forget)
 #include "Ui/BulkFieldEditPure.h"    // BulkFieldEditJob (the bulk field-edit jobs of this session)
+#include "Ui/DialogScopeState.h"     // the keyboard state of the bulk confirm dialog
 #include "Ui/GridUndoPure.h"         // History (the grid's undoable cell writes)
 #include "SmatchetFocusRequest.h"
 #include "SmatchetWindowExpand.h"
@@ -194,6 +195,18 @@ struct BulkEditPopupRequest {
         smatchet::offline::DataFreshness Freshness = smatchet::offline::DataFreshness::Fresh;
     };
     StatusPickCache StatusCache;
+};
+
+/// A keyboard bulk write (Ctrl+Enter, fill-down, a paste) waiting for its "Apply to N rows?" answer: parked by
+/// RequestBulkFieldEdit, drawn by DrawGridBulkDialogs in the pane it came from. In-memory only; one at a time.
+struct PendingBulkConfirm {
+    bool Active = false;
+    bool OpenPending = false; ///< the dialog was just requested: open it on the next draw
+    std::string PaneId;
+    std::vector<smatchet::grid::bulk::BulkColumnWrite> Columns;
+    int ToWrite = 0; ///< cells that will be written, as of the request
+    int Skipped = 0; ///< cells that will be left alone, as of the request
+    smatchet::ui::DialogScopeState Scope;
 };
 
 struct FieldEditCommitResult {
@@ -1162,6 +1175,7 @@ struct UiDrawSession {
     smatchet::grid::undo::History gridUndo;
     std::map<std::uint64_t, GridUndoContext> gridUndoContext;
     BulkEditPopupRequest bulkEditPopupRequest;
+    PendingBulkConfirm pendingBulkConfirm;
     bool hasInFlightEdit = false;
     PendingFieldEdit inFlightEdit;
     std::string inFlightOriginalEstimateSnapshot;

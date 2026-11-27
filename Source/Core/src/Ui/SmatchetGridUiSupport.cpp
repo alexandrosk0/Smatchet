@@ -10,6 +10,7 @@
 #include "SmatchetInputModifierBridge.h"
 #include "StringUtil.h"
 #include "Ui/GridCopyPure.h"
+#include "Ui/GridPastePure.h"
 #include "Ui/SmatchetUserInfoUi.h"
 
 #include "imgui.h"
@@ -262,7 +263,37 @@ void DrawUndoMenuItem(AppController* app, UiDrawSession* ui, bool readOnlyMode) 
     }
 }
 
+// Data-cell items "Paste (Ctrl+V)" and "Fill down (Ctrl+D)" (input UX Wave 3, S4). Each leaves the request its key
+// leaves, and the pane's key handler runs it on its next draw. Paste names the clicked cell, so it lands there when
+// that cell is outside the cell range.
+void DrawPasteMenuItems(UiDrawSession* ui, const std::string& issueKey, const std::string& fieldId, bool readOnlyMode,
+                        const GridKeyCellMenuCtx* keyMenu) {
+    if (!ui || readOnlyMode || !keyMenu || !keyMenu->sel) {
+        return;
+    }
+    SpreadsheetState& gs = ui->pane().gridState;
+    if (ImGui::MenuItem(SmatchetLocalization::T("grid.paste.menu_paste", "Paste (Ctrl+V)"))) {
+        gs.ClearBulkCommand();
+        gs.BulkCommand = GridBulkCommand::Paste;
+        gs.BulkIssueId = issueKey;
+        gs.BulkFieldId = fieldId;
+    }
+    const bool hasRange = keyMenu->sel->Active && keyMenu->sel->RangeMulti;
+    if (ImGui::MenuItem(SmatchetLocalization::T("grid.paste.menu_fill_down", "Fill down (Ctrl+D)"), nullptr, false,
+                        hasRange)) {
+        gs.ClearBulkCommand();
+        gs.BulkCommand = GridBulkCommand::FillDown;
+    }
+}
+
+smatchet::grid::paste::CopyRecord& GridCopyRecord() {
+    static smatchet::grid::paste::CopyRecord record;
+    return record;
+}
+
 } // namespace
+
+const smatchet::grid::paste::CopyRecord& LastGridCopy() { return GridCopyRecord(); }
 
 /**
  * Right-click on the cell group: Copy (plain RMB). Shift+RMB: full raw cached value panel.
@@ -328,6 +359,7 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
         if (fieldId.empty()) {
             DrawKeyCellCopyMenuItems(app, ui, issueKey, rowForAnnotateMenu, keyMenu);
         } else {
+            DrawPasteMenuItems(ui, issueKey, fieldId, readOnlyMode, keyMenu);
             DrawBulkEditMenuItem(ui, issueKey, readOnlyMode, keyMenu);
             DrawUndoMenuItem(app, ui, readOnlyMode);
         }
@@ -497,6 +529,9 @@ void CopyGridRectAsTsv(const std::vector<CachedTicket>& tickets, const std::vect
     }
 
     std::string out;
+    // The stored date behind each date cell, cell for cell as the text is written: the text shows a date in its
+    // display form, which a paste cannot read back.
+    std::vector<std::vector<std::string>> exact;
     for (int r : allRows) {
         const size_t logicalRow = static_cast<size_t>(r);
         size_t ticketIdx = logicalRow;
@@ -521,19 +556,26 @@ void CopyGridRectAsTsv(const std::vector<CachedTicket>& tickets, const std::vect
         if (c0 < 0 || c1 < c0)
             continue;
 
+        exact.emplace_back();
         for (int c = c0; c <= c1; ++c) {
             if (c < 0 || c >= static_cast<int>(columns.size()))
                 continue;
             const TicketGridColumn& col = columns[static_cast<size_t>(c)];
-            const TrackerField* meta =
-                (col.ColumnKind == TicketGridColumn::Kind::Id) ? nullptr : catalog.Find(col.FieldId);
+            const bool isKey = col.ColumnKind == TicketGridColumn::Kind::Id;
+            const TrackerField* meta = isKey ? nullptr : catalog.Find(col.FieldId);
             out += TsvCopyCell(GetCellRawForCopy(t, col, meta));
+            exact.back().push_back(!isKey && IsTrackerDateOrDateTimeField(col.FieldId, meta)
+                                       ? t.GetFieldValue(col.FieldId)
+                                       : std::string());
             if (c < c1)
                 out.push_back('\t');
         }
         out.push_back('\n');
     }
     ImGui::SetClipboardText(out.c_str());
+    smatchet::grid::paste::CopyRecord& record = GridCopyRecord();
+    record.Tsv = std::move(out);
+    record.Exact = std::move(exact);
 }
 
 std::string BuildGridRowsCsv(const std::vector<CachedTicket>& tickets, const std::vector<size_t>& sortedIdx,

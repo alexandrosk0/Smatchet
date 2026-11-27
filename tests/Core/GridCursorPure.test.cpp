@@ -1,14 +1,22 @@
 // Bucket-A doctest for the grid's cell-cursor math (Ui/GridCursorPure.h): every move at the edges, Tab wrap, the
-// skip-read-only sweep of a commit-and-move, and range extend. Header-only, no ImGui.
+// skip-read-only sweep of a commit-and-move, range extend, and where a pasted text lands (PlanPaste). Header-only,
+// no ImGui.
 
 #include "Ui/GridCursorPure.h"
 
 #include <doctest/doctest.h>
 
+#include <string>
+#include <vector>
+
 using smatchet::grid::cursor::CellPos;
 using smatchet::grid::cursor::Extend;
 using smatchet::grid::cursor::Move;
+using smatchet::grid::cursor::PasteCell;
+using smatchet::grid::cursor::PastePlan;
+using smatchet::grid::cursor::PlanPaste;
 using smatchet::grid::cursor::Range;
+using smatchet::grid::cursor::RangeMask;
 using smatchet::grid::cursor::Step;
 using smatchet::grid::cursor::StepToEditable;
 
@@ -16,6 +24,15 @@ namespace {
 constexpr int kRows = 5;
 constexpr int kCols = 4;
 CellPos S(CellPos from, Move m, int page = 3) { return Step(from, m, kRows, kCols, page); }
+
+// "r,c=text" of every planned cell, in plan order: one string a case can compare whole.
+std::string Cells(const PastePlan& plan) {
+    std::string out;
+    for (const PasteCell& cell : plan.Cells) {
+        out += std::to_string(cell.Row) + "," + std::to_string(cell.Col) + "=" + cell.Text + ";";
+    }
+    return out;
+}
 } // namespace
 
 TEST_CASE("Step: arrows move one cell and clamp at every edge") {
@@ -123,4 +140,108 @@ TEST_CASE("Extend: clamps at the grid edge, and a range without an extent grows 
     fromAnchor = Extend(fromAnchor, Move::Left, kRows, kCols, 3);
     CHECK(fromAnchor.Anchor == CellPos{2, 2});
     CHECK(fromAnchor.Extent == CellPos{2, 1});
+}
+
+TEST_CASE("PlanPaste: one value with no range goes to the cell it is pasted on") {
+    const PastePlan plan = PlanPaste("x", {1, 2}, nullptr, kRows, kCols);
+    CHECK(Cells(plan) == "1,2=x;");
+    CHECK(plan.Dropped == 0);
+    // The line break a grid copy ends with does not start a second row.
+    CHECK(Cells(PlanPaste("x\n", {1, 2}, nullptr, kRows, kCols)) == "1,2=x;");
+    CHECK(PlanPaste("", {1, 2}, nullptr, kRows, kCols).Cells.empty());
+}
+
+TEST_CASE("PlanPaste: one value over a range fills every member cell and no other") {
+    const std::vector<char> rowIn = {0, 1, 1, 0, 0};
+    const std::vector<char> colIn = {0, 1, 1, 0};
+    RangeMask mask;
+    mask.RowIn = &rowIn;
+    mask.ColIn = &colIn;
+    const PastePlan plan = PlanPaste("x\n", {4, 3}, &mask, kRows, kCols);
+    CHECK(Cells(plan) == "1,1=x;1,2=x;2,1=x;2,2=x;");
+    CHECK(plan.Dropped == 0);
+}
+
+TEST_CASE("PlanPaste: a range a re-sort split fills its members and never the row between them") {
+    // Members A and B are shown as A, C, B: rows 0 and 2 are in, row 1 is not.
+    const std::vector<char> rowIn = {1, 0, 1, 0, 0};
+    const std::vector<char> colIn = {0, 1, 0, 0};
+    RangeMask mask;
+    mask.RowIn = &rowIn;
+    mask.ColIn = &colIn;
+    CHECK(Cells(PlanPaste("x", {0, 1}, &mask, kRows, kCols)) == "0,1=x;2,1=x;");
+}
+
+TEST_CASE("PlanPaste: a mask of the wrong size fills nothing") {
+    const std::vector<char> shortRows = {1, 1, 1};
+    const std::vector<char> colIn = {1, 1, 1, 1};
+    RangeMask mask;
+    mask.RowIn = &shortRows;
+    mask.ColIn = &colIn;
+    CHECK(PlanPaste("x", {0, 0}, &mask, kRows, kCols).Cells.empty());
+    RangeMask unset;
+    CHECK(PlanPaste("x", {0, 0}, &unset, kRows, kCols).Cells.empty());
+}
+
+TEST_CASE("PlanPaste: a block is placed from the cell and clipped to the grid, the excess counted") {
+    const PastePlan plan = PlanPaste("a\tb\tc\nd\te\tf\n", {4, 2}, nullptr, kRows, kCols);
+    CHECK(Cells(plan) == "4,2=a;4,3=b;");
+    CHECK(plan.Dropped == 4);
+    // The range does not shape a block: it lands from the cell, over cells outside the mask too.
+    const std::vector<char> rowIn = {1, 0, 0, 0, 0};
+    const std::vector<char> colIn = {1, 0, 0, 0};
+    RangeMask mask;
+    mask.RowIn = &rowIn;
+    mask.ColIn = &colIn;
+    CHECK(Cells(PlanPaste("a\tb\nc\td", {1, 1}, &mask, kRows, kCols)) == "1,1=a;1,2=b;2,1=c;2,2=d;");
+    // No cell to paste onto: everything is dropped.
+    const PastePlan nowhere = PlanPaste("a\tb", {-1, -1}, nullptr, kRows, kCols);
+    CHECK(nowhere.Cells.empty());
+    CHECK(nowhere.Dropped == 2);
+}
+
+TEST_CASE("PlanPaste: a paste plans at most kMaxPasteCells cells and counts the rest") {
+    using smatchet::grid::cursor::kMaxPasteCells;
+    const int cap = static_cast<int>(kMaxPasteCells);
+    // A block: one column, cap + 5 rows, on a grid tall enough to hold them all.
+    std::string column;
+    for (int i = 0; i < cap + 5; ++i) {
+        column += "v\n";
+    }
+    const PastePlan block = PlanPaste(column, {0, 0}, nullptr, cap + 100, 1);
+    CHECK(block.Cells.size() == kMaxPasteCells);
+    CHECK(block.Dropped == 5);
+    CHECK(block.Cells.back().Row == cap - 1);
+    // One value over a range of cap + 7 member cells.
+    const std::vector<char> rowIn(static_cast<std::size_t>(cap + 7), 1);
+    const std::vector<char> colIn = {1};
+    RangeMask mask;
+    mask.RowIn = &rowIn;
+    mask.ColIn = &colIn;
+    const PastePlan fill = PlanPaste("x", {0, 0}, &mask, cap + 7, 1);
+    CHECK(fill.Cells.size() == kMaxPasteCells);
+    CHECK(fill.Dropped == 7);
+}
+
+TEST_CASE("PlanPaste: ragged rows keep each value in its own column, an empty cell included") {
+    CHECK(Cells(PlanPaste("a\tb\nc\n\td", {0, 0}, nullptr, kRows, kCols)) == "0,0=a;0,1=b;1,0=c;2,0=;2,1=d;");
+}
+
+TEST_CASE("PlanPaste: CRLF line ends read as LF") {
+    CHECK(Cells(PlanPaste("a\tb\r\nc\td\r\n", {0, 0}, nullptr, kRows, kCols)) == "0,0=a;0,1=b;1,0=c;1,1=d;");
+}
+
+TEST_CASE("PlanPaste: a quoted cell is unquoted only when it holds a tab or a line break") {
+    // A spreadsheet quotes a cell that holds a break, and doubles the quotes inside it.
+    CHECK(Cells(PlanPaste("\"one\ntwo\"\tb", {0, 0}, nullptr, kRows, kCols)) == "0,0=one\ntwo;0,1=b;");
+    CHECK(Cells(PlanPaste("\"say \"\"hi\"\"\tnow\"\tb", {0, 0}, nullptr, kRows, kCols)) ==
+          "0,0=say \"hi\"\tnow;0,1=b;");
+    // A value this app copied that merely starts and ends with a quote keeps both.
+    CHECK(Cells(PlanPaste("\"abc\"\tb", {0, 0}, nullptr, kRows, kCols)) == "0,0=\"abc\";0,1=b;");
+    // An opening quote that never closes is ordinary text.
+    CHECK(Cells(PlanPaste("\"abc\tb", {0, 0}, nullptr, kRows, kCols)) == "0,0=\"abc;0,1=b;");
+}
+
+TEST_CASE("PlanPaste: the formula guard a grid copy adds is removed") {
+    CHECK(Cells(PlanPaste("'=SUM(A1)\t'-2w\t'tis", {0, 0}, nullptr, kRows, kCols)) == "0,0==SUM(A1);0,1=-2w;0,2='tis;");
 }

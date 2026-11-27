@@ -191,7 +191,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/MainThreadDispatcherConcurrent.test.cpp
         # Grid CSV/TSV copy helpers + the spreadsheet formula guard (#2337). Header-only and ImGui-free.
         Core/GridCopyPure.test.cpp
-        # Grid cell-cursor math: moves at the edges, Tab wrap, skip-read-only sweep, range extend (input UX Wave 3). Header-only.
+        # Grid cell-cursor math: moves at the edges, Tab wrap, skip-read-only sweep, range extend, paste plan (input UX Wave 3). Header-only.
         Core/GridCursorPure.test.cpp
         # Grid undo history (Ui/GridUndoPure.h): bounded stack, landed/failed settling, newest-take, inverse (input UX Wave 3). Header-only.
         Core/GridUndoPure.test.cpp
@@ -1756,6 +1756,11 @@ add_executable(SmatchetTests
     # TrackerLabelsPure (both already linked into SmatchetTests).
     Core/BulkFieldEditPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/BulkFieldEditPure.cpp"
+    # What one pasted grid cell writes (Ui/GridPastePure.h, input UX Wave 3): option lookup, date and duration
+    # reading, the exact dates of this app's own copy. ImGui-free; its deps (BulkFieldEditPure, the parse-explain
+    # and payload TUs, CompactDateFormatPure) are already linked into SmatchetTests.
+    Core/GridPastePure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/GridPastePure.cpp"
     # UX-critique triple-check — live-toast stack bound (SmatchetToastManager::Push evicts
     # oldest past MaxLiveToasts(); sticky error toasts never expire so the bound is load-
     # bearing). Push/LiveCount never touch ImGui; SmatchetToast.cpp already links here.

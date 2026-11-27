@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-ui-grid-spreadsheet.sh — bucket-E driver for the grid's keyboard cell cursor
-# (tests/ui/grid_spreadsheet_keys.test.cpp, docs/plans/active/input-ux-w3-grid-spreadsheet.md, slice S1). Runs
+# (tests/ui/grid_spreadsheet_keys.test.cpp, docs/plans/shipped/input-ux-w3-grid-spreadsheet.md, slice S1). Runs
 # `ui_test.run --name=GridSpreadsheet` against an ephemeral spawn on the 60-issue grid-spreadsheet.json fixture and
 # parses the JSON envelope.
 #

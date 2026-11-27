@@ -1,5 +1,5 @@
 // SmatchetActiveProjectGridKeys.cpp — the keyboard cell cursor of the Active Project grid (input UX Wave 3,
-// docs/plans/active/input-ux-w3-grid-spreadsheet.md, slice S1). A separate TU so SmatchetActiveProjectGridCells.cpp
+// docs/plans/shipped/input-ux-w3-grid-spreadsheet.md, slice S1). A separate TU so SmatchetActiveProjectGridCells.cpp
 // (the per-cell draw and the mouse gesture) does not grow past its cap.
 //
 // The grid keeps an ACTIVE CELL, the pair (issue id, field id) in SpreadsheetState, and a cell range. The arrow keys,
@@ -7,7 +7,8 @@
 // the pure smatchet::grid::cursor header, tested in bucket A. Slice S2 adds the keys that start and end an edit: F2,
 // Enter and a typed character open the active cell's editor; an inline editor that ended on Enter / Tab leaves a
 // GridEditExit that moves the active cell (read-only cells skipped). Slice S3 adds Ctrl+Z, which undoes the pane's
-// newest grid edit. Ctrl+V / D come with the next slice.
+// newest grid edit. Slice S4 adds Ctrl+V (paste) and Ctrl+D (fill down), and runs the bulk command an editor's
+// Ctrl+Enter or the cell menu left (SmatchetActiveProjectGridPaste.cpp).
 
 #include "SmatchetUI.h"
 #include "SmatchetActiveProjectGridIds.h"
@@ -247,6 +248,36 @@ void ApplyCursorMoveKeys(ActiveProjectDrawCtx& ctx, const GridShownRowIds& shown
     }
 }
 
+// Ctrl+Z, Ctrl+V and Ctrl+D on the grid. True when the chord was one of them and was acted on (the key is spent).
+bool ApplyGridChords(ActiveProjectDrawCtx& ctx, bool shift, bool ctrl, bool alt) {
+    if (!ctrl || shift || alt) {
+        return false;
+    }
+    SpreadsheetState& gs = ctx.pane.gridState;
+    if (ImGui::IsKeyPressed(ImGuiKey_Z, ImGuiInputFlags_None)) {
+        // Ctrl+Z undoes this pane's newest grid edit. A live undo toast owns the shortcut (it resolves at the end of
+        // the frame and undoes the edit it belongs to), so the grid acts only when there is none.
+        if (SmatchetToastManager::Instance().LiveUndoableCount() != 0) {
+            return false;
+        }
+        UndoNewestGridEntry(ctx.app, ctx.d, ctx.pane.id);
+        return true;
+    }
+    GridBulkCommand command = GridBulkCommand::None;
+    if (ImGui::IsKeyPressed(ImGuiKey_V, ImGuiInputFlags_None)) {
+        command = GridBulkCommand::Paste;
+    } else if (ImGui::IsKeyPressed(ImGuiKey_D, ImGuiInputFlags_None)) {
+        command = GridBulkCommand::FillDown;
+    }
+    if (command == GridBulkCommand::None) {
+        return false;
+    }
+    gs.ClearBulkCommand();
+    gs.BulkCommand = command;
+    RunGridBulkCommand(ctx);
+    return true;
+}
+
 } // namespace
 
 void SmatchetUI::drawActiveProjectGridCursorKeys(ActiveProjectDrawCtx& ctx) {
@@ -271,8 +302,11 @@ void SmatchetUI::drawActiveProjectGridCursorKeys(ActiveProjectDrawCtx& ctx) {
     }
     if (ctx.columns.empty() || pane.filteredIndices.empty()) {
         gs.PendingEditExit = GridEditExit::None;
+        gs.ClearBulkCommand();
         return;
     }
+    // A bulk command an editor's Ctrl+Enter or the cell menu left: run here, whatever has the focus by now.
+    RunGridBulkCommand(ctx);
     GridRectSelection& sel = gs.RectSel;
     const std::uint64_t sig = ctx.gridSortSig;
     const GridShownRowIds shownIds{pane.filteredIndices, ctx.tickets};
@@ -322,11 +356,7 @@ void SmatchetUI::drawActiveProjectGridCursorKeys(ActiveProjectDrawCtx& ctx) {
     const bool shift = ImGuiEffectiveKeyShift();
     const bool ctrl = ImGuiEffectiveKeyCtrl();
     const bool alt = io.KeyAlt;
-    // Ctrl+Z undoes this pane's newest grid edit. A live undo toast owns the shortcut (it resolves at the end of the
-    // frame and undoes the edit it belongs to), so the grid acts only when there is none.
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Z, ImGuiInputFlags_None) &&
-        SmatchetToastManager::Instance().LiveUndoableCount() == 0) {
-        UndoNewestGridEntry(ctx.app, ctx.d, pane.id);
+    if (ApplyGridChords(ctx, shift, ctrl, alt)) {
         return;
     }
     if (!busyLastFrame && RequestEditFromKeys(ctx, columnIds, io, shift, ctrl, alt)) {

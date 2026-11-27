@@ -98,6 +98,11 @@ void ScrollGridCellIntoView(float minY, float maxY, int colIdx);
 // SmatchetActiveProjectGridCells.cpp (it needs the tracker permission check).
 bool GridCellEditable(ActiveProjectDrawCtx& ctx, int row, int col);
 
+// Runs and clears the pane's pending bulk command (SpreadsheetState::BulkCommand): a paste, a fill down, or an
+// editor's Ctrl+Enter value for the selected rows. The writes go through RequestBulkFieldEdit. No-op when there is
+// none. Defined in SmatchetActiveProjectGridPaste.cpp.
+void RunGridBulkCommand(ActiveProjectDrawCtx& ctx);
+
 // Logs each change of the pane's "every cell read-only because of the field catalog" state and, while it holds and
 // neither the Read-only preference nor the error banner explains it, draws the cue above the table. Defined in
 // SmatchetActiveProjectGridUi.cpp; drawn from drawActiveProjectTable once the welcome / loading / error states, which

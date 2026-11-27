@@ -290,6 +290,10 @@ enum class GridEditStart {
 /// Tab / Shift+Tab commit and move right / left. Reported by the editor, consumed by the grid's cursor keys.
 enum class GridEditExit { None, Down, Up, Right, Left };
 
+/// A keyboard bulk write asked for outside the grid's key handler: Ctrl+Enter in an inline editor (ApplyValue), or the
+/// cell menu's Paste and Fill down. The cursor keys run it after the row loop, then clear it.
+enum class GridBulkCommand { None, ApplyValue, Paste, FillDown };
+
 struct SpreadsheetState {
     std::string ActiveIssueId;
     // The active cell is (ActiveIssueId, ActiveFieldId): kept by identity so it survives a re-sort, a sync and a
@@ -324,6 +328,11 @@ struct SpreadsheetState {
     int KeyEditFrames = 0;
     /// Set by an inline editor that ended on Enter / Tab; the cursor keys move the active cell on it, then clear it.
     GridEditExit PendingEditExit = GridEditExit::None;
+    /// The pending bulk command. ApplyValue carries the edited cell (issue, field) and the value to write.
+    GridBulkCommand BulkCommand = GridBulkCommand::None;
+    std::string BulkIssueId;
+    std::string BulkFieldId;
+    std::string BulkValue;
     /// Whether an editor, a dropdown or a popup was open at the end of the last frame: a key that closed one this
     /// frame (Enter, Esc) must not also be read as "start an edit".
     bool EditBusyLastFrame = false;
@@ -454,6 +463,13 @@ struct SpreadsheetState {
         StartEditingField(id, fieldId, originalValue);
         std::snprintf(EditBuffer, sizeof(EditBuffer), "%s", seed.c_str());
         EditBuffer[sizeof(EditBuffer) - 1] = '\0';
+    }
+
+    void ClearBulkCommand() {
+        BulkCommand = GridBulkCommand::None;
+        BulkIssueId.clear();
+        BulkFieldId.clear();
+        BulkValue.clear();
     }
 
     void ClearKeyEdit() {

@@ -1,7 +1,7 @@
 #ifndef SMATCHET_UI_GRID_UNDO_PURE_H
 #define SMATCHET_UI_GRID_UNDO_PURE_H
 
-// Pure undo history for grid cell writes (docs/plans/active/input-ux-w3-grid-spreadsheet.md, slice S3).
+// Pure undo history for grid cell writes (docs/plans/shipped/input-ux-w3-grid-spreadsheet.md, slice S3).
 // Header-only, no ImGui, C++14. The edit pipeline pushes one Entry per grid write (a single edit) or per bulk job
 // (one Entry, one CellChange per row sent), the commit results mark each change Landed or Failed, and an undo
 // takes the entry and queues Inverse(entry) as ordinary edits. In memory only, bounded, UI thread only.
