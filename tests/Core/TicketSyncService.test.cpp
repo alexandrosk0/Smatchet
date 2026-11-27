@@ -1531,6 +1531,42 @@ TEST_CASE("TicketSyncService::SessionEpoch moves once per started streaming sess
     svc.CancelAndJoinActiveStreamingSync();
 }
 
+TEST_CASE("TicketSyncService::LastSessionQuery names the query the latest started session ran") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    fake->SetFetchIssuesResult({MakeTicket("ABC-1")}, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+    std::string jql = "untouched";
+    CHECK_FALSE(svc.LastSessionQuery(jql)); // no session yet
+    CHECK(jql == "untouched");
+
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    cfg.JqlQuery = "creator=currentUser()";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+    REQUIRE(svc.LastSessionQuery(jql));
+    CHECK(jql == "creator=currentUser()");
+
+    // A view opened in the same pane syncs with its own query: that is the one the pane's rows now answer.
+    cfg.JqlQuery = "textfields ~ \"okr2*\"";
+    svc.SyncWithBackend(&cfg, &views);
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+    REQUIRE(svc.LastSessionQuery(jql));
+    CHECK(jql == "textfields ~ \"okr2*\"");
+
+    // An empty query is the backend's default query, still a known one.
+    cfg.JqlQuery.clear();
+    svc.SyncWithBackend(&cfg, &views);
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+    REQUIRE(svc.LastSessionQuery(jql));
+    CHECK(jql.empty());
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
 TEST_CASE("TicketSyncService records what a finished session cost") {
     FakeTicketSyncDeps deps;
     auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
@@ -2775,6 +2811,30 @@ TEST_CASE("Monitor pane state: an incomplete roster is skipped until the pane re
     state.ResetForReload();
     CHECK(state.ShouldTryRoster(true, true));
     CHECK(state.RefusedKeys.empty());
+}
+
+TEST_CASE("Monitor probe query: the pane's latest session query wins over the kick stamp") {
+    using smatchet::sync::ChooseMonitorProbeQuery;
+    using smatchet::sync::MonitorProbeQuery;
+    // A view opened in place: the session ran the new query, the kick stamp still names the previous view.
+    MonitorProbeQuery q = ChooseMonitorProbeQuery(true, "textfields ~ \"okr2*\"", "creator=currentUser()");
+    CHECK(q.Known);
+    CHECK(q.Jql == "textfields ~ \"okr2*\"");
+
+    // An empty session query is the backend's default query: known, never replaced by the stamp or the focused cfg.
+    q = ChooseMonitorProbeQuery(true, "", "creator=currentUser()");
+    CHECK(q.Known);
+    CHECK(q.Jql.empty());
+
+    // No session yet: the kick stamp is the only thing known about the pane.
+    q = ChooseMonitorProbeQuery(false, "", "creator=currentUser()");
+    CHECK(q.Known);
+    CHECK(q.Jql == "creator=currentUser()");
+
+    // Nothing known: the cycle keeps the focused config's query.
+    q = ChooseMonitorProbeQuery(false, "", "");
+    CHECK_FALSE(q.Known);
+    CHECK(q.Jql.empty());
 }
 
 TEST_CASE("Monitor pane state: the remembered refusals are bounded") {
