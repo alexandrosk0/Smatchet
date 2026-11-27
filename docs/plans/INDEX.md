@@ -249,7 +249,6 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`input-ux-w2-create-drafts`](shipped/input-ux-w2-create-drafts.md) | 2026-11-24 | Plan — Input UX Wave 2 leftover: drafts for Quick Create, the new-issue row and the worklog Time remaining |
 | [`input-ux-w2-surface-leftovers`](shipped/input-ux-w2-surface-leftovers.md) | 2026-11-24 | Plan — Input UX Wave 2 leftover: the text-field and matcher surfaces the locks held back |
 | [`input-ux-w2-dictation-drain`](shipped/input-ux-w2-dictation-drain.md) | 2026-11-25 | Plan — Input UX Wave 2 leftover: one dictation reload drain, and a posted comment restored as a draft |
-| [`input-ux-w2-dialog-contract-esc-sites`](shipped/input-ux-w2-dialog-contract-esc-sites.md) | 2026-11-27 | Plan — Input UX Wave 2: the four Esc sites the dialog contract left (audit § 4.1, § 3) |
 <!-- END auto-plan-index -->
 
 ### Notes

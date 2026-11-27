@@ -3,7 +3,7 @@
 
 > **Slug**: `input-ux-w2-dialog-contract-esc-sites` (matches this file's basename without `.md`).
 >
-> **Status**: `shipped` — commit `b96807a` (the change) on top of the wip plan commit `e267a5f`; follow-up to `docs/plans/input-ux-w2-dialog-contract.md` (shipped: PRs #2437, #2468, #2469, test housekeeping #2520). It closes the bullet "Row 25, four Esc sites not on the scope" of `docs/self-improvement/categories/debt/2026-11-22-dialog-contract-deferred.md`.
+> **Status**: `active` — implemented in this PR (commit `b96807a`, on top of the wip plan commit `e267a5f`); the archive step (`git mv` to `docs/plans/shipped/` and the `docs/plans/INDEX.md` row) is owed, see § Deviations. Follow-up to `docs/plans/input-ux-w2-dialog-contract.md` (shipped: PRs #2437, #2468, #2469, test housekeeping #2520). It closes the bullet "Row 25, four Esc sites not on the scope" of `docs/self-improvement/categories/debt/2026-11-22-dialog-contract-deferred.md`.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -129,6 +129,7 @@ Single slice, owner subsystem `Source/Core/src/Ui/` (leaf `AGENTS.md`), plus `So
 
 - **`readSubmit = false` for the shell** (plan § Approach 3 was updated in the same PR): `DialogReadKeys` already had a `readSubmit` parameter on develop when this was written (`Source/Core/include/Ui/SmatchetDialogScope.h:61`). The Comments box posts with Ctrl+Enter, so the shell must leave that chord to its content; with the default `true` the scope clears the field and drops nav activation on Ctrl+Enter and the post never happens. The mutation that restored the default failed `Comments_CtrlEnterPosts`, `Comments_BlankBoxCannotPost` and `Comments_ReopenWhilePostingClearsPostedDraft`.
 - **The History viewer has no text input**, so the shell's old `!WantTextInput` heuristic only ever mattered through the Comments box. The migration therefore changes no History behaviour; it removes the duplicate Esc code and the `CloseRequested` / `ConsumeCloseRequest` hand-off.
+- **Three files in § Files to modify were not touched, and the plan stays in `active/`.** `Source/Core/src/Ui/AGENTS.md` (the typing-field / `readSubmit` / long-text exception sentence), `docs/guides/keyboard-shortcuts.md` (the long-text Esc row) and `docs/plans/INDEX.md` (the archive row) are in the write set of plan-lock `input-ux-w3-grid-s4`, held by another branch, so the push would have been refused; narrowing the file set was the allowed way out. The follow-up is a bullet in the debt entry. The header comment of `SmatchetDialogScope.h` documents the new parameter meanwhile.
 - **No new strings, no CMake or registry edit**: the three new bucket-E cases went into two already-registered files.
 - **`grill-with-docs` was not run as an interactive session.** The plan was checked against the code by reading every site, its callers and its tests before writing it (that is how the read-only-pane and `readSubmit` points were found); no user Q&A took place.
 

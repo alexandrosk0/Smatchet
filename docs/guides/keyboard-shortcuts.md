@@ -149,7 +149,7 @@ focus:
 | Comments | `Ctrl+Enter` in the comment box | Post the comment |
 | Comments | `Esc` | Leave the comment box, keeping the text; then close (asks before discarding a comment). In an empty box, close at once. A comment you did not discard is kept for that issue and comes back when you open Comments on it again |
 | Long-text editor | `Ctrl+Enter` | Save |
-| Long-text editor | `Esc` | Cancel (asks before discarding unsaved changes), also with the caret in the text: the question is the guard and **Keep editing** puts the caret back. Unsaved changes are kept per issue and field, and come back when the editor opens on it again (**Use saved text** drops them) |
+| Long-text editor | `Esc` | Cancel (asks before discarding unsaved changes). Unsaved changes are kept per issue and field, and come back when the editor opens on it again (**Use saved text** drops them) |
 | Long-text editor | `Ctrl+P` | Cycle Edit / Split / Preview |
 | Assistant | `Esc` while a reply is coming in | Stop the reply. The message box keeps the caret and what you typed |
 | Assistant | `Esc` in the message box | Leave the box, keeping the text, and go back to where you were |
