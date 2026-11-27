@@ -34,6 +34,44 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-11-26 · PR #2367, #2373, #2377, #2383, #2388, #2393, #2399, #2519 · override: `cr-out-of-band` on all eight (with `cr-disposition:cr-auto-review-disabled`)
+
+### What escaped
+Eight PRs merged to `develop` with the CodeRabbit gate waived and had no postmortem entry. CodeRabbit reported `Review skipped` on each merged head and no review by it is recorded on any of them.
+
+| PR | merged (UTC) | head | diff | verdict line in the PR body, pinned to that head |
+|---|---|---|---|---|
+| #2367 | 2026-10-25 21:21:59 | `edc791725` | layer bump, docs and data; no C++ | `n/a` |
+| #2373 | 2026-11-01 14:58:49 | `a2ce4c719` | layer bump and one backlog line | `n/a` |
+| #2377 | 2026-11-01 20:00:29 | `b975d6766` | docs only | `n/a` |
+| #2383 | 2026-11-03 01:17:15 | `3a50e99e6` | one data file | `n/a` |
+| #2388 | 2026-11-04 06:05:15 | `73fbe09ed` | review-gate workflow, PR template, layer pin; no C++ | 0 findings, plus a separate review agent with 0 |
+| #2393 | 2026-11-04 23:39:34 | `57f809983` | review docs and layer pin; no C++ | 12 findings fixed or kept by design, plus a separate review agent |
+| #2399 | 2026-11-09 21:32:04 | `02ad4277b` | one nightly workflow | 2 findings fixed, plus a separate review agent |
+| #2519 | 2026-11-27 03:20:58 | `9d582b189` | 35 files, 34 of them C++, +1348/-149 | 3 Low, deferred; no `independent-review` line |
+
+This change also adds the merge-snapshot rows that were missing for 23 merges: 21 from 2026-10-25 to 2026-11-09, plus #2518 and #2519.
+- Two are copied as written at merge time from other worktrees' working copies: #2382 and #2519.
+- One is `GATES_PASSED` / `orchestrator`: #2518, merged by this session's poller.
+- The other twenty are `BACKFILLED` / `git-janitor`.
+
+### Root cause
+The repository has fewer than 10 stars, so CodeRabbit reviews only on a manual trigger. No manual trigger comment was found on these eight. How each label was approved was not read for this entry.
+
+The SessionStart nudge reports snapshot holes for a 6 h window only. Why no row was written for each older merge was not established.
+
+Provenance: merge metadata, labels, check runs, commit statuses and PR bodies were read from the GitHub API on 2026-11-27. `redChecks` on the `BACKFILLED` rows is the `safe-admin-merge.sh` `downgraded_red_checks` projection of the live rollup, sourced from a worktree at `origin/develop` `3dd0270a0`, not a read of the decision instant.
+
+### Preventing gate
+None for the waivers: they are the known no-automatic-review shape, which the existing P1 entry covers. The stranded and missing rows are the existing P2 entry's class.
+
+### Eval case
+None. Review availability and ledger bookkeeping are not something a code reviewer scores, and no defect is known to have shipped.
+
+### Filed as
+- [`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md) (existing, P1; **Observed on** updated)
+- [`categories/tooling/2026-11-26-merge-snapshot-rows-stay-uncommitted-in-the-merging-worktree.md`](categories/tooling/2026-11-26-merge-snapshot-rows-stay-uncommitted-in-the-merging-worktree.md) (existing, P2; **Observed on** updated)
+
 ## 2026-11-26 · PR #2490, #2494, #2496, #2515 · merged on gate scripts run from a stale checkout (plan CI-proof gate not evaluated)
 
 ### What escaped

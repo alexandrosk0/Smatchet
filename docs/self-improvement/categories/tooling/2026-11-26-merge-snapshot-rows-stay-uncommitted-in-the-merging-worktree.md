@@ -3,7 +3,7 @@
 - **Category**: tooling
 - **Priority**: P2
 - **Date**: 2026-11-26
-- **Observed on**: PR #2423, #2431, #2436, #2447, #2485, #2488, #2492, #2497, #2498: each had a complete row in a worktree's working copy and none on `develop` (2026-11-26). Related, archived in `applied-2026-06.md`: `merge-snapshot-ledger-uncommitted-on-shared-tree-loss-risk`.
+- **Observed on**: PR #2423, #2431, #2436, #2447, #2485, #2488, #2492, #2497, #2498: each had a complete row in a worktree's working copy and none on `develop` (2026-11-26). Related, archived in `applied-2026-06.md`: `merge-snapshot-ledger-uncommitted-on-shared-tree-loss-risk`. Later the same day: #2382 and #2519, in the [backfill entry](../../postmortems.md#2026-11-26--pr-2367-2373-2377-2383-2388-2393-2399-2519--override-cr-out-of-band-on-all-eight-with-cr-dispositioncr-auto-review-disabled).
 - **Status**: open
 
 ## What happened
