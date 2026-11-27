@@ -3,7 +3,7 @@
 - **Category**: tooling
 - **Priority**: P2
 - **Date**: 2026-11-25
-- **Observed on**: PR #2483 (head `c1b80e7df`, merged 2026-11-25T13:58:03Z as `1c0d9d6ef`), earlier on #2468 and #2482; in the 2026-11-25 entry in [`postmortems.md`](../../postmortems.md)
+- **Observed on**: PR #2483 (head `c1b80e7df`, merged 2026-11-25T13:58:03Z as `1c0d9d6ef`), earlier on #2468 and #2482; in the 2026-11-25 entry in [`postmortems.md`](../../postmortems.md); later on #2494 and #2496, in the [2026-11-26 entry](../../postmortems.md#2026-11-26--pr-2488-2494--override-plan-lock-out-of-band-on-both-red-check-plan-lock-gate-on-2488-cr-out-of-band-on-2494)
 - **Status**: open
 
 ## What happened
