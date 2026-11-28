@@ -354,6 +354,57 @@ static void RegisterCommentsEscKeepsTypedText(ImGuiTestEngine* engine) {
     };
 }
 
+// OfflineFirst/Comments_EscInEmptyBoxClosesInOnePress: the caret starts in the post box, and Esc with nothing
+// typed closes the viewer at once (the shell's dialog scope reads it; the box no longer asks for the close).
+static void RegisterCommentsEscInEmptyBoxClosesInOnePress(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_EscInEmptyBoxClosesInOnePress");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket ticket = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        IM_CHECK_NO_RET(GetCommentsModalSnapshotForTests().PostDraft.empty());
+        ctx->KeyPress(ImGuiKey_Escape);
+        const bool closed = YieldUntil(ctx, 30, []() { return !GetFieldViewerSnapshotForTests().Active; });
+        IM_CHECK_NO_RET(closed);
+        CloseCommentsViewer(ctx);
+    };
+}
+
+// OfflineFirst/Comments_EscOnSpacesOnlyBoxLeavesThenAsks: a box holding only spaces still holds something
+// the viewer would drop, so it takes the same two presses as typed text: the first Esc leaves the box, the
+// second asks before discarding.
+static void RegisterCommentsEscOnSpacesOnlyBoxLeavesThenAsks(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_EscOnSpacesOnlyBoxLeavesThenAsks");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        SMATCHET_INPUT_CASE_PREAMBLE(ctx, app);
+        const CachedTicket ticket = MakeTicketWithHistory("OFF-1", "x");
+        IM_CHECK_NO_RET(OpenFieldViewerForField(*app, ticket, "comments"));
+        IM_CHECK_NO_RET(WaitForComposerCaret(ctx));
+        ImGuiWindow* viewer = TopModal();
+        IM_CHECK_NO_RET(viewer != nullptr);
+        const ImGuiID viewerId = viewer != nullptr ? viewer->ID : 0;
+        ctx->KeyChars("   ");
+        ctx->Yield(2);
+
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(GetFieldViewerSnapshotForTests().Active);
+        IM_CHECK_NO_RET(!GetCommentsModalSnapshotForTests().ComposerActive);
+        ImGuiWindow* top = TopModal();
+        IM_CHECK_NO_RET(top != nullptr && top->ID == viewerId); // no confirm yet: that Esc only left the box
+
+        ctx->KeyPress(ImGuiKey_Escape);
+        ctx->Yield(3);
+        top = TopModal();
+        IM_CHECK_NO_RET(top != nullptr && top->ID != viewerId); // the second Esc asks
+        IM_CHECK_NO_RET(ClickInTopModal(ctx, "Keep writing"));
+        ctx->Yield(3);
+        IM_CHECK_NO_RET(GetFieldViewerSnapshotForTests().Active);
+        CloseCommentsViewer(ctx);
+    };
+}
+
 // OfflineFirst/Comments_DiscardConfirmKeysKeep: the discard confirm is on the dialog scope's destructive
 // footer. The Esc that opens it is not its answer (it stays up); Esc then keeps writing, and so does Enter,
 // since Keep writing has the keyboard. The comment survives both.
@@ -949,6 +1000,8 @@ extern "C" void SmatchetRegisterFieldViewerModalTests(ImGuiTestEngine* engine) {
     RegisterCommentsDiscardConfirmKeysKeep(engine);
     RegisterCommentsTitleBarCloseKeepsDraft(engine);
     RegisterCommentsBlankBoxCannotPost(engine);
+    RegisterCommentsEscInEmptyBoxClosesInOnePress(engine);
+    RegisterCommentsEscOnSpacesOnlyBoxLeavesThenAsks(engine);
     RegisterCommentsCtrlEnterPosts(engine);
     RegisterCommentsEscOnFilledBoxOnlyLeaves(engine);
     RegisterCommentsTemplateOpenKeepsPrefill(engine);

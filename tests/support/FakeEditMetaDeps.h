@@ -19,8 +19,11 @@
 #include "ILookupCache.h"
 #include "ITrackerBackend.h"
 
+#include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -39,24 +42,41 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     /// ResolveIssueTypeKeyForIssue, PruneEditMetaCacheToActiveTickets, and the warm-start scan.
     std::vector<CachedTicket> ActiveTicketsImpl;
 
-    /// Catalog rows FindFieldById scans (CanEditFieldForIssue uses this to detect sprint fields).
+    /// Catalog rows FindFieldSnapshotById scans (CanEditFieldForIssue uses this to detect sprint fields).
     std::vector<TrackerField> AvailableFieldsImpl;
 
     bool ShuttingDownImpl = false;
-    mutable int DeferredNotifyCalls = 0;
+    /// Atomic: the real-thread race test (EditMetaCacheConcurrent) calls the notify from several threads.
+    mutable std::atomic<int> DeferredNotifyCalls{0};
     TrackerConnectivityState ConnectivityImpl = TrackerConnectivityState::AuthenticatedReachable;
     /// Null by default (no local store, like before the cache exists); tests that exercise the
     /// remembered workflow install a FakeLookupCache.
     std::shared_ptr<ILookupCache> LookupCacheImpl;
     std::string CacheBackendKeyImpl = "Jira";
 
+    /// SteadyNow() answers `NowImpl` while `UseFakeNow` is set (age-limit tests advance it with AdvanceNow), the
+    /// real steady clock otherwise. Set both before a worker runs: they are plain members.
+    bool UseFakeNow = false;
+    std::chrono::steady_clock::time_point NowImpl{};
+    void AdvanceNow(std::chrono::seconds by) {
+        if (!UseFakeNow) {
+            UseFakeNow = true;
+            NowImpl = std::chrono::steady_clock::now(); // continue from the real clock, never step back in time
+        }
+        NowImpl += by;
+    }
+
     /// LaunchBackgroundTask mode. Default INLINE-SYNCHRONOUS (runs the task on the calling
     /// thread immediately) so logic-coverage cases stay deterministic and single-threaded.
     /// Flip RunOnRealThread=true for the TSan race case: the task then runs on a real
     /// std::thread captured in LaunchedThreads (tests join them before fixture teardown).
     bool RunOnRealThread = false;
-    std::vector<std::thread> LaunchedThreads;
-    int LaunchBackgroundTaskCalls = 0;
+    /// Destroy every launched task unrun, as AppController::LaunchBackgroundTask does once shutdown has begun.
+    /// Wins over RunOnRealThread.
+    bool DropTasks = false;
+    std::vector<std::thread> LaunchedThreads; ///< guarded by launchMutex_ while tasks can still be launched
+    /// Atomic: the real-thread cases launch from several threads at once (warm worker, scope-save drains).
+    std::atomic<int> LaunchBackgroundTaskCalls{0};
 
     ~FakeEditMetaDeps() override { JoinLaunchedThreads(); }
 
@@ -66,12 +86,22 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     /// Join any real-thread tasks. Tests call this explicitly in the race case before asserting
     /// final state; the destructor also calls it as a backstop.
     void JoinLaunchedThreads() {
-        for (auto& t : LaunchedThreads) {
-            if (t.joinable()) {
-                t.join();
+        // A joined worker may itself launch another (a scope-save drain): swap out a batch, join it, repeat.
+        for (;;) {
+            std::vector<std::thread> batch;
+            {
+                std::lock_guard<std::mutex> lock(launchMutex_);
+                batch.swap(LaunchedThreads);
+            }
+            if (batch.empty()) {
+                return;
+            }
+            for (auto& t : batch) {
+                if (t.joinable()) {
+                    t.join();
+                }
             }
         }
-        LaunchedThreads.clear();
     }
 
     // --- IEditMetaDeps overrides --------------------------------------------------------------
@@ -82,9 +112,17 @@ class FakeEditMetaDeps : public IEditMetaDeps {
 
     std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
 
+    std::chrono::steady_clock::time_point SteadyNow() const override {
+        return UseFakeNow ? NowImpl : std::chrono::steady_clock::now();
+    }
+
     void LaunchBackgroundTask(std::function<void()> task) override {
         ++LaunchBackgroundTaskCalls;
+        if (DropTasks) {
+            return;
+        }
         if (RunOnRealThread) {
+            std::lock_guard<std::mutex> lock(launchMutex_);
             LaunchedThreads.emplace_back(std::move(task));
         } else {
             task(); // inline-synchronous: deterministic logic coverage
@@ -97,10 +135,10 @@ class FakeEditMetaDeps : public IEditMetaDeps {
         return std::make_shared<const std::vector<CachedTicket>>(ActiveTicketsImpl);
     }
 
-    const TrackerField* FindFieldById(const std::string& fieldId) const override {
+    std::shared_ptr<const TrackerField> FindFieldSnapshotById(const std::string& fieldId) const override {
         for (const auto& f : AvailableFieldsImpl) {
             if (f.Id == fieldId) {
-                return &f;
+                return std::make_shared<const TrackerField>(f);
             }
         }
         return nullptr;
@@ -109,6 +147,9 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     void RequestDeferredLiveTrackerBackendSuccessNotify() const override { ++DeferredNotifyCalls; }
 
     TrackerConnectivityState TrackerConnectivity() const override { return ConnectivityImpl; }
+
+  private:
+    std::mutex launchMutex_;
 };
 
 } // namespace smatchet_tests

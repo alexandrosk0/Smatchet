@@ -1230,14 +1230,18 @@ void AppController::HandleFieldCatalogError(const std::string& error, bool error
                                 CatalogWriteGuard::LatchedTo(pane), std::string(), io);
 }
 
-const TrackerField* AppController::FindFieldById(const std::string& fieldId) const {
+std::shared_ptr<const TrackerField> AppController::FindFieldSnapshotById(const std::string& fieldId) const {
     const GridContextFieldCatalog& cat =
         fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
-    std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-    const std::vector<TrackerField>& fields = *cat.AvailableFields;
-    const auto it =
-        std::find_if(fields.begin(), fields.end(), [&](const TrackerField& field) { return field.Id == fieldId; });
-    return it == fields.end() ? nullptr : &(*it);
+    return cat.FindFieldSnapshot(fieldId);
+}
+
+const TrackerField* AppController::FindFieldById(const std::string& fieldId) const {
+    // The pin keeps one catalog generation alive per thread until that thread's next lookup, so the raw
+    // pointer stays readable across a concurrent catalog swap for exactly that long.
+    thread_local std::shared_ptr<const TrackerField> pinned;
+    pinned = FindFieldSnapshotById(fieldId);
+    return pinned.get();
 }
 
 void AppController::ApplyCatalogCorrections(std::vector<TrackerField>& fields, const std::string& trackerType) {
@@ -1329,7 +1333,13 @@ void AppController::InvalidateIssueEditMeta(const std::string& backendKey, const
     editMeta_->InvalidateIssueEditMeta(backendKey, issueId);
 }
 
-void AppController::PruneEditMetaCacheToActiveTickets() { editMeta_->PruneEditMetaCacheToActiveTickets(); }
+void AppController::PruneEditMetaCacheToActiveTickets() {
+    editMeta_->PruneEditMetaCacheToActiveTickets();
+    // The live transitions map is bounded by the same roster; a no-op under its cap.
+    if (transitions_) {
+        transitions_->PruneLiveToActiveTickets();
+    }
+}
 
 void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker) {
     // The same warm fills the per-project component options, so each row's components editor has them.

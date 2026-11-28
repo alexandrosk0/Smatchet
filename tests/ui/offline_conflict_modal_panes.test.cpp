@@ -512,6 +512,28 @@ void CaseTextEscKeepsTypedText(ImGuiTestContext* ctx, const KeyboardCase& c) {
     IM_CHECK_NO_RET(SmatchetOfflineConflictUnsavedHintShownForTest());
 }
 
+// The Mine pane is a read-only field that can hold the active item. With a resolution typed, a click into it
+// and then Esc is not "leaving the resolved field" (that field is not the active one): the resolver stays
+// open with the text and says how to discard, as it does for an Esc pressed out of any field. The dialog
+// scope is told which field counts as being typed in; "any field" would leave the Mine pane and show no hint.
+void CaseTextEscAfterClickIntoReadOnlyPane(ImGuiTestContext* ctx, const KeyboardCase& c) {
+    if (!OpenWithCaretIn(ctx, kTextJson, c.EditId, kTextField)) {
+        return;
+    }
+    ctx->KeyChars("X");
+    ctx->ItemClick("##CRMine");
+    const ImGuiID mineId = ctx->GetID("##CRMine");
+    const bool mineActive = YieldUntil(ctx, [&] { return ImGui::GetActiveID() == mineId; }, 30);
+    IM_CHECK_NO_RET(mineActive); // otherwise this case proves nothing about a read-only pane holding the item
+    IM_CHECK_NO_RET(!SmatchetOfflineConflictUnsavedHintShownForTest());
+
+    ctx->KeyPress(ImGuiKey_Escape);
+    ctx->Yield(3);
+    IM_CHECK_NO_RET(WindowIsLive(kModalTitle));
+    IM_CHECK_NO_RET(ResolvedText().find('X') != std::string::npos);
+    IM_CHECK_NO_RET(SmatchetOfflineConflictUnsavedHintShownForTest());
+}
+
 // The "not saved" hint after an Esc makes the same promise as the Cancel message: a cancelled resolution is
 // kept in the draft store, also if Smatchet closes (#2510).
 void CaseTextEscHintAgreesWithCancelMessage(ImGuiTestContext* ctx, const KeyboardCase& c) {
@@ -839,6 +861,7 @@ extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* 
     RegisterKeyboardCase(engine, "Text_CtrlEnterSavesWhenClean", CaseTextCtrlEnterSavesWhenClean);
     RegisterKeyboardCase(engine, "Text_EscKeepsTypedText", CaseTextEscKeepsTypedText);
     RegisterKeyboardCase(engine, "Text_EscHintAgreesWithCancelMessage", CaseTextEscHintAgreesWithCancelMessage);
+    RegisterKeyboardCase(engine, "Text_EscAfterClickIntoReadOnlyPane", CaseTextEscAfterClickIntoReadOnlyPane);
     RegisterKeyboardCase(engine, "Text_CancelKeepsWhatWasTyped", CaseTextCancelKeepsWhatWasTyped);
     RegisterKeyboardCase(engine, "Text_KeptTextNotPutIntoChangedConflict", CaseKeptTextNotPutIntoChangedConflict);
     RegisterKeyboardCase(engine, "Untouched_EscCloses", CaseUntouchedEscCloses);

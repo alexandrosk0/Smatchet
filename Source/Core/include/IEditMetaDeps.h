@@ -13,6 +13,7 @@
 // Test fixtures implement this interface directly (see tests/support/FakeEditMetaDeps.h) so unit
 // tests can exercise EditMetaCacheService without constructing an AppController.
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -36,7 +37,8 @@ class IEditMetaDeps {
 
     /// Spawn `task` on a tracked background thread (never detached) — joined in
     /// `JoinBackgroundTasks` before destruction. Same signature as `IOfflineQueueDeps`; the one
-    /// adapter override satisfies both.
+    /// adapter override satisfies both. The task may be destroyed unrun (shutdown) or the call may
+    /// throw: own any in-flight latch through a `LaunchClaim` (LaunchClaim.h).
     virtual void LaunchBackgroundTask(std::function<void()> task) = 0;
 
     /// True once shutdown has begun — warm workers poll this to bail out of long loops.
@@ -58,8 +60,9 @@ class IEditMetaDeps {
     }
 
     /// Catalog lookup for a field id (avoids re-scanning); used by `CanEditFieldForIssue` to
-    /// detect sprint fields. Returns null when the field is unknown.
-    virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
+    /// detect sprint fields. Returns null when the field is unknown. The handle keeps the field
+    /// readable while it is held, even after the catalog is replaced.
+    virtual std::shared_ptr<const TrackerField> FindFieldSnapshotById(const std::string& fieldId) const = 0;
 
     /// Arm the deferred live-tracker-backend success notify (a successful editmeta fetch counts
     /// as a reachable-backend signal). CONST — a distinct overload from the existing non-const
@@ -74,4 +77,8 @@ class IEditMetaDeps {
 
     /// Backend namespace key for cache operations (multi-grid ADR-0018).
     virtual std::string CacheBackendKey() const = 0;
+
+    /// The steady clock the lookup caches stamp live values with and compare ages against (`KeyedLookupCache`
+    /// admission). Defaulted so production adapters need no override; test fakes substitute a controllable one.
+    virtual std::chrono::steady_clock::time_point SteadyNow() const { return std::chrono::steady_clock::now(); }
 };

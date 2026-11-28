@@ -34,7 +34,9 @@ class IAppTicketMutations {
   public:
     virtual ~IAppTicketMutations() = default;
 
-    virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
+    /// The catalog field with this id, or null. The handle keeps the field readable while it is held, even
+    /// after the catalog is replaced. Also declared on IAppFields.
+    virtual std::shared_ptr<const TrackerField> FindFieldSnapshotById(const std::string& fieldId) const = 0;
     /// The focused pane's tracker, latched where the user acted; field edits, comments and worklogs go to it
     /// even if focus moves before the worker submits. Also declared on IAppPendingActions.
     virtual PendingActionTarget LatchPendingActionTarget() const = 0;

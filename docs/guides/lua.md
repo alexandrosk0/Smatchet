@@ -142,7 +142,7 @@ Global Smatchet application commands.
 
 | Function | Description |
 | :--- | :--- |
-| `smatchet.get_ticket(id)` | Fetches a `Ticket` object by its Jira key from the local cache. Returns `(ticket, error_msg)`. |
+| `smatchet.get_ticket(id)` | Fetches a `Ticket` object by its issue key. A draw callback or toolbar snippet (the UI-thread state) answers from the focused view's loaded rows and returns `(nil, "Ticket not loaded in the focused view")` for any other ticket; automation and MCP scripts read the local cache. Returns `(ticket, error_msg)`. |
 | `smatchet.get_active_tickets()` | Returns a Lua table (array) of all `Ticket` objects currently loaded in Smatchet's active project grid. |
 | `smatchet.create_issue(spec)` | Creates one issue on the **active** tracker (Jira, Plane, GitHub, or Linear) or queues an offline create. See below. |
 

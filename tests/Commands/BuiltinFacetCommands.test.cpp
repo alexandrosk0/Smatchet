@@ -301,8 +301,12 @@ struct FakeMutations : IAppTicketMutations {
         return TrackerConnectivityState::AuthenticatedReachable;
     }
     bool IsShuttingDown() const override { return false; }
-    const TrackerField* FindFieldById(const std::string& fieldId) const override {
-        return fieldId == "status" ? &StatusField : nullptr;
+    // A copy the caller owns: a handler that let the handle go before reading the field reads freed memory.
+    std::shared_ptr<const TrackerField> FindFieldSnapshotById(const std::string& fieldId) const override {
+        if (fieldId == "status") {
+            return std::make_shared<const TrackerField>(StatusField);
+        }
+        return nullptr;
     }
     static PendingActionSubmitResult Outcome(PendingActionSubmitResult::Kind kind, const char* rejection) {
         PendingActionSubmitResult r;
@@ -405,10 +409,10 @@ struct FakeFields : IAppFields {
     std::shared_ptr<const std::vector<TrackerField>> GetAvailableFields() const override {
         return std::make_shared<std::vector<TrackerField>>(Fields);
     }
-    const TrackerField* FindFieldById(const std::string& fieldId) const override {
+    std::shared_ptr<const TrackerField> FindFieldSnapshotById(const std::string& fieldId) const override {
         for (const TrackerField& f : Fields) {
             if (f.Id == fieldId) {
-                return &f;
+                return std::make_shared<const TrackerField>(f);
             }
         }
         return nullptr;

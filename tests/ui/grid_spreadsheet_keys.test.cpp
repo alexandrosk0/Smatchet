@@ -1,5 +1,5 @@
 // grid_spreadsheet_keys.test.cpp — bucket-E, the Active Project grid's keyboard cell cursor end to end (input UX Wave
-// 3, docs/plans/active/input-ux-w3-grid-spreadsheet.md, slice S1; audit findings #29 navigation half, #30, #32).
+// 3, docs/plans/shipped/input-ux-w3-grid-spreadsheet.md, slice S1; audit findings #29 navigation half, #30, #32).
 //
 // What this pins, driven with real key presses and real clicks on the real grid (deterministic Jira fixture backend):
 //   1. A click on a row's ID cell makes it the active cell; an arrow key then moves exactly ONE cell (and ImGui's
@@ -21,6 +21,11 @@
 //      is up, and through the grid's own history once it is gone. A bulk set undoes row by row (each row gets ITS
 //      OWN old value back, not one shared value). A cell whose save was rejected reopens on the rejected value with the
 //      message under it, and Esc drops it.
+//   7. (S4, audit #27 rest / #28 paste) Ctrl+Enter in an editor writes its value to every row of the range, and one
+//      Ctrl+Z gives each row its own value back. Ctrl+V pastes one value onto the active cell, a block from the active
+//      cell (each cell read as its own field: an option name becomes its id, a name not in the list is skipped), and
+//      one value over every cell of a range. Ctrl+D fills the top row of the range down. A write of more than 10
+//      cells sends nothing until the confirm dialog's Apply.
 //
 // Needs the grid-spreadsheet fixture (60 issues) named by SMATCHET_TEST_JIRA_BACKEND_FIXTURE;
 // scripts/dev/test-ui-grid-spreadsheet.sh sets it and the GridSpreadsheet filter. Skips cleanly without it.
@@ -32,6 +37,7 @@
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "GridPane.h"
 #include "SmatchetGridUiSupport.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
@@ -243,6 +249,50 @@ bool EditingSummaryAt(int row) {
 // Opens the editor of the summary cell at `row` from the keyboard: a click on the row's ID cell, then Right.
 bool ActivateSummaryCell(ImGuiTestContext* ctx, int row) {
     return ClickCell(ctx, row, 0) && PressMoves(ctx, ImGuiKey_RightArrow, row, 1);
+}
+
+// The cached value of `fieldId` on issue `id`, "" when the grid has no such issue.
+std::string ValueOf(AppController& app, const std::string& id, const char* fieldId) {
+    const std::shared_ptr<const std::vector<CachedTicket>> tickets = app.GetActiveTicketsSnapshot();
+    if (tickets) {
+        for (const CachedTicket& ticket : *tickets) {
+            if (ticket.id == id) {
+                return ticket.GetFieldValue(fieldId);
+            }
+        }
+    }
+    return std::string();
+}
+
+// The issue ids shown at rows `first` .. `first + count - 1`, in that order.
+std::vector<std::string> IdsFrom(int first, int count) {
+    std::vector<std::string> ids;
+    for (int row = first; row < first + count; ++row) {
+        ids.push_back(IdAtRow(row));
+    }
+    return ids;
+}
+
+// True when every issue of `ids` holds `summary`.
+bool AllSummariesAre(AppController& app, const std::vector<std::string>& ids, const std::string& summary) {
+    return std::all_of(ids.begin(), ids.end(), [&](const std::string& id) { return SummaryOf(app, id) == summary; });
+}
+
+// Makes the summary cell of `row` active and grows the range down over `rows` rows (the active cell stays on `row`).
+bool SelectSummaryRange(ImGuiTestContext* ctx, int row, int rows) {
+    if (!ActivateSummaryCell(ctx, row)) {
+        return false;
+    }
+    ctx->KeyPress(ImGuiKey_DownArrow | ImGuiMod_Shift, rows - 1);
+    ctx->Yield(2);
+    const GridRectSelection& sel = State().RectSel;
+    return sel.Active && sel.MinRow() == row && sel.MaxRow() == row + rows - 1 && sel.MinCol() == 1 &&
+           sel.MaxCol() == 1 && ActiveAt(row, 1);
+}
+
+// The ref of a button of the keyboard bulk confirm dialog, which is the focused window while it is up.
+std::string ConfirmButtonRef(const char* key, const char* english, const char* stableId) {
+    return std::string("//$FOCUSED/") + SmatchetLocalization::Label(key, english, stableId);
 }
 
 } // namespace
@@ -833,6 +883,186 @@ static void RegisterRejectedValue(ImGuiTestEngine* engine) {
     };
 }
 
+// GridSpreadsheet/Bulk_CtrlEnterAppliesTheEditorValueToTheRange
+static void RegisterApplyToSelection(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridSpreadsheet", "Bulk_CtrlEnterAppliesTheEditorValueToTheRange");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = nullptr;
+        if (!PrepareGrid(ctx, &app)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        SmatchetToastManager::Instance().DismissAllLive();
+        SPREADSHEET_REQUIRE(SelectSummaryRange(ctx, 1, 3));
+        const std::vector<std::string> ids = IdsFrom(1, 3);
+        std::vector<std::string> before;
+        for (const std::string& id : ids) {
+            before.push_back(SummaryOf(*app, id));
+        }
+        SPREADSHEET_REQUIRE(before[0] != before[1] && before[1] != before[2]);
+
+        // The editor opens on the active cell; the range stays.
+        ctx->KeyPress(ImGuiKey_F2);
+        ctx->Yield(4);
+        SPREADSHEET_REQUIRE(State().EditingId == ids[0]);
+        ctx->KeyCharsReplace("Applied to three");
+        ctx->KeyPress(ImGuiKey_Enter | ImGuiMod_Ctrl);
+        ctx->Yield(4);
+        IM_CHECK_NO_RET(State().EditingId.empty());
+        IM_CHECK_NO_RET(State().ActiveIssueId == ids[0]); // Ctrl+Enter does not move the active cell
+        SPREADSHEET_REQUIRE(StepUntil(ctx, 900, [&] { return AllSummariesAre(*app, ids, "Applied to three"); }));
+
+        // The three rows were one job: one Ctrl+Z gives each row its own summary back.
+        SPREADSHEET_REQUIRE(
+            StepUntil(ctx, 600, [] { return SmatchetToastManager::Instance().LiveUndoableCount() == 1; }));
+        ctx->KeyPress(ImGuiKey_Z | ImGuiMod_Ctrl);
+        IM_CHECK_NO_RET(StepUntil(ctx, 900, [&] {
+            return SummaryOf(*app, ids[0]) == before[0] && SummaryOf(*app, ids[1]) == before[1] &&
+                   SummaryOf(*app, ids[2]) == before[2];
+        }));
+        SmatchetToastManager::Instance().DismissAllLive();
+    };
+}
+
+// GridSpreadsheet/Bulk_CtrlVPastesACellABlockAndOverARange
+static void RegisterPaste(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridSpreadsheet", "Bulk_CtrlVPastesACellABlockAndOverARange");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = nullptr;
+        if (!PrepareGrid(ctx, &app)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        SmatchetToastManager::Instance().DismissAllLive();
+        const int priorityCol = ColumnOf("priority");
+        SPREADSHEET_REQUIRE(priorityCol == 3); // ID, summary, status, priority: the block below spans all three
+
+        // One value, no range: it lands on the active cell.
+        SPREADSHEET_REQUIRE(ActivateSummaryCell(ctx, 2));
+        const std::string one = IdAtRow(2);
+        ImGui::SetClipboardText("Pasted one");
+        ctx->KeyPress(ImGuiKey_V | ImGuiMod_Ctrl);
+        SPREADSHEET_REQUIRE(StepUntil(ctx, 900, [&] { return SummaryOf(*app, one) == "Pasted one"; }));
+        ctx->Yield(3);
+
+        // A block is placed from the active cell. Each cell is read as its own field: "Low" becomes the priority's
+        // option, a name that is not a priority is skipped, and the status column (no catalog field here) is skipped.
+        SPREADSHEET_REQUIRE(ActivateSummaryCell(ctx, 4));
+        const std::vector<std::string> block = IdsFrom(4, 2);
+        const std::string priorityB = ValueOf(*app, block[1], "priority");
+        const std::string statusA = ValueOf(*app, block[0], "status");
+        SPREADSHEET_REQUIRE(ValueOf(*app, block[0], "priority") != "Low");
+        ImGui::SetClipboardText("Block A\tignored\tLow\nBlock B\tignored\tNo such priority\n");
+        ctx->KeyPress(ImGuiKey_V | ImGuiMod_Ctrl);
+        SPREADSHEET_REQUIRE(StepUntil(ctx, 900, [&] {
+            const std::string priority = ValueOf(*app, block[0], "priority");
+            return SummaryOf(*app, block[0]) == "Block A" && SummaryOf(*app, block[1]) == "Block B" &&
+                   (priority == "Low" || priority == "4");
+        }));
+        ctx->Yield(10);
+        IM_CHECK_NO_RET(ValueOf(*app, block[1], "priority") == priorityB);
+        IM_CHECK_NO_RET(ValueOf(*app, block[0], "status") == statusA);
+
+        // One value over a range fills every cell of the range.
+        SPREADSHEET_REQUIRE(SelectSummaryRange(ctx, 6, 3));
+        const std::vector<std::string> range = IdsFrom(6, 3);
+        const std::string outside = IdAtRow(9);
+        const std::string outsideBefore = SummaryOf(*app, outside);
+        ImGui::SetClipboardText("Filled range\n");
+        ctx->KeyPress(ImGuiKey_V | ImGuiMod_Ctrl);
+        SPREADSHEET_REQUIRE(StepUntil(ctx, 900, [&] { return AllSummariesAre(*app, range, "Filled range"); }));
+        IM_CHECK_NO_RET(SummaryOf(*app, outside) == outsideBefore);
+        IM_CHECK_NO_RET(!g_ui.pendingBulkConfirm.Active); // three cells: no confirm step
+        SmatchetToastManager::Instance().DismissAllLive();
+    };
+}
+
+// GridSpreadsheet/Bulk_CtrlDFillsTheTopRowOfTheRangeDown
+static void RegisterFillDown(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridSpreadsheet", "Bulk_CtrlDFillsTheTopRowOfTheRangeDown");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = nullptr;
+        if (!PrepareGrid(ctx, &app)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        SmatchetToastManager::Instance().DismissAllLive();
+
+        // One cell is no range to fill: nothing is written.
+        SPREADSHEET_REQUIRE(ActivateSummaryCell(ctx, 3));
+        const std::string lone = IdAtRow(4);
+        const std::string loneBefore = SummaryOf(*app, lone);
+        ctx->KeyPress(ImGuiKey_D | ImGuiMod_Ctrl);
+        ctx->Yield(20);
+        IM_CHECK_NO_RET(SummaryOf(*app, lone) == loneBefore);
+        SmatchetToastManager::Instance().DismissAllLive();
+
+        SPREADSHEET_REQUIRE(SelectSummaryRange(ctx, 3, 3));
+        const std::vector<std::string> ids = IdsFrom(3, 3);
+        const std::string top = SummaryOf(*app, ids[0]);
+        SPREADSHEET_REQUIRE(SummaryOf(*app, ids[1]) != top && SummaryOf(*app, ids[2]) != top);
+        ctx->KeyPress(ImGuiKey_D | ImGuiMod_Ctrl);
+        IM_CHECK_NO_RET(StepUntil(ctx, 900, [&] { return AllSummariesAre(*app, ids, top); }));
+        SmatchetToastManager::Instance().DismissAllLive();
+    };
+}
+
+// GridSpreadsheet/Bulk_MoreThanTenCellsWaitForApply
+static void RegisterBulkConfirm(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridSpreadsheet", "Bulk_MoreThanTenCellsWaitForApply");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = nullptr;
+        if (!PrepareGrid(ctx, &app)) {
+            return;
+        }
+        BucketE::UiTestWriteScope writeScope;
+        ctx->SetRef(kGridWindow);
+        SmatchetToastManager::Instance().DismissAllLive();
+        constexpr int kRows = 11;
+        const auto noneWritten = [&](const std::vector<std::string>& ids, const char* summary) {
+            return std::none_of(ids.begin(), ids.end(),
+                                [&](const std::string& id) { return SummaryOf(*app, id) == summary; });
+        };
+
+        // Eleven cells: the write is parked on the confirm, and Cancel drops it.
+        SPREADSHEET_REQUIRE(SelectSummaryRange(ctx, 0, kRows));
+        std::vector<std::string> ids = IdsFrom(0, kRows);
+        ImGui::SetClipboardText("Eleven at once");
+        ctx->KeyPress(ImGuiKey_V | ImGuiMod_Ctrl);
+        SPREADSHEET_REQUIRE(StepUntil(ctx, 60, [] { return g_ui.pendingBulkConfirm.Active; }));
+        IM_CHECK_NO_RET(g_ui.pendingBulkConfirm.ToWrite == kRows);
+        ctx->Yield(30);
+        IM_CHECK_NO_RET(noneWritten(ids, "Eleven at once")); // nothing is sent before Apply
+        const std::string cancelRef = ConfirmButtonRef("grid.bulk.cancel", "Cancel", "kbd_bulk_cancel");
+        SPREADSHEET_REQUIRE(ctx->ItemInfo(cancelRef.c_str(), ImGuiTestOpFlags_NoError).ID != 0);
+        ctx->ItemClick(cancelRef.c_str());
+        ctx->Yield(30);
+        IM_CHECK_NO_RET(!g_ui.pendingBulkConfirm.Active);
+        IM_CHECK_NO_RET(noneWritten(ids, "Eleven at once"));
+
+        // Again, and Apply writes all eleven. The range grew past the first screen, so the grid is scrolled back first.
+        ctx->SetRef(kGridWindow);
+        const ImGuiTable* table = GridTable();
+        SPREADSHEET_REQUIRE(table != nullptr);
+        ImGui::SetScrollY(table->InnerWindow, 0.0f);
+        ctx->Yield(10);
+        SPREADSHEET_REQUIRE(SelectSummaryRange(ctx, 0, kRows));
+        ids = IdsFrom(0, kRows);
+        ctx->KeyPress(ImGuiKey_V | ImGuiMod_Ctrl);
+        SPREADSHEET_REQUIRE(StepUntil(ctx, 60, [] { return g_ui.pendingBulkConfirm.Active; }));
+        const std::string applyRef = ConfirmButtonRef("grid.bulk.apply", "Apply", "kbd_bulk_apply");
+        SPREADSHEET_REQUIRE(ctx->ItemInfo(applyRef.c_str(), ImGuiTestOpFlags_NoError).ID != 0);
+        ctx->ItemClick(applyRef.c_str());
+        ctx->Yield(2);
+        IM_CHECK_NO_RET(!g_ui.pendingBulkConfirm.Active);
+        IM_CHECK_NO_RET(StepUntil(ctx, 1500, [&] { return AllSummariesAre(*app, ids, "Eleven at once"); }));
+        SmatchetToastManager::Instance().DismissAllLive();
+    };
+}
+
 extern "C" void SmatchetRegisterGridSpreadsheetKeysTests(ImGuiTestEngine* engine) {
     RegisterArrowKeys(engine);
     RegisterScrollIntoView(engine);
@@ -845,6 +1075,10 @@ extern "C" void SmatchetRegisterGridSpreadsheetKeysTests(ImGuiTestEngine* engine
     RegisterUndoSingle(engine);
     RegisterUndoBulk(engine);
     RegisterRejectedValue(engine);
+    RegisterApplyToSelection(engine);
+    RegisterPaste(engine);
+    RegisterFillDown(engine);
+    RegisterBulkConfirm(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

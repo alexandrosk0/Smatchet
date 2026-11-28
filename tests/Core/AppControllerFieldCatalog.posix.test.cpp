@@ -217,6 +217,70 @@ TEST_CASE("AppController::ClearFieldCatalogInMemory drops the project pin and th
     CHECK(app.GetAvailableUsers().empty());
 }
 
+TEST_CASE("AppController::FindFieldById keeps its field readable until the calling thread's next lookup") {
+    // The legacy raw pointer is pinned per thread: a catalog clear landing after the lookup must not free the
+    // generation the pointer reads from. The thread's next lookup moves the pin and lets that generation go.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    const TrackerConfig cfg = ConfigManager::Load();
+    REQUIRE(ApplyGridCatalog(app, cfg, "FOO", CatalogWithField("customfield_foo").Fields));
+
+    const TrackerField* const field = app.FindFieldById("customfield_foo");
+    REQUIRE(field != nullptr);
+    const std::weak_ptr<const std::vector<TrackerField>> generation = app.GetAvailableFields();
+    app.ClearFieldCatalogInMemory();
+    REQUIRE_FALSE(generation.expired());
+    CHECK(field->Id == "customfield_foo");
+    CHECK(field->Name == "Field customfield_foo");
+
+    CHECK(app.FindFieldById("customfield_foo") == nullptr);
+    CHECK(generation.expired());
+}
+
+TEST_CASE("AppController::FindFieldSnapshotById hands every facet a handle that outlives the catalog it came from") {
+    // The controller, both command facets and the edit-meta adapter answer with the same published field, and
+    // each handle owns a share of its generation: the field survives a newer catalog and a clear, and the
+    // generation is freed only when the last handle goes. The legacy accessor is left out on purpose, since
+    // its per-thread pin would hold the generation too.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    const TrackerConfig cfg = ConfigManager::Load();
+    REQUIRE(ApplyGridCatalog(app, cfg, "FOO", CatalogWithField("customfield_foo").Fields));
+
+    const IAppFields& fieldsFacet = app;
+    const IAppTicketMutations& mutationsFacet = app;
+    const IEditMetaDeps& editMetaDeps = adapter;
+    std::shared_ptr<const TrackerField> direct = app.FindFieldSnapshotById("customfield_foo");
+    std::shared_ptr<const TrackerField> viaFields = fieldsFacet.FindFieldSnapshotById("customfield_foo");
+    std::shared_ptr<const TrackerField> viaMutations = mutationsFacet.FindFieldSnapshotById("customfield_foo");
+    std::shared_ptr<const TrackerField> viaEditMeta = editMetaDeps.FindFieldSnapshotById("customfield_foo");
+    REQUIRE(direct.get() != nullptr);
+    CHECK(viaFields.get() == direct.get());
+    CHECK(viaMutations.get() == direct.get());
+    CHECK(viaEditMeta.get() == direct.get());
+    CHECK(app.FindFieldSnapshotById("customfield_missing").get() == nullptr);
+    const std::weak_ptr<const std::vector<TrackerField>> generation = app.GetAvailableFields();
+
+    REQUIRE(ApplyGridCatalog(app, cfg, "FOO", CatalogWithField("customfield_bar").Fields));
+    app.ClearFieldCatalogInMemory();
+    REQUIRE_FALSE(generation.expired());
+    CHECK(direct->Id == "customfield_foo");
+    CHECK(direct->Name == "Field customfield_foo");
+    CHECK(viaEditMeta->Id == "customfield_foo");
+    CHECK(app.FindFieldSnapshotById("customfield_foo").get() == nullptr);
+
+    direct.reset();
+    viaFields.reset();
+    viaMutations.reset();
+    CHECK_FALSE(generation.expired()); // one handle is still held
+    viaEditMeta.reset();
+    CHECK(generation.expired());
+}
+
 TEST_CASE("AppController::RefreshFieldCatalog skips a project fetch for another tracker kind than the pane runs") {
     // A deferred Save & Sync leaves the old backend installed while the config already names the new
     // tracker: a project of the new tracker cannot be fetched through the old backend, so it does not run.
@@ -1054,6 +1118,33 @@ const TrackerField* FindField(const std::vector<TrackerField>& fields, const std
 }
 
 } // namespace
+
+TEST_CASE("GridContextDepsAdapter::FindFieldSnapshotById answers from its own pane's catalog, not the focused one") {
+    // Custom-field ids differ between tracker sites, so an edit-meta check for an unfocused pane has to read
+    // that pane's catalog. A focus-following adapter keeps answering from the focused pane.
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    AppController app;
+    GridContextDepsAdapter adapter(app);
+    adapter.SetBackend(std::make_unique<smatchet_tests::FakeTrackerClient>());
+    const TrackerConfig cfg = ConfigManager::Load();
+    GridLiveContext* const pane =
+        app.EnsurePaneContextLive(kCatalogPane, ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType));
+    REQUIRE(pane != nullptr);
+    REQUIRE(ApplyGridCatalog(app, cfg, "FOO", CatalogWithField("customfield_focused").Fields));
+    {
+        std::lock_guard<std::mutex> lock(pane->fieldCatalog.availableFieldsMutex_);
+        pane->fieldCatalog.AvailableFields =
+            std::make_shared<std::vector<TrackerField>>(CatalogWithField("customfield_pane").Fields);
+    }
+
+    const GridContextDepsAdapter paneAdapter(app, *pane);
+    const IEditMetaDeps& paneDeps = paneAdapter;
+    const IEditMetaDeps& focusedDeps = adapter;
+    CHECK(paneDeps.FindFieldSnapshotById("customfield_pane").get() != nullptr);
+    CHECK(paneDeps.FindFieldSnapshotById("customfield_focused").get() == nullptr);
+    CHECK(focusedDeps.FindFieldSnapshotById("customfield_focused").get() != nullptr);
+    CHECK(focusedDeps.FindFieldSnapshotById("customfield_pane").get() == nullptr);
+}
 
 TEST_CASE("Pane catalog: a view naming one project scopes the pane's own fetch and fills its components") {
     smatchet_tests::OfflineQueueTestEnvGuard env;

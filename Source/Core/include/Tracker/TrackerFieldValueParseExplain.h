@@ -49,11 +49,13 @@ enum class ParseMessageId : unsigned char {
     HttpUrlUnsupportedScheme, ///< Arg: the scheme
 
     // Queries (JqlQueryValidatePure)
-    QueryUnbalancedOpen,   ///< a "(" with no ")"
-    QueryUnbalancedClose,  ///< Arg: nothing; a ")" with no "("
-    QueryUnclosedQuote,    ///< a quote that is never closed
-    QueryDanglingOperator, ///< Arg: the operator or keyword at the end, e.g. "AND", "="
-    QueryUnknownField,     ///< Arg: the field name
+    QueryUnbalancedOpen,    ///< a "(" with no ")"
+    QueryUnbalancedClose,   ///< Arg: nothing; a ")" with no "("
+    QueryUnclosedQuote,     ///< a quote that is never closed
+    QueryDanglingOperator,  ///< Arg: the operator or keyword at the end, e.g. "AND", "="
+    QueryUnknownField,      ///< Arg: the field name
+    QueryRejectedByTracker, ///< Arg: the tracker's own error text
+    QueryClausesDropped,    ///< Arg: what the tracker will ignore (query_facets::IgnoredClauseNote)
 
     // Conflict resolver (field-specific hints for a value the replay refused)
     ConflictValueRejectedSprint,   ///< the sprint name or id was not found

@@ -517,7 +517,7 @@ void DrawClippedPreviewTooltip(bool tooltipsEnabled, const char* previewCStr, fl
 }
 
 // Where the active cell goes after an inline editor ended on a key: Enter down, Shift+Enter up, Tab right, Shift+Tab
-// left. Ctrl+Enter is the apply-to-selection chord (a later slice), so it moves nothing.
+// left. Ctrl+Enter is the apply-to-selection chord, so it moves nothing.
 GridEditExit EditExitForKey(bool tabPressed) {
     const bool shift = ImGuiEffectiveKeyShift();
     if (tabPressed) {
@@ -562,6 +562,44 @@ void DrawRejectedMessage(const SpreadsheetState& state, bool escapePressed, bool
     const ImVec2 inputMin = isDuration ? durationMin : ImGui::GetItemRectMin();
     const ImVec2 inputMax = isDuration ? durationMax : ImGui::GetItemRectMax();
     smatchet::ui::DrawInlineTextErrorBelowRect(state.EditRejectedMessage, inputMin, inputMax);
+}
+
+// How the inline editor's frame ended, as the key and focus handling above read it.
+struct InlineEditEnd {
+    bool ExplicitSubmit = false;
+    bool Deactivated = false;
+    bool ValueChanged = false;
+    bool Escape = false;
+    bool LoadedTruncated = false;
+    bool ApplyToSelection = false; ///< Ctrl+Enter
+    bool JustStarted = false;
+    GridEditExit ExitAfter = GridEditExit::None;
+};
+
+// Commits, cancels or ends the edit. Ctrl+Enter writes nothing here: it leaves the value as a bulk command, which the
+// grid runs for the selected rows (the edited one included), so an unchanged value is applied to them too.
+void ConcludeInlineEdit(const std::string& issueId, const TrackerField& field, SpreadsheetState& state,
+                        std::vector<PendingFieldEdit>& pendingEdits, const std::string& originalValue,
+                        const InlineEditEnd& end) {
+    if (end.Escape) {
+        state.ClearEditing(); // cancel — never PUT
+    } else if (end.ApplyToSelection && !end.LoadedTruncated) {
+        state.BulkCommand = GridBulkCommand::ApplyValue;
+        state.BulkIssueId = issueId;
+        state.BulkFieldId = field.Id;
+        state.BulkValue = state.EditBuffer;
+        state.ClearEditing();
+    } else if (!end.LoadedTruncated && ShouldCommitInlineFieldEdit(end.ExplicitSubmit, end.Deactivated,
+                                                                   kMobileInlineEditBuild, end.ValueChanged)) {
+        QueueEdit(issueId, field, {state.EditBuffer}, pendingEdits, originalValue);
+        state.ClearEditing();
+        state.PendingEditExit = end.ExitAfter;
+    } else if (ShouldEndInlineEdit(end.Escape, end.ExplicitSubmit, end.Deactivated)) {
+        state.ClearEditing(); // ended without a PUT (unchanged value, a too-long value, or mobile focus-loss)
+        state.PendingEditExit = end.ExitAfter;
+    } else if (end.JustStarted) {
+        state.EditJustStarted = false;
+    }
 }
 
 // Draws the active inline single-line text editor for a non-ADF text cell and commits / cancels
@@ -673,19 +711,16 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
                                                         "Value too long to edit inline — the change will not be "
                                                         "saved (it would truncate the field). Edit it elsewhere."));
     }
-    if (escapePressed) {
-        state.ClearEditing(); // cancel — never PUT
-    } else if (!loadedTruncated &&
-               ShouldCommitInlineFieldEdit(explicitSubmit, deactivated, kMobileInlineEditBuild, valueChanged)) {
-        QueueEdit(ticket.id, field, {state.EditBuffer}, pendingEdits, originalValue);
-        state.ClearEditing();
-        state.PendingEditExit = exitAfter;
-    } else if (ShouldEndInlineEdit(escapePressed, explicitSubmit, deactivated)) {
-        state.ClearEditing(); // ended without a PUT (unchanged value, a too-long value, or mobile focus-loss)
-        state.PendingEditExit = exitAfter;
-    } else if (editJustStarted) {
-        state.EditJustStarted = false;
-    }
+    InlineEditEnd end;
+    end.ExplicitSubmit = explicitSubmit;
+    end.Deactivated = deactivated;
+    end.ValueChanged = valueChanged;
+    end.Escape = escapePressed;
+    end.LoadedTruncated = loadedTruncated;
+    end.ApplyToSelection = explicitSubmit && !tabPressed && ImGuiEffectiveKeyCtrl();
+    end.JustStarted = editJustStarted;
+    end.ExitAfter = exitAfter;
+    ConcludeInlineEdit(ticket.id, field, state, pendingEdits, originalValue, end);
 }
 
 // Draws the hover preview tooltip for a display-mode text cell. Description-like fields render

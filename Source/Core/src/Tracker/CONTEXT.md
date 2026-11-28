@@ -48,7 +48,7 @@ A read-only backend (`GitHubFixtureBackend`, `PlaneFixtureBackend`) that loads c
 The canonical, opaque issue identifier carried across the backend virtuals, with a per-backend shape (Jira `PROJ-123`, Plane UUID, GitHub `owner/repo#N`); only the owning backend parses it.
 
 **Issue reference**:
-What a user types or pastes to name an issue: a key (`proj-12`), or a link with one in it (a Jira `/browse/PROJ-12` or `selectedIssue=` URL, a GitHub `/issues/12` or `/pull/12` URL, a Linear `/issue/ENG-123` URL). `TrackerParseExplain::ParseIssueReference` turns it into the **TrackerIssueKey** the owning backend already uses and does nothing else: it never asks whether the issue exists. Distinct from a **TrackerIssueKey**, which is already canonical and opaque.
+What a user types or pastes to name an issue: a key (`proj-12`, or a GitHub `owner/repo#12`), or a link with one in it. A key is read from a link only where a tracker puts one: a GitHub `github.com/<owner>/<repo>/issues/12`, `/pull/12` or `/pulls/12` URL (read as `owner/repo#12`; on github.com only these are read); a `selectedIssue=` query parameter (as on a Jira board); the path segment right after `/browse/`, `/issues/` or `/issue/` (Jira `/browse/PROJ-12` and `/issues/PROJ-12`, Linear `/issue/ENG-123/<slug>`, YouTrack); or the key that ends a Jira Service Management queue or portal link (`/servicedesk/projects/SD/queues/custom/1/SD-12`, `/servicedesk/customer/portal/2/SD-12`). A key-shaped segment anywhere else in a URL (a wiki page `Release-2`, a file `ADR-12`) is not read as a key: the link is rejected with `IssueRefNoKeyInUrl`, because a key read from it could become a ticket's parent in a write. `TrackerParseExplain::ParseIssueReference` turns the reference into the **TrackerIssueKey** the owning backend already uses and does nothing else: it never asks whether the issue exists. Distinct from a **TrackerIssueKey**, which is already canonical and opaque.
 
 **Parse message**:
 The closed set of reasons a typed value cannot be used (`TrackerParseExplain::ParseMessageId`), each with the part that is wrong (`Arg`, a byte span) and one localized sentence in `DescribeParseMessage` that says how to fix it. The parse-and-explain layer (durations, dates, issue references, site URLs, executable paths, query structure) returns a value plus its canonical text, or a **Parse message**; the inline error widget (`Ui/SmatchetInlineError.h`) is the only thing that draws one under a field.
@@ -99,10 +99,16 @@ The helper set that reads or rewrites the `project = …` clause of a JQL string
 The per-query-language autocomplete (`JqlSuggestEngine` for Jira JQL, `PlaneQuerySuggestEngine` for Plane filters) producing a `QuerySuggestBuild`.
 
 **GitHubQueryFromJql**:
-The translator that maps a JQL query into GitHub search qualifiers, since GitHub has no JQL.
+The translator that maps a JQL query into GitHub search qualifiers, since GitHub has no JQL. A GitHub or Linear (`LinearQueryFromJql`) view query is written as JQL, and only a translated subset of it reaches the tracker; the rest is dropped with a warning.
 
 **Key clause**:
-The per-language query clause naming explicit issue keys. Jira JQL (`key in (…)`) filters server-side; Plane (`key:PROJ-123`) and GitHub (`key = "owner/repo#N"`) filter client-side as a post-fetch step — the **only** clauses Plane evaluates locally (see Flagged ambiguities).
+The per-language query clause naming explicit issue keys. Jira JQL (`key in (…)`) filters server-side; Plane (`key:PROJ-123`) and GitHub (`key = "owner/repo#N"`) filter client-side as a post-fetch step — the **only** clauses Plane evaluates locally (see Flagged ambiguities). A Plane view query filters by key only.
+
+**Facet clause**:
+One condition of a view query on a field a filter chip can show (status, assignee, labels and a few more, per dialect), which the tracker applies as written: `query_facets::FacetClause`, with the canonical field id, the operator, the values and the span in the query. A condition the tracker drops, changes or applies in part is not a facet clause; it is kept byte for byte, and in a GitHub or Linear query it locks its field.
+
+**Chippable query**:
+A query whose top level is a list of clauses joined by `AND` (a trailing `ORDER BY` aside), so each clause can be read, added, replaced or removed on its own. A parenthesized group is one opaque clause in Jql and makes a GitHub or Linear query not chippable, as does a second clause on one field in Linear.
 
 ### Change monitoring
 

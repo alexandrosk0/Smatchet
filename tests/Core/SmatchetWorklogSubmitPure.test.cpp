@@ -5,15 +5,13 @@
 // through the production symbols in Ui/SmatchetWorklogSubmitPure.h — the same ones
 // TicketFieldEditor.cpp's HandleWorklogSave calls.
 //
-// The key decisions the worklog dialog shares with the other dialogs that hold typed text
-// (Ui/DialogKeysPure.h: Esc, the caret request, a dismissed popup coming back) are covered here too,
-// and so are the shared text field's rules (Ui/SmatchetInputPure.h: growth, trim, focus on appear,
-// how an edit ends, the multiline keys, the near-full counter). They live in this TU because a new
-// test file needs a tests/CMakeLists.txt edit, and that file is plan-locked by other branches; the
+// The shared text field's rules (Ui/SmatchetInputPure.h: growth, trim, focus on appear, how an edit
+// ends, the multiline keys, the near-full counter) are covered here too. They live in this TU because a
+// new test file needs a tests/CMakeLists.txt edit, and that file was plan-locked by other branches; the
 // move to tests/Core/SmatchetInputPure.test.cpp is owed (debt 2026-11-16-text-field-migration-blocked-surfaces).
+// The dialog key decisions (Ui/DialogKeysPure.h) are in tests/Core/DialogKeysPure.test.cpp.
 
 #include "StringUtil.h" // TrimCopyAsciiWhitespace: the trim the text field must agree with
-#include "Ui/DialogKeysPure.h"
 #include "Ui/SmatchetInputPure.h"
 #include "Ui/SmatchetWorklogSubmitPure.h"
 
@@ -23,11 +21,6 @@
 #include <set>
 #include <string>
 
-using smatchet::dialogkeys::CaretRequest;
-using smatchet::dialogkeys::DismissedPopupComesBack;
-using smatchet::dialogkeys::EscapeAction;
-using smatchet::dialogkeys::ResolveCaretRequest;
-using smatchet::dialogkeys::ResolveEscape;
 using smatchet::worklog::CanSubmitWorklog;
 using smatchet::worklog::ClearWorklogSubmitInFlight;
 using smatchet::worklog::MarkWorklogSubmitInFlight;
@@ -172,59 +165,6 @@ TEST_CASE("StalePostBackReleasesDialogSubmit frees a re-opened same-ticket dialo
     // Defensive: an empty post-back id never matches, even an uninitialised dialog id.
     CHECK_FALSE(StalePostBackReleasesDialogSubmit(true, "", ""));
     CHECK_FALSE(StalePostBackReleasesDialogSubmit(true, "PROJ-1", ""));
-}
-
-TEST_CASE("ResolveEscape ignores Esc that is not the dialog's") {
-    // Not pressed at all.
-    CHECK(ResolveEscape(false, true, true, true, true) == EscapeAction::None);
-    // A popup above the dialog (suggestions, date picker, templates) has the keyboard: the key is its.
-    CHECK(ResolveEscape(true, false, true, false, true) == EscapeAction::None);
-    CHECK(ResolveEscape(true, false, false, true, false) == EscapeAction::None);
-}
-
-TEST_CASE("ResolveEscape never cancels around typed text in one press") {
-    // Caret in a field, something typed: the first Esc only leaves the field.
-    CHECK(ResolveEscape(true, true, true, /*fieldActive=*/true, /*nothingTyped=*/false) == EscapeAction::LeaveField);
-    // Out of the field: the next Esc cancels.
-    CHECK(ResolveEscape(true, true, true, /*fieldActive=*/false, /*nothingTyped=*/false) == EscapeAction::Cancel);
-}
-
-TEST_CASE("ResolveEscape closes an untouched dialog on the first Esc") {
-    // The caret starts in Time spent, so an untouched dialog always has a field active.
-    CHECK(ResolveEscape(true, true, true, /*fieldActive=*/true, /*nothingTyped=*/true) == EscapeAction::Cancel);
-    CHECK(ResolveEscape(true, true, true, /*fieldActive=*/false, /*nothingTyped=*/true) == EscapeAction::Cancel);
-}
-
-TEST_CASE("ResolveEscape does not cancel on the Esc that closed a popup above the dialog") {
-    // The popup had the keyboard last frame and closed on this Esc; the dialog only just got it back.
-    CHECK(ResolveEscape(true, true, /*dialogOwnedKeyboardLastFrame=*/false, false, true) == EscapeAction::None);
-    CHECK(ResolveEscape(true, true, /*dialogOwnedKeyboardLastFrame=*/false, false, false) == EscapeAction::None);
-}
-
-TEST_CASE("ResolveCaretRequest waits out a held Enter and a drag, and is dropped under a popup") {
-    // Enter still held from the key that opened the dialog, or something being dragged: later.
-    CHECK(ResolveCaretRequest(/*enterHeld=*/true, false, true) == CaretRequest::Wait);
-    CHECK(ResolveCaretRequest(false, /*dragInProgress=*/true, true) == CaretRequest::Wait);
-    // Waiting comes first: a request made under a popup is not dropped while Enter is still down.
-    CHECK(ResolveCaretRequest(true, false, /*dialogOwnsKeyboard=*/false) == CaretRequest::Wait);
-    // The dialog has the keyboard: the caret goes into the field.
-    CHECK(ResolveCaretRequest(false, false, true) == CaretRequest::Take);
-    // A popup above the dialog has it: the request is forgotten, not kept for when the popup closes.
-    CHECK(ResolveCaretRequest(false, false, false) == CaretRequest::Drop);
-}
-
-TEST_CASE("DismissedPopupComesBack brings back typed text once, and does not loop") {
-    // Nothing typed: the dismissal stands.
-    CHECK_FALSE(DismissedPopupComesBack(/*hasUnsavedText=*/false, false, 100, -1, 2));
-    // Typed text, never brought back before: it comes back to ask.
-    CHECK(DismissedPopupComesBack(true, false, 100, /*lastReopenFrame=*/-1, 2));
-    // Already on its way back this frame: no second request.
-    CHECK_FALSE(DismissedPopupComesBack(true, /*comingBackNow=*/true, 100, -1, 2));
-    // Dismissed again within the settle window of the last return: something keeps closing it.
-    CHECK_FALSE(DismissedPopupComesBack(true, false, 100, 99, 2));
-    CHECK_FALSE(DismissedPopupComesBack(true, false, 100, 98, 2));
-    // Past the settle window, a new dismissal is the user again.
-    CHECK(DismissedPopupComesBack(true, false, 100, 97, 2));
 }
 
 TEST_CASE("ShouldRefocusTimeSpentAfterSaveKey puts the caret back only on a turned-down value") {
@@ -420,86 +360,6 @@ TEST_CASE("ShowCapacityCounter appears within a tenth of a fixed buffer's end") 
     const std::size_t huge = static_cast<std::size_t>(-1);
     CHECK_FALSE(ti::ShowCapacityCounter(0u, huge));
     CHECK(ti::ShowCapacityCounter(huge - 1u, huge));
-}
-
-// ---------------------------------------------------------------------------------------------------------
-// Confirm dialogs and the global-shortcut mute (input-ux-w2-dialog-contract; audit #86, #88). These are the
-// rules the shared footer in Ui/SmatchetDialogScope.h reads; kept beside the Wave 1 dialog-key cases above.
-// ---------------------------------------------------------------------------------------------------------
-
-using smatchet::dialogkeys::ConfirmDefault;
-using smatchet::dialogkeys::ConfirmPick;
-using smatchet::dialogkeys::GlobalShortcutAllowedUnderModal;
-using smatchet::dialogkeys::ResolveConfirmDefault;
-using smatchet::dialogkeys::ResolveConfirmEnter;
-
-TEST_CASE("ResolveConfirmDefault: a destructive or consent prompt defaults to the safe button") {
-    CHECK(ResolveConfirmDefault(true, false) == ConfirmDefault::Safe);
-    CHECK(ResolveConfirmDefault(false, true) == ConfirmDefault::Safe);
-    CHECK(ResolveConfirmDefault(true, true) == ConfirmDefault::Safe);
-}
-
-TEST_CASE("ResolveConfirmDefault: a non-destructive confirm defaults to its action") {
-    CHECK(ResolveConfirmDefault(false, false) == ConfirmDefault::Primary);
-}
-
-TEST_CASE("ResolveConfirmEnter: with no keyboard cursor on an item, Enter runs the default button") {
-    CHECK(ResolveConfirmEnter(true, true, true, false, ConfirmDefault::Safe) == ConfirmPick::Cancel);
-    CHECK(ResolveConfirmEnter(true, true, true, false, ConfirmDefault::Primary) == ConfirmPick::Primary);
-}
-
-TEST_CASE("ResolveConfirmEnter: Enter on a destructive confirm never runs the action by default") {
-    const ConfirmDefault def = ResolveConfirmDefault(true, false);
-    CHECK(ResolveConfirmEnter(true, true, true, false, def) != ConfirmPick::Primary);
-}
-
-TEST_CASE("ResolveConfirmEnter: an item under the visible keyboard cursor takes Enter itself") {
-    // ImGui activates that item and the footer reads the click, so the decision must not also pick.
-    CHECK(ResolveConfirmEnter(true, true, true, true, ConfirmDefault::Primary) == ConfirmPick::None);
-    CHECK(ResolveConfirmEnter(true, true, true, true, ConfirmDefault::Safe) == ConfirmPick::None);
-}
-
-TEST_CASE("ResolveConfirmEnter: nothing without Enter, or while a popup above the dialog has the keyboard") {
-    CHECK(ResolveConfirmEnter(false, true, true, false, ConfirmDefault::Primary) == ConfirmPick::None);
-    CHECK(ResolveConfirmEnter(true, false, true, false, ConfirmDefault::Primary) == ConfirmPick::None);
-    CHECK(ResolveConfirmEnter(true, false, true, false, ConfirmDefault::Safe) == ConfirmPick::None);
-}
-
-TEST_CASE("ResolveConfirmEnter: the Enter that opened the dialog does not also answer it") {
-    // The dialog opened this frame, so it did not hold the keyboard last frame.
-    CHECK(ResolveConfirmEnter(true, true, false, false, ConfirmDefault::Primary) == ConfirmPick::None);
-    CHECK(ResolveConfirmEnter(true, true, false, false, ConfirmDefault::Safe) == ConfirmPick::None);
-}
-
-TEST_CASE("GlobalShortcutAllowedUnderModal: zoom and fullscreen still run under a modal") {
-    CHECK(GlobalShortcutAllowedUnderModal("ui.zoom.in"));
-    CHECK(GlobalShortcutAllowedUnderModal("ui.zoom.out"));
-    CHECK(GlobalShortcutAllowedUnderModal("ui.zoom.reset"));
-    CHECK(GlobalShortcutAllowedUnderModal("app.fullscreen.toggle"));
-}
-
-TEST_CASE("GlobalShortcutAllowedUnderModal: the focus-scoped gesture commands still run under a modal") {
-    CHECK(GlobalShortcutAllowedUnderModal("ui.list.move_up"));
-    CHECK(GlobalShortcutAllowedUnderModal("ui.list.remove"));
-    CHECK(GlobalShortcutAllowedUnderModal("ui.splitter.grow"));
-    CHECK_FALSE(GlobalShortcutAllowedUnderModal("view.panel.grow")); // names a panel: not what a dialog serves
-    CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.listing.other"));
-    CHECK_FALSE(GlobalShortcutAllowedUnderModal(nullptr));
-}
-
-TEST_CASE("GlobalShortcutAllowedUnderModal: everything that changes state is muted, the palette too") {
-    CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.command_palette"));
-    CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.preferences.toggle"));
-    CHECK_FALSE(GlobalShortcutAllowedUnderModal("view.delete"));
-    CHECK_FALSE(GlobalShortcutAllowedUnderModal("grid.search.focus"));
-    CHECK_FALSE(GlobalShortcutAllowedUnderModal(""));
-    CHECK_FALSE(GlobalShortcutAllowedUnderModal(nullptr));
-}
-
-TEST_CASE("GlobalShortcutAllowedUnderModal: the zoom match needs the whole 'ui.zoom.' segment") {
-    CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.zoom"));
-    CHECK_FALSE(GlobalShortcutAllowedUnderModal("ui.zoomer.in"));
-    CHECK_FALSE(GlobalShortcutAllowedUnderModal("app.fullscreen.toggle.extra"));
 }
 
 TEST_CASE("WorklogRemainingDraftText: a Time remaining is kept only while the user edited it") {

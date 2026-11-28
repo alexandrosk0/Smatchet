@@ -229,6 +229,24 @@ TEST_CASE("BeforeValuesFor resolves a choice display value to its option id and 
           std::vector<std::string>{"ui", "backend"});
 }
 
+TEST_CASE("A free value (an Unsupported kind) is written and compared as the text itself") {
+    TrackerField summary;
+    summary.Id = "summary";
+    summary.Family = TrackerFieldFamily::Text;
+    const BulkFieldKind kind = ClassifyBulkField(summary);
+    REQUIRE(kind == BulkFieldKind::Unsupported);
+    CHECK(BeforeValuesFor(summary, kind, "a, b") == std::vector<std::string>{"a, b"});
+    CHECK(BeforeValuesFor(summary, kind, "").empty());
+    // The pasted or typed text is what gets written, an empty text (a clear) included.
+    CHECK(NewValuesForRow(kind, BulkMode::Replace, {"old"}, {"new"}) == std::vector<std::string>{"new"});
+    CHECK(NewValuesForRow(kind, BulkMode::Replace, {"old"}, {""}) == std::vector<std::string>{""});
+    CHECK(IsRowUnchanged(kind, {"same"}, {"same"}));
+    CHECK_FALSE(IsRowUnchanged(kind, {"same"}, {"Same"}));
+    // No value and one empty value are the same cleared cell.
+    CHECK(IsRowUnchanged(kind, {}, {""}));
+    CHECK_FALSE(IsRowUnchanged(kind, {"x"}, {""}));
+}
+
 TEST_CASE("NewValuesForRow keeps the pick for a single choice and merges a multi value") {
     const std::vector<std::string> before = {"a", "b"};
     CHECK(NewValuesForRow(BulkFieldKind::SingleChoice, BulkMode::Add, before, {"z"}) == std::vector<std::string>{"z"});

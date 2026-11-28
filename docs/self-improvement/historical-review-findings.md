@@ -80,7 +80,7 @@ All `userVisible: false`. One row per file; the problem and fix for each are in 
 - `docs/plans/active/input-ux-w3-attachments-drop-paste.md` — 3 LOW — #2466:14 (F78), #2466:22 (F79), #2466:392 (F80)
 - `docs/plans/active/input-ux-w3-description-templates.md` — 1 LOW — #2464:89 (F75)
 - `docs/plans/active/input-ux-w3-filter-without-jql.md` — 2 LOW — #2465:288 (F76), #2465:481 (F77)
-- `docs/plans/active/input-ux-w3-grid-spreadsheet.md` — 2 LOW — #2461:5 (F71), #2461:16 (F72)
+- `docs/plans/input-ux-w3-grid-spreadsheet.md` — 2 LOW — #2461:5 (F71), #2461:16 (F72)
 - `docs/plans/active/left-view-history-grid.md` — 3 LOW — #2407:5 (F23), #2407:35 (F24), #2407:73 (F25)
 - `docs/plans/active/llm-verifier-sidecar.md` — 1 LOW — #2385:23 (F14)
 - `docs/plans/shipped/input-ux-w2-action-keys.md` — 1 LOW — #2463:198 (F73)

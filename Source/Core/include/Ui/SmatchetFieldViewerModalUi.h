@@ -26,9 +26,6 @@ class IFieldViewerContent {
     virtual const char* DiscardConfirmText() const { return ""; }
     virtual const char* DiscardButtonLabel() const { return ""; }
     virtual const char* KeepButtonLabel() const { return ""; }
-    /// Polled by the shell once per frame after `DrawBody`. Returning true asks to close the viewer
-    /// exactly as the Close button does, so unsaved input still gets the discard confirm.
-    virtual bool ConsumeCloseRequest() { return false; }
     /// Called by the shell when the user picks the discard button of the confirm, just before OnClose().
     /// A close the user did not choose to discard (the Close row with nothing typed, a replace by another
     /// viewer, shutdown) never reaches it, so a draft kept for the next open is erased only here.

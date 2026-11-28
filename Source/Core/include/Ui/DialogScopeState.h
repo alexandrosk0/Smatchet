@@ -14,6 +14,9 @@ struct DialogScopeState {
     bool FocusPending = false;           ///< the opening focus has not been placed yet
     bool OwnedKeyboardLastFrame = false; ///< for ResolveEscape: the Esc that closed a popup above stays there
     bool FieldActiveLastFrame = false;   ///< a field of the dialog held the caret at the end of last frame
+    /// The one item that counts as "being typed in" (an ImGuiID; 0 = any field of the dialog). Set by
+    /// DialogReadKeys. A dialog with read-only panes that can hold the active item names its editable field.
+    unsigned int TypingField = 0;
 };
 
 } // namespace ui

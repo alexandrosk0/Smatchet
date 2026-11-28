@@ -10,10 +10,10 @@
 #include "SmatchetToast.h"
 #include "StringUtil.h"
 #include "SmatchetUiSession.h"
-#include "TicketGridSortPure.h"     // IsTrackerDateOrDateTimeField
-#include "TrackerFieldValueUtils.h" // IsTimeDurationField
+#include "TicketGridSortPure.h" // IsTrackerDateOrDateTimeField
 #include "TrackerHttpUtils.h"
 #include "Ui/BulkFieldEditPure.h"
+#include "Ui/GridPastePure.h" // IsFreeValueField
 #include "UiPerfMonitor.h"
 
 #include "imgui.h"
@@ -52,7 +52,7 @@ void PushUnlessBulk(bool bulkRow, const std::string& title, const std::string& m
     }
 }
 
-// --- Grid undo (docs/plans/active/input-ux-w3-grid-spreadsheet.md, slice S3) ---
+// --- Grid undo (docs/plans/shipped/input-ux-w3-grid-spreadsheet.md, slice S3) ---
 // Every grid write is recorded in `UiDrawSession::gridUndo` when it is enqueued, the commit result marks the change
 // landed or failed, and an undo queues the inverse edit through the same pipeline.
 
@@ -133,15 +133,6 @@ std::vector<std::string> UndoBeforeValues(const TrackerField& field, const std::
     return smatchet::grid::bulk::BeforeValuesFor(field, kind, display);
 }
 
-// A free value: text, number or duration with no option list, so the displayed text is what its editor writes.
-bool IsFreeValueField(const TrackerField& field) {
-    if (!field.AllowedValueOptions.empty()) {
-        return false;
-    }
-    return field.Family == TrackerFieldFamily::Text || field.Family == TrackerFieldFamily::Number ||
-           TrackerFieldValueUtils::IsTimeDurationField(field.Id);
-}
-
 // Which single edits the history records: a scalar write with a captured base, made in a pane, that is not itself an
 // undo or a bulk row (a bulk job records one entry for all its rows). Dates are left out (their display form is not
 // the form the editor writes). A field of an Unsupported kind is recorded only when it is a free value (text, number,
@@ -156,7 +147,7 @@ bool IsRecordable(const PendingFieldEdit& edit) {
         return false;
     }
     return smatchet::grid::bulk::ClassifyBulkField(edit.Field) != smatchet::grid::bulk::BulkFieldKind::Unsupported ||
-           IsFreeValueField(edit.Field);
+           smatchet::grid::paste::IsFreeValueField(edit.Field);
 }
 
 // Pushes the history entry of each recordable edit and stamps its id on the edit.
@@ -863,9 +854,61 @@ std::vector<BulkRowInput> SharedRowInputs(const std::vector<std::string>& issueI
     return inputs;
 }
 
+// One history entry for the whole job: each row that is sent is one change, and every row's edit points at the entry
+// so its commit result lands on it. Dates are left out, as for a single edit (IsRecordable).
+void RecordBulkUndoEntry(AppController& app, UiDrawSession& d, BulkFieldEditJob& job, const PendingActionTarget& target,
+                         const std::vector<std::vector<std::string>>& rowValues, std::vector<PendingFieldEdit>& edits) {
+    if (IsTrackerDateOrDateTimeField(job.Field.Id, &job.Field)) {
+        return;
+    }
+    smatchet::grid::undo::Entry entry;
+    entry.PaneId = job.PaneId;
+    entry.BulkJobId = job.Id;
+    for (std::size_t i = 0; i < job.Rows.size(); ++i) {
+        if (job.Rows[i].State != BulkRowState::Pending) {
+            continue;
+        }
+        smatchet::grid::undo::CellChange change;
+        change.IssueId = job.Rows[i].IssueId;
+        change.FieldId = job.Field.Id;
+        change.Before = UndoBeforeValues(job.Field, job.Rows[i].BeforeValue); // an empty text restores as ""
+        change.After = rowValues[i];
+        change.BeforeDisplay = job.Rows[i].BeforeValue;
+        entry.Changes.push_back(std::move(change));
+    }
+    const std::uint64_t entryId = d.gridUndo.Push(std::move(entry));
+    GridUndoContext context;
+    context.Target = target;
+    context.Field = job.Field;
+    context.App = &app;
+    d.gridUndoContext[entryId] = std::move(context);
+    job.UndoEntryId = entryId;
+    for (PendingFieldEdit& edit : edits) {
+        edit.UndoEntryId = entryId;
+    }
+    PruneUndoContext(d);
+}
+
+// Keeps a whole-row selection by issue id while the job's rows land: the first landed edit bumps the snapshot
+// revision, which moves the sort-order row indices (SmatchetActiveProjectGridTable.cpp remaps them from these ids).
+// With no rows selected (a cell range, one cell) nothing is added.
+void KeepJobSelection(UiDrawSession& d, const std::string& paneId, const std::vector<BulkRowInput>& inputs) {
+    GridPane* pane = FindGridPaneById(d.gridPanes, paneId);
+    if (pane == nullptr || pane->gridState.RectSel.Rows.empty()) {
+        return;
+    }
+    GridRectSelection& sel = pane->gridState.RectSel;
+    sel.KeepIssueIds.clear();
+    for (const BulkRowInput& input : inputs) {
+        sel.KeepIssueIds.insert(input.IssueId);
+    }
+    sel.KeepRows = sel.Rows;
+}
+
+// `sharedSelection`: the shared-value form, whose rows are the selection it was started from.
 std::uint64_t StartJobCore(AppController& app, UiDrawSession& d, const std::string& paneId, const TrackerField& field,
                            const std::vector<BulkRowInput>& inputs, const std::vector<std::string>& sharedValues,
-                           smatchet::grid::bulk::BulkMode mode, bool readOnlyMode, bool isUndo) {
+                           smatchet::grid::bulk::BulkMode mode, bool readOnlyMode, bool isUndo, bool sharedSelection) {
     const std::string fieldName = field.Name.empty() ? field.Id : field.Name;
     const std::string title = SmatchetLocalization::Format("grid.bulk.done_title", "Bulk edit: %s", fieldName.c_str());
     if (readOnlyMode) {
@@ -923,46 +966,11 @@ std::uint64_t StartJobCore(AppController& app, UiDrawSession& d, const std::stri
         edits.push_back(std::move(edit));
     }
 
-    // One history entry for the whole job (an undo's own job records none): each row that is sent is one change, and
-    // every row's edit points at the entry so its commit result lands on it.
-    if (!isUndo) {
-        smatchet::grid::undo::Entry entry;
-        entry.PaneId = paneId;
-        entry.BulkJobId = job.Id;
-        for (std::size_t i = 0; i < job.Rows.size(); ++i) {
-            if (job.Rows[i].State != BulkRowState::Pending) {
-                continue;
-            }
-            smatchet::grid::undo::CellChange change;
-            change.IssueId = job.Rows[i].IssueId;
-            change.FieldId = field.Id;
-            change.Before = job.Rows[i].BeforeValues;
-            change.After = rowValues[i];
-            change.BeforeDisplay = job.Rows[i].BeforeValue;
-            entry.Changes.push_back(std::move(change));
-        }
-        const std::uint64_t entryId = d.gridUndo.Push(std::move(entry));
-        GridUndoContext context;
-        context.Target = target;
-        context.Field = field;
-        context.App = &app;
-        d.gridUndoContext[entryId] = std::move(context);
-        job.UndoEntryId = entryId;
-        for (PendingFieldEdit& edit : edits) {
-            edit.UndoEntryId = entryId;
-        }
-        PruneUndoContext(d);
+    if (!isUndo) { // an undo's own job records no history
+        RecordBulkUndoEntry(app, d, job, target, rowValues, edits);
     }
-
-    // Keep the selection by issue id: the first landed edit bumps the snapshot revision, which clears the
-    // sort-order row selection (SmatchetActiveProjectGridTable.cpp rebuilds it from these ids).
-    if (GridPane* pane = FindGridPaneById(d.gridPanes, paneId)) {
-        GridRectSelection& sel = pane->gridState.RectSel;
-        sel.KeepIssueIds.clear();
-        for (const BulkRowInput& input : inputs) {
-            sel.KeepIssueIds.insert(input.IssueId);
-        }
-        sel.KeepRows = sel.Rows;
+    if (sharedSelection) {
+        KeepJobSelection(d, paneId, inputs);
     }
 
     const std::uint64_t jobId = job.Id;
@@ -982,14 +990,15 @@ std::uint64_t StartBulkFieldEdit(AppController& app, UiDrawSession& d, const std
                                  const TrackerField& field, const std::vector<std::string>& issueIds,
                                  const std::vector<std::string>& values, smatchet::grid::bulk::BulkMode mode,
                                  bool readOnlyMode) {
-    return StartJobCore(app, d, paneId, field, SharedRowInputs(issueIds, values), values, mode, readOnlyMode, false);
+    return StartJobCore(app, d, paneId, field, SharedRowInputs(issueIds, values), values, mode, readOnlyMode, false,
+                        true);
 }
 
 std::uint64_t StartBulkFieldEdit(AppController& app, UiDrawSession& d, const std::string& paneId,
                                  const TrackerField& field, const std::vector<smatchet::grid::bulk::BulkRowInput>& rows,
                                  bool readOnlyMode, bool isUndo) {
     return StartJobCore(app, d, paneId, field, rows, std::vector<std::string>(),
-                        smatchet::grid::bulk::BulkMode::Replace, readOnlyMode, isUndo);
+                        smatchet::grid::bulk::BulkMode::Replace, readOnlyMode, isUndo, false);
 }
 
 smatchet::grid::bulk::BulkFieldEditJob
@@ -1005,6 +1014,25 @@ PrepareBulkFieldEditJob(AppController& app, const std::string& paneId, const Tra
                         std::vector<std::vector<std::string>>* rowValues) {
     return PrepareJobCore(app, paneId, field, rows, std::vector<std::string>(), smatchet::grid::bulk::BulkMode::Replace,
                           rowValues);
+}
+
+bool QueueSingleCellFieldEdit(AppController& app, UiDrawSession& d, const std::string& paneId,
+                              const TrackerField& field, const smatchet::grid::bulk::BulkRowInput& row,
+                              bool readOnlyMode) {
+    std::vector<std::vector<std::string>> rowValues;
+    const BulkFieldEditJob job =
+        PrepareBulkFieldEditJob(app, paneId, field, std::vector<BulkRowInput>{row}, &rowValues);
+    if (job.Rows.size() != 1 || rowValues.size() != 1 || job.Rows.front().State != BulkRowState::Pending) {
+        return false;
+    }
+    PendingFieldEdit edit;
+    edit.IssueId = job.Rows.front().IssueId;
+    edit.Field = field;
+    edit.Values = rowValues.front();
+    smatchet::grid::bulk::CaptureScalarBase(job.Rows.front().BeforeValue, edit);
+    edit.Target = app.LatchPendingActionTargetForPane(paneId);
+    EnqueueGridFieldEdits(d, std::vector<PendingFieldEdit>{edit}, readOnlyMode);
+    return true;
 }
 
 void FoldBulkRowResult(UiDrawSession& d, std::uint64_t jobId, const std::string& issueId,

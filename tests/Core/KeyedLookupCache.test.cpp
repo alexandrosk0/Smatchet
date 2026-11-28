@@ -305,6 +305,83 @@ TEST_SUITE("StoreLoadLatch") {
         latch.ClearBackoff();
         CHECK(latch.TryClaim("Jira", Clock::now()));
     }
+
+    TEST_CASE("LoadSavedRowsOnce: a task the launcher destroys unrun releases the claim with a backoff") {
+        // AppController::LaunchBackgroundTask returns without a thread once shutdown has begun; the claim
+        // must not stay held for good.
+        struct DroppingDeps : FakeRowsDeps {
+            void LaunchBackgroundTask(std::function<void()> /*task*/) { /* destroyed unrun */ }
+        };
+        DroppingDeps deps;
+        deps.Store = std::make_shared<FakeRowsStore>();
+        StoreLoadLatch latch(30);
+        int applied = 0;
+        const auto apply = [&applied](const std::string&, const std::vector<std::string>&) { ++applied; };
+
+        CHECK(LoadSavedRowsOnce(deps, latch, "Jira", "kind", "test rows", apply));
+        CHECK(applied == 0);
+        CHECK(deps.Store->Reads == 0);
+        // Released, backing off (not stuck claimed): a later call after the backoff loads for real.
+        CHECK_FALSE(latch.TryClaim("Jira", Clock::now()));
+        latch.ClearBackoff();
+        FakeRowsDeps live;
+        live.Store = deps.Store;
+        CHECK(LoadSavedRowsOnce(live, latch, "Jira", "kind", "test rows", apply));
+        CHECK(applied == 1);
+    }
+
+    TEST_CASE("LoadSavedRowsOnce: a task that runs after its claim was released loads nothing") {
+        struct StashingDeps : FakeRowsDeps {
+            std::function<void()> Stashed;
+            void LaunchBackgroundTask(std::function<void()> task) {
+                Stashed = std::move(task);
+                throw std::runtime_error("launch failed after queueing");
+            }
+        };
+        StashingDeps deps;
+        deps.Store = std::make_shared<FakeRowsStore>();
+        StoreLoadLatch latch(30);
+        int applied = 0;
+        const auto apply = [&applied](const std::string&, const std::vector<std::string>&) { ++applied; };
+
+        CHECK_FALSE(LoadSavedRowsOnce(deps, latch, "Jira", "kind", "test rows", apply));
+        REQUIRE(deps.Stashed);
+        deps.Stashed(); // runs late: the throw already released the claim, so the body is skipped
+        CHECK(applied == 0);
+        CHECK(deps.Store->Reads == 0);
+    }
+
+    TEST_CASE("LoadSavedRowsOnce: a failure is released once; a throw after the body ran never frees a newer claim") {
+        // The load runs inline and fails (its own release), then the launcher itself throws, as a thread
+        // pool wrapper might. Meanwhile a newer caller claimed the key. A second release would free that
+        // caller's claim and let a duplicate load start.
+        struct RunThenThrowDeps : FakeRowsDeps {
+            StoreLoadLatch* Latch = nullptr;
+            bool Reclaimed = false;
+            void LaunchBackgroundTask(std::function<void()> task) {
+                try {
+                    task();
+                } catch (const std::exception&) {
+                    ++Contained;
+                }
+                Latch->ClearBackoff();
+                Reclaimed = Latch->TryClaim("Jira", Clock::now()); // the newer caller's claim
+                throw std::runtime_error("launcher threw after the body ran");
+            }
+        };
+        RunThenThrowDeps deps;
+        deps.Store = std::make_shared<FakeRowsStore>();
+        deps.Store->FailNextRead = true;
+        StoreLoadLatch latch(30);
+        deps.Latch = &latch;
+
+        CHECK_FALSE(LoadSavedRowsOnce(deps, latch, "Jira", "kind", "test rows",
+                                      [](const std::string&, const std::vector<std::string>&) {}));
+        CHECK(deps.Reclaimed);
+        CHECK(deps.Contained == 1);
+        latch.ClearBackoff();
+        CHECK_FALSE(latch.TryClaim("Jira", Clock::now())); // still the newer caller's: not released again
+    }
 } // TEST_SUITE
 
 TEST_CASE("KeyedLookupCache: CompleteFromSaved holds a saved copy, defers the refetch to its expiry, and ClearBackoff "
@@ -337,3 +414,297 @@ TEST_CASE("KeyedLookupCache: CompleteFromSaved holds a saved copy, defers the re
     CHECK(cache.TryBeginFetch("k", TrackerConnectivityState::AuthenticatedReachable, t0 + std::chrono::seconds(200),
                               again));
 }
+
+namespace {
+
+constexpr TrackerConnectivityState kUp = TrackerConnectivityState::AuthenticatedReachable;
+
+// Records a Live value for `key` at `at`.
+void MakeLive(KeyedLookupCache<int>& cache, const std::string& key, int value, Clock::time_point at) {
+    KeyedLookupCache<int>::Ticket t;
+    REQUIRE(cache.TryBeginFetch(key, kUp, at, t));
+    cache.CompleteSuccess(t, value, at);
+}
+
+} // namespace
+
+TEST_SUITE("KeyedLookupCache admission") {
+
+    TEST_CASE("the default admission never refetches a Live value, however old") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        MakeLive(cache, "k", 1, t0);
+        KeyedLookupCache<int>::Ticket t;
+        CHECK_FALSE(cache.TryBeginFetch("k", kUp, t0 + std::chrono::hours(1000), t));
+        CHECK_FALSE(cache.TryBeginFetch("k", kUp, t0 + std::chrono::hours(1000), t, FetchAdmission()));
+        CHECK(cache.IsCurrent("k", t0 + std::chrono::hours(1000), FetchAdmission()));
+    }
+
+    TEST_CASE("a refused TryBeginFetch creates no entry") {
+        KeyedLookupCache<int> cache;
+        KeyedLookupCache<int>::Ticket t;
+        CHECK_FALSE(cache.TryBeginFetch("k", TrackerConnectivityState::TransportDown, Clock::now(), t));
+        CHECK(cache.Size() == 0);
+        CHECK(cache.TryBeginFetch("k", kUp, Clock::now(), t));
+        CHECK(cache.Size() == 1);
+    }
+
+    TEST_CASE("LiveMaxAge admits a Live value exactly at its age limit and not before") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        MakeLive(cache, "k", 1, t0);
+        FetchAdmission admit;
+        admit.LiveMaxAge = std::chrono::seconds(100);
+
+        KeyedLookupCache<int>::Ticket t;
+        CHECK(cache.IsCurrent("k", t0 + std::chrono::seconds(99), admit));
+        CHECK_FALSE(cache.TryBeginFetch("k", kUp, t0 + std::chrono::seconds(99), t, admit));
+        CHECK_FALSE(cache.IsCurrent("k", t0 + std::chrono::seconds(100), admit));
+        REQUIRE(cache.TryBeginFetch("k", kUp, t0 + std::chrono::seconds(100), t, admit));
+        CHECK(t.WasLive);
+    }
+
+    TEST_CASE("a zero or negative LiveMaxAge disables the age limit") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        MakeLive(cache, "k", 1, t0);
+        FetchAdmission admit;
+        admit.LiveMaxAge = std::chrono::seconds(-5);
+        KeyedLookupCache<int>::Ticket t;
+        CHECK(cache.IsCurrent("k", t0 + std::chrono::hours(5), admit));
+        CHECK_FALSE(cache.TryBeginFetch("k", kUp, t0 + std::chrono::hours(5), t, admit));
+    }
+
+    TEST_CASE("a revalidation keeps the Live value, reads Refreshing, and a success restamps its age") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        MakeLive(cache, "k", 1, t0);
+        FetchAdmission admit;
+        admit.LiveMaxAge = std::chrono::seconds(100);
+
+        const auto t1 = t0 + std::chrono::seconds(150);
+        KeyedLookupCache<int>::Ticket t;
+        REQUIRE(cache.TryBeginFetch("k", kUp, t1, t, admit));
+        KeyedLookupCache<int>::Entry e = cache.Get("k");
+        CHECK(e.HasValue);
+        CHECK(e.Live);
+        CHECK(e.InFlight);
+        CHECK(e.Payload == 1);
+        CHECK(cache.Freshness("k", kUp) == DataFreshness::Refreshing);
+        // one winner: nothing else starts while it runs
+        KeyedLookupCache<int>::Ticket other;
+        CHECK_FALSE(cache.TryBeginFetch("k", kUp, t1, other, admit));
+
+        cache.CompleteSuccess(t, 2, t1);
+        e = cache.Get("k");
+        CHECK(e.Payload == 2);
+        CHECK(e.Live);
+        CHECK_FALSE(e.InFlight);
+        CHECK(cache.IsCurrent("k", t1 + std::chrono::seconds(99), admit));
+        CHECK_FALSE(cache.IsCurrent("k", t1 + std::chrono::seconds(100), admit));
+    }
+
+    TEST_CASE("a failed revalidation keeps the value and reads CachedStale, then backs off") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        MakeLive(cache, "k", 1, t0);
+        FetchAdmission admit;
+        admit.Revalidate = true;
+
+        KeyedLookupCache<int>::Ticket t;
+        REQUIRE(cache.TryBeginFetch("k", kUp, t0, t, admit));
+        cache.CompleteFailure(t, TrackerErrorServer("boom", 500), t0);
+
+        const KeyedLookupCache<int>::Entry e = cache.Get("k");
+        CHECK(e.HasValue);
+        CHECK(e.Live);
+        CHECK(e.LastAttemptFailed);
+        CHECK(e.Payload == 1);
+        CHECK(cache.Freshness("k", kUp) == DataFreshness::CachedStale);
+        CHECK_FALSE(cache.IsCurrent("k", t0, FetchAdmission()));
+
+        KeyedLookupCache<int>::Ticket again;
+        CHECK_FALSE(cache.TryBeginFetch("k", kUp, t0 + std::chrono::seconds(29), again, admit));
+        CHECK(cache.TryBeginFetch("k", kUp, t0 + std::chrono::seconds(30), again, admit));
+    }
+
+    TEST_CASE("Revalidate admits a Live value but still waits for connectivity, backoff and in-flight") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        MakeLive(cache, "k", 1, t0);
+        FetchAdmission admit;
+        admit.Revalidate = true;
+        KeyedLookupCache<int>::Ticket t;
+
+        CHECK_FALSE(cache.IsCurrent("k", t0, admit));
+        CHECK_FALSE(cache.TryBeginFetch("k", TrackerConnectivityState::TransportDown, t0, t, admit));
+        CHECK(cache.Get("k").Live);
+        REQUIRE(cache.TryBeginFetch("k", kUp, t0, t, admit));
+        KeyedLookupCache<int>::Ticket second;
+        CHECK_FALSE(cache.TryBeginFetch("k", kUp, t0, second, admit));
+        cache.CompleteFailure(t, TrackerErrorServer("boom", 500), t0);
+        CHECK_FALSE(cache.TryBeginFetch("k", kUp, t0 + std::chrono::seconds(1), second, admit));
+        cache.ClearBackoff("k");
+        CHECK(cache.TryBeginFetch("k", kUp, t0 + std::chrono::seconds(1), second, admit));
+    }
+
+    TEST_CASE("a ticket for a value that was not Live reports WasLive false") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        KeyedLookupCache<int>::Ticket t;
+        REQUIRE(cache.TryBeginFetch("fresh", kUp, t0, t));
+        CHECK_FALSE(t.WasLive);
+        cache.SeedFromStore("seeded", 5);
+        REQUIRE(cache.TryBeginFetch("seeded", kUp, t0, t));
+        CHECK_FALSE(t.WasLive);
+    }
+
+    TEST_CASE("the stale predicate admits a Live value and sees its payload") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        MakeLive(cache, "k", 7, t0);
+        KeyedLookupCache<int>::Ticket t;
+        int seen = 0;
+        CHECK_FALSE(cache.TryBeginFetchIf("k", kUp, t0, t, FetchAdmission(), [&seen](const int& v) {
+            seen = v;
+            return false;
+        }));
+        CHECK(seen == 7);
+        CHECK(cache.TryBeginFetchIf("k", kUp, t0, t, FetchAdmission(), [](const int& v) { return v == 7; }));
+        CHECK(t.WasLive);
+        // the predicate is not consulted for a key that is not Live
+        KeyedLookupCache<int> empty;
+        bool called = false;
+        CHECK(empty.TryBeginFetchIf("x", kUp, t0, t, FetchAdmission(), [&called](const int&) {
+            called = true;
+            return true;
+        }));
+        CHECK_FALSE(called);
+    }
+
+    TEST_CASE("Invalidate during a revalidation drops its result and the next fetch starts clean") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        MakeLive(cache, "k", 1, t0);
+        FetchAdmission admit;
+        admit.Revalidate = true;
+        KeyedLookupCache<int>::Ticket t;
+        REQUIRE(cache.TryBeginFetch("k", kUp, t0, t, admit));
+        cache.Invalidate("k");
+        cache.CompleteSuccess(t, 99, t0);
+        CHECK_FALSE(cache.Get("k").HasValue);
+        KeyedLookupCache<int>::Ticket next;
+        REQUIRE(cache.TryBeginFetch("k", kUp, t0, next));
+        CHECK_FALSE(next.WasLive);
+    }
+
+    TEST_CASE("CompleteFromSaved clears the live stamp: the copy is never current") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        KeyedLookupCache<int>::Ticket t;
+        REQUIRE(cache.TryBeginFetch("k", kUp, t0, t));
+        cache.CompleteFromSaved(t, 3, t0 + std::chrono::seconds(10));
+        CHECK_FALSE(cache.IsCurrent("k", t0, FetchAdmission()));
+    }
+
+    TEST_CASE("RetainIf drops rejected entries and empty ones, and never an in-flight one") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        MakeLive(cache, "keep", 1, t0);
+        MakeLive(cache, "drop", 2, t0);
+        cache.SeedFromStore("seeded-drop", 3);
+        KeyedLookupCache<int>::Ticket failed;
+        REQUIRE(cache.TryBeginFetch("empty-failed", kUp, t0, failed));
+        cache.CompleteFailure(failed, TrackerErrorServer("boom", 500), t0); // no value, not in flight, backing off
+        KeyedLookupCache<int>::Ticket inflight;
+        REQUIRE(cache.TryBeginFetch("inflight", kUp, t0, inflight));
+        KeyedLookupCache<int>::Ticket revalidating;
+        MakeLive(cache, "inflight-live", 4, t0);
+        FetchAdmission admit;
+        admit.Revalidate = true;
+        REQUIRE(cache.TryBeginFetch("inflight-live", kUp, t0, revalidating, admit));
+        REQUIRE(cache.Size() == 6);
+
+        const auto keepOnlyKeep = [](const std::string& key, const KeyedLookupCache<int>::Entry& e) {
+            return key == "keep" && e.Payload == 1;
+        };
+        // While its backoff runs the empty failure record stays: it is what refuses the next fetch.
+        CHECK(cache.RetainIf(t0 + std::chrono::seconds(29), keepOnlyKeep) == 2); // "drop", "seeded-drop"
+        CHECK(cache.Size() == 4);
+        KeyedLookupCache<int>::Ticket early;
+        CHECK_FALSE(cache.TryBeginFetch("empty-failed", kUp, t0 + std::chrono::seconds(29), early));
+        // Once the backoff has passed it is dropped.
+        const std::size_t erased = cache.RetainIf(t0 + std::chrono::seconds(30), keepOnlyKeep);
+
+        CHECK(erased == 1); // "empty-failed"
+        CHECK(cache.Size() == 3);
+        CHECK(cache.Get("keep").HasValue);
+        CHECK_FALSE(cache.Get("drop").HasValue);
+        CHECK(cache.Get("inflight").InFlight);
+        CHECK(cache.Get("inflight-live").InFlight);
+        // the in-flight fetches still complete into their entries
+        cache.CompleteSuccess(inflight, 10, t0);
+        cache.CompleteSuccess(revalidating, 40, t0);
+        CHECK(cache.Get("inflight").Payload == 10);
+        CHECK(cache.Get("inflight-live").Payload == 40);
+    }
+
+    TEST_CASE("RunKeyedFetch stamps the outcome with the clock it is given") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        KeyedLookupCache<int>::Ticket t;
+        REQUIRE(cache.TryBeginFetch("k", kUp, t0, t));
+        const auto fake = t0 + std::chrono::seconds(500);
+        RunKeyedFetch(cache, t, []() { return Result<int, TrackerError>::Ok(5); }, [fake]() { return fake; });
+        FetchAdmission admit;
+        admit.LiveMaxAge = std::chrono::seconds(100);
+        CHECK(cache.IsCurrent("k", fake + std::chrono::seconds(99), admit));
+        CHECK_FALSE(cache.IsCurrent("k", fake + std::chrono::seconds(100), admit));
+    }
+
+    TEST_CASE("RunKeyedFetch with a throwing fetch records the failure with the given clock and rethrows") {
+        KeyedLookupCache<int> cache;
+        const auto t0 = Clock::now();
+        KeyedLookupCache<int>::Ticket t;
+        REQUIRE(cache.TryBeginFetch("k", kUp, t0, t));
+        const auto fake = t0 + std::chrono::seconds(1000);
+        CHECK_THROWS_AS(RunKeyedFetch(
+                            cache, t, []() -> Result<int, TrackerError> { throw std::runtime_error("x"); },
+                            [fake]() { return fake; }),
+                        std::runtime_error);
+        KeyedLookupCache<int>::Ticket again;
+        CHECK_FALSE(cache.TryBeginFetch("k", kUp, fake + std::chrono::seconds(29), again));
+        CHECK(cache.TryBeginFetch("k", kUp, fake + std::chrono::seconds(30), again));
+    }
+
+    TEST_CASE("concurrent revalidation attempts admit exactly one winner") {
+        for (int round = 0; round < 50; ++round) {
+            KeyedLookupCache<int> cache;
+            const auto t0 = Clock::now();
+            MakeLive(cache, "k", 1, t0);
+            FetchAdmission admit;
+            admit.LiveMaxAge = std::chrono::seconds(10);
+            const auto later = t0 + std::chrono::seconds(60);
+            std::atomic<int> winners{0};
+            std::atomic<bool> go{false};
+            std::vector<std::thread> threads;
+            for (int i = 0; i < 4; ++i) {
+                threads.emplace_back([&]() {
+                    while (!go.load()) {
+                        std::this_thread::yield();
+                    }
+                    KeyedLookupCache<int>::Ticket t;
+                    if (cache.TryBeginFetch("k", kUp, later, t, admit)) {
+                        winners.fetch_add(1);
+                    }
+                });
+            }
+            go.store(true);
+            for (std::thread& th : threads) {
+                th.join();
+            }
+            CHECK(winners.load() == 1);
+        }
+    }
+
+} // TEST_SUITE

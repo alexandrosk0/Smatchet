@@ -166,6 +166,11 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueMappingPure.cpp"
         Core/LinearQueryFromJql.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearQueryFromJql.cpp"
+        # The clause editor behind the grid's facet chips (input UX Wave 3). It runs both subset
+        # translators, so the GitHub one rides along; GitHubClientHelpers.cpp is linked below.
+        Core/QueryFacetClausesPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/QueryFacetClausesPure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubQueryFromJql.cpp"
         Core/JiraErrorMessagePure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraErrorMessagePure.cpp"
         # multi-grid-tabs.md Slice 5a — pure hidden-pane LRU eviction decision
@@ -191,7 +196,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/MainThreadDispatcherConcurrent.test.cpp
         # Grid CSV/TSV copy helpers + the spreadsheet formula guard (#2337). Header-only and ImGui-free.
         Core/GridCopyPure.test.cpp
-        # Grid cell-cursor math: moves at the edges, Tab wrap, skip-read-only sweep, range extend (input UX Wave 3). Header-only.
+        # Grid cell-cursor math: moves at the edges, Tab wrap, skip-read-only sweep, range extend, paste plan (input UX Wave 3). Header-only.
         Core/GridCursorPure.test.cpp
         # Grid undo history (Ui/GridUndoPure.h): bounded stack, landed/failed settling, newest-take, inverse (input UX Wave 3). Header-only.
         Core/GridUndoPure.test.cpp
@@ -1344,6 +1349,10 @@ add_executable(SmatchetTests
     # PR5 of docs/design/github-tracker-backend.md — JQL → GitHub-search translator.
     Core/GitHubQueryFromJql.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubQueryFromJql.cpp"
+    # The clause editor behind the grid's facet chips (input UX Wave 3); both translators and
+    # TrackerQuerySuggestCommon.cpp are linked in this rig.
+    Core/QueryFacetClausesPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/QueryFacetClausesPure.cpp"
     # PR4 follow-up — pure helper ComputeGitHubFetchPlan deciding repo-scoped vs
     # cross-repo fetch + the empty-config fallback warning. Pure TU (no cpr).
     Core/GitHubFetchPlan.test.cpp
@@ -1756,6 +1765,11 @@ add_executable(SmatchetTests
     # TrackerLabelsPure (both already linked into SmatchetTests).
     Core/BulkFieldEditPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/BulkFieldEditPure.cpp"
+    # What one pasted grid cell writes (Ui/GridPastePure.h, input UX Wave 3): option lookup, date and duration
+    # reading, the exact dates of this app's own copy. ImGui-free; its deps (BulkFieldEditPure, the parse-explain
+    # and payload TUs, CompactDateFormatPure) are already linked into SmatchetTests.
+    Core/GridPastePure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/GridPastePure.cpp"
     # UX-critique triple-check — live-toast stack bound (SmatchetToastManager::Push evicts
     # oldest past MaxLiveToasts(); sticky error toasts never expire so the bound is load-
     # bearing). Push/LiveCount never touch ImGui; SmatchetToast.cpp already links here.

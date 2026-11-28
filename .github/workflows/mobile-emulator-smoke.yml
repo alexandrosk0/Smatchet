@@ -29,6 +29,7 @@ on:
       - "cmake/**"
       - ".github/workflows/mobile-emulator-smoke.yml"
       - ".github/scripts/mobile-emulator-smoke.sh"
+      - ".github/actions/apt-install/**"
   push:
     branches: [develop]
     paths:
@@ -38,6 +39,7 @@ on:
       - "cmake/**"
       - ".github/workflows/mobile-emulator-smoke.yml"
       - ".github/scripts/mobile-emulator-smoke.sh"
+      - ".github/actions/apt-install/**"
 
 concurrency:
   group: mobile-emulator-smoke-${{ github.ref }}
@@ -98,11 +100,9 @@ jobs:
           java-version: "17"
 
       - name: Install OpenSSL build prereqs + ninja
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y make perl ninja-build
+        uses: ./.github/actions/apt-install
+        with:
+          packages: make perl ninja-build
 
       - name: Install + pin Android NDK
         shell: bash

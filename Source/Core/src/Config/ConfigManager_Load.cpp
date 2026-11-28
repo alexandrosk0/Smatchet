@@ -25,6 +25,7 @@
 #include <iterator>
 #include <mutex>
 #include <string>
+#include <vector>
 
 using smatchet::config_detail::GetCachedConfigRef;
 using smatchet::config_detail::GetCacheMutexRef;
@@ -292,6 +293,58 @@ void MigrateBugReportHotkeyToKeybindings(const nlohmann::json& j, TrackerConfig&
     cfg.MigratedBugReportHotkeyV1 = true;
 }
 
+// Index of the first ENABLED binding that already holds `hotkey`, or -1. A disabled row dispatches
+// nothing, so it does not hold the chord (the editor's conflict check applies the same rule). Exact
+// spec compare: config stores the canonical StringifyImGuiHotkey spelling (the HasHotkey contract).
+// ImGui-free on purpose: this TU links into the TSan, Lua and fuzz rigs, which do not carry
+// Ui/ImGuiHotkey.cpp.
+int FindEnabledBindingHoldingHotkey(const KeybindingsConfig& kb, const std::string& hotkey) {
+    for (std::size_t i = 0; i < kb.Bindings.size(); ++i) {
+        if (kb.Bindings[i].Enabled && kb.Bindings[i].HasHotkey(hotkey)) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+// Appends to `row` each combo of `combos` that it does not already hold, except a combo an enabled
+// binding in `kb` already holds: dispatch fires every enabled binding that matches a key press, so
+// that combo would run both commands. Skipped combos are logged against `flag`. `row` may be an
+// element of kb.Bindings (the zoom widenings): its own combos are skipped before the lookup, and
+// only row.Hotkeys grows, never kb.Bindings. Returns the number of combos appended.
+int AppendDefaultCombosNotHeld(const KeybindingsConfig& kb, Keybinding& row, const std::vector<std::string>& combos,
+                               const char* flag) {
+    int appended = 0;
+    for (const std::string& hotkey : combos) {
+        if (row.HasHotkey(hotkey)) {
+            continue;
+        }
+        const int held = FindEnabledBindingHoldingHotkey(kb, hotkey);
+        if (held >= 0) {
+            LOG_INFO("ConfigManager: not seeding %s for \"%s\": the chord is already bound to \"%s\" (%s)",
+                     hotkey.c_str(), row.CommandId.c_str(),
+                     kb.Bindings[static_cast<std::size_t>(held)].CommandId.c_str(), flag);
+            continue;
+        }
+        if (row.AddHotkey(hotkey)) {
+            ++appended;
+        }
+    }
+    return appended;
+}
+
+// Seeds a copy of the default row `def` into `kb`, keeping only the combos no enabled binding already
+// holds. Adds nothing when every combo is taken. Returns true when a row was added.
+bool SeedDefaultRowSkippingHeldChords(KeybindingsConfig& kb, const Keybinding& def, const char* flag) {
+    Keybinding row = def;
+    row.Hotkeys.clear();
+    if (AppendDefaultCombosNotHeld(kb, row, def.Hotkeys, flag) == 0) {
+        return false;
+    }
+    kb.Bindings.push_back(row);
+    return true;
+}
+
 // One-shot migration: seed the menu-bar shortcut keybindings introduced with the
 // menu-shortcuts-fix work (Zoom In/Out/Reset, open-view, clear-selection, and the new view
 // reveals). from_json REPLACES (does not merge) the binding table, so a config saved by an older
@@ -299,9 +352,11 @@ void MigrateBugReportHotkeyToKeybindings(const nlohmann::json& j, TrackerConfig&
 // defaults (the marquee "Zoom In doesn't work" symptom). Seed each new default exactly once
 // (guarded by migrated_menu_shortcuts_v1), and only when the loaded config has no binding for that
 // exact (command id, args) identity — so a user who already bound the command to their own key in
-// this build keeps it, and a re-run never resurrects a binding the user later cleared. A fresh
-// profile takes KeybindingsConfig::Defaults() wholesale (the else-branch below) and records the
-// flag on first save, so the seed is a no-op for new users.
+// this build keeps it, and a re-run never resurrects a binding the user later cleared. A default
+// combo an enabled binding for another command already holds is not seeded, and a seeded row left
+// with no combo is not added (SeedDefaultRowSkippingHeldChords). A fresh profile takes
+// KeybindingsConfig::Defaults() wholesale (the else-branch below) and records the flag on first
+// save, so the seed is a no-op for new users.
 void MigrateMenuShortcutKeybindingsV1(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMenuShortcutsV1 = j.value("migrated_menu_shortcuts_v1", false);
     if (cfg.MigratedMenuShortcutsV1) {
@@ -326,8 +381,8 @@ void MigrateMenuShortcutKeybindingsV1(const nlohmann::json& j, TrackerConfig& cf
                 break;
             }
         }
-        if (isNew && cfg.Keybindings.FindBindingIndex(def.CommandId, def.ArgsJson) < 0) {
-            cfg.Keybindings.Bindings.push_back(def);
+        if (isNew && cfg.Keybindings.FindBindingIndex(def.CommandId, def.ArgsJson) < 0 &&
+            SeedDefaultRowSkippingHeldChords(cfg.Keybindings, def, "migrated_menu_shortcuts_v1")) {
             ++seeded;
         }
     }
@@ -344,7 +399,8 @@ void MigrateMenuShortcutKeybindingsV1(const nlohmann::json& j, TrackerConfig& cf
 // once-per-config, skip-if-the-identity-already-bound contract as V1, plus a rename
 // pass: a user-made binding saved under the legacy bare id is renamed IN PLACE
 // (hotkey / args / enabled / order preserved) so it keeps its identity under the
-// canonical id and the seed below cannot add a conflicting duplicate next to it.
+// canonical id and the seed below cannot add a conflicting duplicate next to it. Like V1,
+// the seed skips a default combo an enabled binding for another command already holds.
 void MigrateMenuShortcutKeybindingsV2(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMenuShortcutsV2 = j.value("migrated_menu_shortcuts_v2", false);
     if (cfg.MigratedMenuShortcutsV2) {
@@ -361,8 +417,8 @@ void MigrateMenuShortcutKeybindingsV2(const nlohmann::json& j, TrackerConfig& cf
     int seeded = 0;
     for (const Keybinding& def : defaults.Bindings) {
         if (def.CommandId == "view.toggle.notifications" &&
-            cfg.Keybindings.FindBindingIndex(def.CommandId, def.ArgsJson) < 0) {
-            cfg.Keybindings.Bindings.push_back(def);
+            cfg.Keybindings.FindBindingIndex(def.CommandId, def.ArgsJson) < 0 &&
+            SeedDefaultRowSkippingHeldChords(cfg.Keybindings, def, "migrated_menu_shortcuts_v2")) {
             ++seeded;
         }
     }
@@ -377,14 +433,19 @@ void MigrateMenuShortcutKeybindingsV2(const nlohmann::json& j, TrackerConfig& cf
 // One-shot migration: seed the quick-create issue binding ("issue.quick_create.open",
 // Ctrl+Shift+T) into a config saved before the popup existed. Same replace-not-merge
 // rationale as MigrateMenuShortcutKeybindingsV1; the guard on FindBindingIndex keeps a
-// user's own binding (or a deliberate later removal) authoritative after the seed.
+// user's own binding (or a deliberate later removal) authoritative after the seed. The row is
+// copied from Defaults(), and it is not added while an enabled binding for another command
+// already holds Ctrl+Shift+T.
 void MigrateQuickCreateKeybindingV1(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedQuickCreateHotkeyV1 = j.value("migrated_quick_create_hotkey_v1", false);
     if (cfg.MigratedQuickCreateHotkeyV1) {
         return;
     }
-    if (cfg.Keybindings.FindBindingIndex("issue.quick_create.open", "{}") < 0) {
-        cfg.Keybindings.SetBindingHotkey("issue.quick_create.open", "{}", "Ctrl+Shift+T");
+    const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
+    const int di = defaults.FindBindingIndex("issue.quick_create.open", "{}");
+    if (di >= 0 && cfg.Keybindings.FindBindingIndex("issue.quick_create.open", "{}") < 0 &&
+        SeedDefaultRowSkippingHeldChords(cfg.Keybindings, defaults.Bindings[static_cast<std::size_t>(di)],
+                                         "migrated_quick_create_hotkey_v1")) {
         LOG_INFO("ConfigManager: seeded the quick-create issue keybinding into an existing config "
                  "(migrated_quick_create_hotkey_v1)");
     }
@@ -394,7 +455,9 @@ void MigrateQuickCreateKeybindingV1(const nlohmann::json& j, TrackerConfig& cfg)
 // One-shot migration: seed the gesture-key bindings (docs/plans/input-ux-w2-gesture-keys.md) into a config
 // saved before they existed. Same replace-not-merge rationale and the same guard as
 // MigrateMenuShortcutKeybindingsV1: a (command id, args) identity the config already binds is left as the
-// user set it, and the flag keeps a binding the user clears after the seed from coming back.
+// user set it, and the flag keeps a binding the user clears after the seed from coming back. A default
+// combo an enabled binding for another command already holds is not seeded, and a row left with no combo
+// is not added.
 void MigrateGestureKeybindingsV1(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedGestureKeysV1 = j.value("migrated_gesture_keys_v1", false);
     if (cfg.MigratedGestureKeysV1) {
@@ -413,8 +476,8 @@ void MigrateGestureKeybindingsV1(const nlohmann::json& j, TrackerConfig& cfg) {
                 break;
             }
         }
-        if (isGesture && cfg.Keybindings.FindBindingIndex(def.CommandId, def.ArgsJson) < 0) {
-            cfg.Keybindings.Bindings.push_back(def);
+        if (isGesture && cfg.Keybindings.FindBindingIndex(def.CommandId, def.ArgsJson) < 0 &&
+            SeedDefaultRowSkippingHeldChords(cfg.Keybindings, def, "migrated_gesture_keys_v1")) {
             ++seeded;
         }
     }
@@ -427,8 +490,9 @@ void MigrateGestureKeybindingsV1(const nlohmann::json& j, TrackerConfig& cfg) {
 
 // One-shot migration: seed the grid search focus binding ("grid.search.focus", Ctrl+F and /)
 // into a config saved before the command existed, for the same replace-not-merge reason as the
-// menu shortcut migration. The row is copied from the defaults table, so it arrives with both
-// combos, and a binding the user already gave the command is kept as it is.
+// menu shortcut migration. The row is copied from the defaults table (Ctrl+F and /), less any
+// combo an enabled binding for another command already holds; a row left with no combo is not
+// added, and a binding the user already gave the command is kept as it is.
 void MigrateGridSearchFocusKeybindingV1(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedGridSearchFocusHotkeyV1 = j.value("migrated_grid_search_focus_hotkey_v1", false);
     if (cfg.MigratedGridSearchFocusHotkeyV1) {
@@ -436,8 +500,9 @@ void MigrateGridSearchFocusKeybindingV1(const nlohmann::json& j, TrackerConfig& 
     }
     const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
     const int di = defaults.FindBindingIndex("grid.search.focus", "{}");
-    if (di >= 0 && cfg.Keybindings.FindBindingIndex("grid.search.focus", "{}") < 0) {
-        cfg.Keybindings.Bindings.push_back(defaults.Bindings[static_cast<std::size_t>(di)]);
+    if (di >= 0 && cfg.Keybindings.FindBindingIndex("grid.search.focus", "{}") < 0 &&
+        SeedDefaultRowSkippingHeldChords(cfg.Keybindings, defaults.Bindings[static_cast<std::size_t>(di)],
+                                         "migrated_grid_search_focus_hotkey_v1")) {
         LOG_INFO("ConfigManager: seeded the grid search focus keybinding into an existing config "
                  "(migrated_grid_search_focus_hotkey_v1)");
     }
@@ -453,10 +518,13 @@ void MigrateGridSearchFocusKeybindingV1(const nlohmann::json& j, TrackerConfig& 
 // Two deliberate divergences from MigrateMenuShortcutKeybindingsV1:
 //   (a) a row is widened ONLY while its combo set is still exactly the legacy default.
 //       A user who rebound or cleared Zoom In keeps their choice; they opt in through
-//       "Reset all to defaults". This also makes the migration idempotent twice over —
-//       after one run the set has 3 combos, so a re-run is a no-op even without the flag.
+//       "Reset all to defaults". The flag is what makes a re-run a no-op: a row whose aliases
+//       were all held by other commands still holds only its legacy combo after one run, and
+//       a re-run would widen it if those commands have let the chords go since.
 //   (b) a MISSING row stays missing. V1 already seeded these rows, so absent here means
 //       the user deleted it; resurrecting it would undo that.
+// Every zoom widening (V1, V2, V3) appends through AppendDefaultCombosNotHeld, so an alias an
+// enabled binding for another command already holds is not added.
 void MigrateZoomHotkeyAliasesV1(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMultiHotkeyZoomV1 = j.value("migrated_multi_hotkey_zoom_v1", false);
     if (cfg.MigratedMultiHotkeyZoomV1) {
@@ -483,8 +551,10 @@ void MigrateZoomHotkeyAliasesV1(const nlohmann::json& j, TrackerConfig& cfg) {
         if (row.Hotkeys.size() != 1U || row.Hotkeys[0] != z.legacy) {
             continue; // customised or cleared — leave the user's choice alone
         }
-        row.Hotkeys = defaults.Bindings[static_cast<std::size_t>(di)].Hotkeys;
-        ++widened;
+        if (AppendDefaultCombosNotHeld(cfg.Keybindings, row, defaults.Bindings[static_cast<std::size_t>(di)].Hotkeys,
+                                       "migrated_multi_hotkey_zoom_v1") > 0) {
+            ++widened;
+        }
     }
     if (widened > 0) {
         LOG_INFO("ConfigManager: widened %d zoom keybinding(s) to their alias sets "
@@ -538,8 +608,10 @@ void MigrateZoomHotkeyAliasesV2(const nlohmann::json& j, TrackerConfig& cfg) {
         if (!exact) {
             continue; // customised or cleared — leave the user's choice alone
         }
-        row.Hotkeys = defaults.Bindings[static_cast<std::size_t>(di)].Hotkeys;
-        ++widened;
+        if (AppendDefaultCombosNotHeld(cfg.Keybindings, row, defaults.Bindings[static_cast<std::size_t>(di)].Hotkeys,
+                                       "migrated_multi_hotkey_zoom_v2") > 0) {
+            ++widened;
+        }
     }
     if (widened > 0) {
         LOG_INFO("ConfigManager: widened %d zoom keybinding(s) with mouse-wheel aliases "
@@ -564,8 +636,9 @@ void MigrateZoomHotkeyAliasesV2(const nlohmann::json& j, TrackerConfig& cfg) {
 // in Defaults()). It does not touch any other subset of the shipped set: V2 runs
 // first and widens the exact pre-wheel snapshot, so a row with several default
 // aliases but not all of them is one the user trimmed on purpose (dropping the
-// wheel combo because it clashes with scroll, say). Custom keys, empty/cleared
-// rows, and missing rows also stay untouched.
+// wheel combo because it clashes with scroll, say), or one an earlier migration
+// trimmed because another command holds the missing chords. Custom keys,
+// empty/cleared rows, and missing rows also stay untouched.
 void MigrateZoomHotkeyAliasesV3(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMultiHotkeyZoomV3 = j.value("migrated_multi_hotkey_zoom_v3", false);
     if (cfg.MigratedMultiHotkeyZoomV3) {
@@ -589,11 +662,7 @@ void MigrateZoomHotkeyAliasesV3(const nlohmann::json& j, TrackerConfig& cfg) {
         if (def.Hotkeys.empty() || row.Hotkeys.size() != 1 || row.Hotkeys[0] != def.Hotkeys[0]) {
             continue; // customised or trimmed — leave the user's choice alone
         }
-        for (const std::string& hk : def.Hotkeys) {
-            if (row.AddHotkey(hk)) {
-                ++appended;
-            }
-        }
+        appended += AppendDefaultCombosNotHeld(cfg.Keybindings, row, def.Hotkeys, "migrated_multi_hotkey_zoom_v3");
     }
     if (appended > 0) {
         LOG_INFO("ConfigManager: appended %d missing default zoom alias(es) "
@@ -603,27 +672,13 @@ void MigrateZoomHotkeyAliasesV3(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMultiHotkeyZoomV3 = true;
 }
 
-// Index of the first ENABLED binding that already holds `hotkey`, or -1. A disabled row dispatches
-// nothing, so it does not hold the chord (the editor's conflict check applies the same rule). Exact
-// spec compare: config stores the canonical StringifyImGuiHotkey spelling (the HasHotkey contract).
-// ImGui-free on purpose: this TU links into the TSan, Lua and fuzz rigs, which do not carry
-// Ui/ImGuiHotkey.cpp.
-int FindEnabledBindingHoldingHotkey(const KeybindingsConfig& kb, const std::string& hotkey) {
-    for (std::size_t i = 0; i < kb.Bindings.size(); ++i) {
-        if (kb.Bindings[i].Enabled && kb.Bindings[i].HasHotkey(hotkey)) {
-            return static_cast<int>(i);
-        }
-    }
-    return -1;
-}
-
 // One-shot migration: seed the primary-action bindings the input UX audit added (§ 4.4:
 // preferences.search.focus, view.next, view.previous) into a config saved before those commands
 // existed. Same replace-not-merge rationale as MigrateMenuShortcutKeybindingsV1. Each row is copied
-// from Defaults(), and a command the user already bound keeps the user's binding. A default combo
-// that an enabled binding for another command already holds is not seeded (#2507). A row left with
-// no combo is not added, and the user can still give the command a key from the editor's
-// 'Add shortcut for a command...' list.
+// from Defaults() through SeedDefaultRowSkippingHeldChords, and a command the user already bound
+// keeps the user's binding. A default combo that an enabled binding for another command already
+// holds is not seeded, and a row left with no combo is not added; the user can still give the
+// command a key from the editor's 'Add shortcut for a command...' list.
 void MigrateActionKeysV1(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedActionKeysV1 = j.value("migrated_action_keys_v1", false);
     if (cfg.MigratedActionKeysV1) {
@@ -636,26 +691,10 @@ void MigrateActionKeysV1(const nlohmann::json& j, TrackerConfig& cfg) {
         if (di < 0 || cfg.Keybindings.FindBindingIndex(commandId, "{}") >= 0) {
             continue;
         }
-        const Keybinding& def = defaults.Bindings[static_cast<std::size_t>(di)];
-        Keybinding row = def;
-        // A chord the user already gave another command stays theirs. Dispatch fires every enabled
-        // binding that matches a key press, so seeding the default onto that chord would run both
-        // commands at once.
-        for (const std::string& hotkey : def.Hotkeys) {
-            const int held = FindEnabledBindingHoldingHotkey(cfg.Keybindings, hotkey);
-            if (held >= 0) {
-                LOG_INFO("ConfigManager: not seeding %s for \"%s\": the chord is already bound to \"%s\" "
-                         "(migrated_action_keys_v1)",
-                         hotkey.c_str(), commandId,
-                         cfg.Keybindings.Bindings[static_cast<std::size_t>(held)].CommandId.c_str());
-                row.RemoveHotkey(hotkey);
-            }
+        if (SeedDefaultRowSkippingHeldChords(cfg.Keybindings, defaults.Bindings[static_cast<std::size_t>(di)],
+                                             "migrated_action_keys_v1")) {
+            ++seeded;
         }
-        if (row.Hotkeys.empty()) {
-            continue; // every default combo is taken, so the command gets no row
-        }
-        cfg.Keybindings.Bindings.push_back(row);
-        ++seeded;
     }
     if (seeded > 0) {
         LOG_INFO("ConfigManager: seeded %d primary-action keybinding(s) into an existing config "
@@ -796,9 +835,10 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
     MigrateGestureKeybindingsV1(j, cfg);
     MigrateGridSearchFocusKeybindingV1(j, cfg);
     // Last: the seeding migrations above pull straight from Defaults(), which already
-    // carries the alias sets, so a freshly-seeded row arrives complete and V1/V2's
-    // exact-legacy-match guards correctly skip it. V3 then appends any missing
-    // Defaults() aliases onto default-family rows left incomplete by earlier flags.
+    // carries the alias sets, less any chord another command holds. V1/V2/V3 may then
+    // revisit a seeded row, and they append only the aliases no other command holds, so a
+    // trimmed seed stays trimmed. V3 also appends missing Defaults() aliases onto
+    // default-family rows left incomplete by earlier flags.
     MigrateZoomHotkeyAliasesV1(j, cfg);
     MigrateZoomHotkeyAliasesV2(j, cfg);
     MigrateZoomHotkeyAliasesV3(j, cfg);
