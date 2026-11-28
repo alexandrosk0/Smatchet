@@ -9,6 +9,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -16,6 +17,8 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 // Friend of LocalCacheManager and its ConnGuard: the one door tests use to hold the connection.
@@ -159,20 +162,50 @@ TEST_CASE("LocalCacheManager connection: a second thread waits for the held conn
     CHECK(finished.load());
 }
 
-// Hold-time evidence for the lock model. Hidden: run with `[.bench]` (prints, never asserts a wall-clock budget).
-TEST_CASE("LocalCacheManager connection: probe wait during long operations" * doctest::skip(true)) {
+TEST_CASE("LocalCacheManager connection: every concurrent enqueue gets the id of its own row") {
     smatchet_tests::SqliteMemFixture fix;
     LocalCacheManager& mgr = fix.Ref();
-    std::vector<CachedTicket> seed;
-    for (int i = 0; i < 10000; ++i) {
-        CachedTicket t;
-        t.id = "BENCH-" + std::to_string(i);
-        t.fieldValues["summary"] = "summary " + std::to_string(i);
-        t.fieldValues["status"] = "Open";
-        seed.push_back(std::move(t));
-    }
-    mgr.SaveTickets(kBk, seed);
+    constexpr int kThreads = 4;
+    constexpr int kPerThread = 100;
 
+    std::vector<std::vector<std::pair<std::int64_t, std::string>>> issued(kThreads);
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&, t]() {
+            for (int i = 0; i < kPerThread; ++i) {
+                const std::string payload = "{\"t\":" + std::to_string(t) + ",\"i\":" + std::to_string(i) + "}";
+                issued[t].push_back(std::make_pair(mgr.EnqueuePendingCreate(kBk, payload), payload));
+            }
+        });
+    }
+    for (std::thread& th : threads) {
+        th.join();
+    }
+
+    std::unordered_map<std::int64_t, std::string> stored;
+    for (const PendingCreate& row : mgr.LoadPendingCreates()) {
+        stored[row.Id] = row.Payload;
+    }
+    CHECK(stored.size() == static_cast<std::size_t>(kThreads * kPerThread));
+    for (int t = 0; t < kThreads; ++t) {
+        for (const std::pair<std::int64_t, std::string>& one : issued[t]) {
+            const std::unordered_map<std::int64_t, std::string>::const_iterator it = stored.find(one.first);
+            REQUIRE(it != stored.end());
+            CHECK(it->second == one.second); // the id this thread was handed is the row it wrote
+        }
+    }
+}
+
+namespace {
+
+struct ProbeResult {
+    long long OperationMs = 0;
+    long long Probes = 0;
+    long long MaxWaitUs = 0;
+};
+
+// Runs `operation` while another thread probes the connection (a cheap guarded read) and reports the longest wait.
+template <typename Fn> ProbeResult MeasureProbeWait(LocalCacheManager& mgr, Fn&& operation) {
     std::atomic<bool> stop{false};
     std::atomic<long long> maxWaitUs{0};
     std::atomic<long long> probes{0};
@@ -190,11 +223,72 @@ TEST_CASE("LocalCacheManager connection: probe wait during long operations" * do
         }
     });
     const auto t0 = std::chrono::steady_clock::now();
-    (void)mgr.GetAllTickets(kBk);
-    const long long allMs =
+    operation();
+    ProbeResult result;
+    result.OperationMs =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
     stop.store(true);
     probe.join();
-    MESSAGE("GetAllTickets(10k) took " << allMs << " ms; " << probes.load() << " probes; max probe wait "
-                                       << maxWaitUs.load() << " us");
+    result.Probes = probes.load();
+    result.MaxWaitUs = maxWaitUs.load();
+    return result;
+}
+
+} // namespace
+
+// Hold-time evidence for the lock model. Hidden: run with `--no-skip` (it prints, never asserts a wall-clock budget).
+TEST_CASE("LocalCacheManager connection: probe wait during long operations [.bench]" * doctest::skip(true)) {
+    smatchet_tests::SqliteMemFixture fix;
+    LocalCacheManager& mgr = fix.Ref();
+    std::vector<CachedTicket> seed;
+    for (int i = 0; i < 10000; ++i) {
+        CachedTicket t;
+        t.id = "BENCH-" + std::to_string(i);
+        t.fieldValues["summary"] = "summary " + std::to_string(i);
+        t.fieldValues["status"] = "Open";
+        seed.push_back(std::move(t));
+    }
+    mgr.SaveTickets(kBk, seed);
+
+    const ProbeResult all = MeasureProbeWait(mgr, [&]() { (void)mgr.GetAllTickets(kBk); });
+    MESSAGE("GetAllTickets(10k): " << all.OperationMs << " ms, " << all.Probes << " probes, max probe wait "
+                                   << all.MaxWaitUs << " us");
+
+    std::vector<CachedTicket> batch(seed.begin(), seed.begin() + 500);
+    std::vector<TicketSyncMeta> metas(batch.size());
+    for (std::size_t i = 0; i < metas.size(); ++i) {
+        metas[i].RemoteUpdated = "2026-01-01T00:00:00.000+0000";
+        metas[i].SyncedAtEpochSec = 1;
+    }
+    const ProbeResult save = MeasureProbeWait(mgr, [&]() { mgr.SaveTicketsWithSyncMeta(kBk, batch, metas, true); });
+    MESSAGE("SaveTicketsWithSyncMeta(500): " << save.OperationMs << " ms, " << save.Probes << " probes, max probe wait "
+                                             << save.MaxWaitUs << " us");
+
+    const ProbeResult rekey = MeasureProbeWait(mgr, [&]() {
+        mgr.RunOneTimeCacheIdentityRekey(std::vector<std::pair<std::string, std::string>>(
+            1, std::make_pair(std::string(kBk), std::string("Jira@bench#2"))));
+    });
+    MESSAGE("RunOneTimeCacheIdentityRekey(10k rows): " << rekey.OperationMs << " ms, " << rekey.Probes
+                                                       << " probes, max probe wait " << rekey.MaxWaitUs << " us");
+
+    // An enqueue arriving while a worker batch runs: its latency is the wait for the connection plus its own insert.
+    std::atomic<bool> batchDone{false};
+    std::thread worker([&]() {
+        mgr.SaveTicketsWithSyncMeta("Jira@bench#2", seed, std::vector<TicketSyncMeta>(), true);
+        batchDone.store(true);
+    });
+    long long worstUs = 0;
+    int enqueued = 0;
+    while (!batchDone.load()) {
+        const auto t0 = std::chrono::steady_clock::now();
+        (void)mgr.EnqueuePendingCreate(kBk, "{}");
+        const long long us =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
+        worstUs = (std::max)(worstUs, us);
+        ++enqueued;
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+    worker.join();
+    MESSAGE("EnqueuePendingCreate during a 10k-row SaveTicketsWithSyncMeta batch: " << enqueued << " enqueues, worst "
+                                                                                    << worstUs << " us");
 }
