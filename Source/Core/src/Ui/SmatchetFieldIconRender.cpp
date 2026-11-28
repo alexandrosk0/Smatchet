@@ -3,9 +3,10 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "TunableLimits.h"
+#include "SmatchetFieldIconDiskCache.h"
 #include "SmatchetFieldIconRender_detail.h"
 #include "SmatchetImageTextureCache.h"
-#include "SmatchetResult.h" // Result<std::vector<unsigned char>> / UnpackResult (HttpGetBinary)
+#include "SmatchetResult.h"
 #include "StringUtil.h"
 #include "TicketGridModel.h"
 #include "TrackerFieldValueUtils.h"
@@ -16,18 +17,18 @@
 
 #include <cpr/cpr.h>
 
-#include <ghc/filesystem.hpp>
-
+#include <atomic>
 #include <chrono>
-#include <fstream>
+#include <exception>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace {
-
-namespace fs = ghc::filesystem;
 
 // Pure resolution/parsing half — extracted to SmatchetFieldIconRender_detail.cpp (gap-map
 // Tier 5 `_detail` pattern) so the untrusted-input logic is doctest-covered without this
@@ -36,7 +37,6 @@ using SmatchetFieldIconRender::detail::JoinDomainAndPath;
 using SmatchetFieldIconRender::detail::ParsePriorityJson;
 using SmatchetFieldIconRender::detail::ResolveJiraIconUrlReference;
 using SmatchetFieldIconRender::detail::SlugIsKnown;
-using SmatchetFieldIconRender::detail::UrlToCacheFileName;
 
 std::mutex g_jiraDomainForPriorityIconsMutex;
 std::string g_jiraDomainForPriorityIconsCache;
@@ -56,7 +56,8 @@ std::string GetCachedJiraDomainForPriorityIcons() {
     return g_jiraDomainForPriorityIconsCache;
 }
 
-/** Shipped under repo `Scripts/art/priority/<slug>.png` (copied next to exe with Scripts/). */
+/** Shipped under repo `Scripts/art/priority/<slug>.png` (copied next to exe with Scripts/). The path is only
+ *  built here, never stat'ed: this runs on the UI thread, and a missing file fails on the worker that reads it. */
 std::string TryBundledPriorityPngPath(const std::string& slug) {
     if (slug.empty() || !SlugIsKnown(slug)) {
         return std::string();
@@ -65,92 +66,102 @@ std::string TryBundledPriorityPngPath(const std::string& slug) {
     if (base.empty()) {
         return std::string();
     }
-    const std::string p = base + "Scripts/art/priority/" + slug + ".png";
-    std::error_code ec;
-    const fs::path fp(p);
-    if (fs::exists(fp, ec) && fs::is_regular_file(fp, ec)) {
-        return p;
-    }
-    return std::string();
+    return base + "Scripts/art/priority/" + slug + ".png";
 }
 
-bool EnsureFieldIconsCacheDir(std::string& outDir, std::string& outError) {
-    outError.clear();
-    const std::string base = ConfigManager::GetUserDataDirectory();
-    if (base.empty()) {
-        outError = "Files base directory is empty.";
-        return false;
-    }
-    outDir = base + "cache/field_icons/";
-    std::error_code ec;
-    fs::create_directories(fs::path(outDir), ec);
-    if (ec) {
-        outError = ec.message();
-        return false;
-    }
-    return true;
+/** Production icon fetch: one capped GET. Worker only. */
+SmatchetFieldIconDiskCache::FetchFn ProductionFetch() {
+    return [](const std::string& url) -> Result<SmatchetFieldIconDiskCache::IconBytes> {
+        using R = Result<SmatchetFieldIconDiskCache::IconBytes>;
+        /* PILLAR2_WORKER_ONLY */ // est-latency: ~3000ms — runs only inside the worker launched by LaunchIconResolve.
+        cpr::Response r = cpr::Get(cpr::Url{url}, cpr::Timeout{3000});
+        if (r.error.code != cpr::ErrorCode::OK) {
+            return R::Err(r.error.message);
+        }
+        if (r.status_code < 200 || r.status_code >= 300) {
+            return R::Err("HTTP status " + std::to_string(r.status_code));
+        }
+        if (r.text.size() > SmatchetFieldIconDiskCache::kMaxIconFileBytes) {
+            return R::Err("Response too large.");
+        }
+        return R::Ok(SmatchetFieldIconDiskCache::IconBytes(r.text.begin(), r.text.end()));
+    };
 }
 
-Result<std::vector<unsigned char>> HttpGetBinary(const std::string& url) {
-    /* PILLAR2_WORKER_ONLY */ // est-latency: ~3000ms — sole caller inside an app.LaunchBackgroundTask lambda.
-    cpr::Response r = cpr::Get(cpr::Url{url}, cpr::Timeout{3000});
-    if (r.error.code != cpr::ErrorCode::OK) {
-        return Result<std::vector<unsigned char>>::Err(r.error.message);
-    }
-    if (r.status_code < 200 || r.status_code >= 300) {
-        return Result<std::vector<unsigned char>>::Err("HTTP status " + std::to_string(r.status_code));
-    }
-    if (r.text.size() > 512u * 1024u) {
-        return Result<std::vector<unsigned char>>::Err("Response too large.");
-    }
-    return Result<std::vector<unsigned char>>::Ok(std::vector<unsigned char>(r.text.begin(), r.text.end()));
-}
-
-// In-flight URL fetch set. Suppresses re-issue of identical HTTP requests across many frames
-// while a worker is still downloading the icon. UI-thread reads + worker-thread writes go
-// through the mutex (Pillar 2 — finding #1).
-std::mutex& IconUrlFetchInFlightMutex() {
+// The fetch workers use. Replaceable so a test can serve bytes (or refuse) without a network.
+std::mutex& IconFetchFnMutex() {
     static std::mutex m;
     return m;
 }
-std::unordered_set<std::string>& IconUrlFetchInFlightSet() {
+SmatchetFieldIconDiskCache::FetchFn& IconFetchFnSlot() {
+    static SmatchetFieldIconDiskCache::FetchFn fn = ProductionFetch();
+    return fn;
+}
+SmatchetFieldIconDiskCache::FetchFn CurrentIconFetchFn() {
+    std::lock_guard<std::mutex> lock(IconFetchFnMutex());
+    return IconFetchFnSlot();
+}
+
+// In-flight resolve set, keyed by the texture-cache key ("url:" + url, "file:" + path). A key is marked
+// BEFORE its worker is launched and released exactly once by InFlightClaim, whichever way the work ends
+// (completed, failed, launch threw, or the task was dropped unrun at shutdown). UI-thread reads and
+// worker writes go through the mutex.
+std::mutex& IconInFlightMutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_set<std::string>& IconInFlightSet() {
     static std::unordered_set<std::string> s;
     return s;
 }
 
-bool IconUrlFetchInFlight(const std::string& url) {
-    std::lock_guard<std::mutex> lock(IconUrlFetchInFlightMutex());
-    return IconUrlFetchInFlightSet().count(url) > 0;
+bool IconInFlight(const std::string& key) {
+    std::lock_guard<std::mutex> lock(IconInFlightMutex());
+    return IconInFlightSet().count(key) > 0;
 }
 
-bool MarkIconUrlFetchInFlight(const std::string& url) {
-    std::lock_guard<std::mutex> lock(IconUrlFetchInFlightMutex());
-    auto& s = IconUrlFetchInFlightSet();
-    if (s.count(url) > 0) {
-        return false;
+bool MarkIconInFlight(const std::string& key) {
+    std::lock_guard<std::mutex> lock(IconInFlightMutex());
+    return IconInFlightSet().insert(key).second;
+}
+
+void ClearIconInFlight(const std::string& key) {
+    std::lock_guard<std::mutex> lock(IconInFlightMutex());
+    IconInFlightSet().erase(key);
+}
+
+/// Releases a key's in-flight mark once. Held by shared_ptr from the worker and from its completion, so the
+/// mark clears when the last holder goes away even if neither ever ran.
+class InFlightClaim {
+  public:
+    explicit InFlightClaim(std::string key) : key_(std::move(key)) {}
+    ~InFlightClaim() { Release(); }
+    InFlightClaim(const InFlightClaim&) = delete;
+    InFlightClaim& operator=(const InFlightClaim&) = delete;
+    void Release() {
+        if (!released_.exchange(true)) {
+            ClearIconInFlight(key_);
+        }
     }
-    s.insert(url);
-    return true;
-}
 
-void ClearIconUrlFetchInFlight(const std::string& url) {
-    std::lock_guard<std::mutex> lock(IconUrlFetchInFlightMutex());
-    IconUrlFetchInFlightSet().erase(url);
-}
+  private:
+    const std::string key_;
+    std::atomic<bool> released_{false};
+};
 
-// DR28 — URL-level negative fetch cache with time-based backoff. A worker whose HTTP GET fails
-// records the steady-clock time of failure here; LoadOrFetchUrlImage consults it before deferring
-// another (up to 3s) cpr GET so an unresolvable icon URL backs off instead of re-fetching (and the
-// grid cell re-parsing JSON + re-stat'ing disk) every single frame for the whole session. Keyed by
-// URL; capped (limits::Get().FieldIconFetchNegativeMax, default 256) so a tracker returning many
-// distinct bad URLs cannot grow it without bound.
+// DR28 — negative resolve cache with time-based backoff, keyed by texture-cache key. A worker whose fetch,
+// read or decode fails records the steady-clock time of failure here (the map is mutex-guarded); LoadOrFetchUrlImage
+// consults it before deferring another (up to 3s) cpr GET so an unresolvable icon URL backs off instead of re-fetching
+// (and the grid cell re-parsing JSON) every single frame for the whole session. Keyed by texture-cache key; capped
+// (limits::Get().FieldIconFetchNegativeMax, default 256) so a tracker returning many distinct bad URLs cannot grow it
+// without bound.
 constexpr auto kIconFetchNegativeBackoff = std::chrono::minutes(5);
 
-std::mutex& IconUrlFetchNegativeMutex() {
+std::mutex& IconNegativeMutex() {
     static std::mutex m;
     return m;
 }
-std::unordered_map<std::string, std::chrono::steady_clock::time_point>& IconUrlFetchNegativeMap() {
+std::unordered_map<std::string, std::chrono::steady_clock::time_point>& IconNegativeMap() {
     static std::unordered_map<std::string, std::chrono::steady_clock::time_point> m;
     return m;
 }
@@ -159,181 +170,129 @@ long long SteadyMillis(std::chrono::steady_clock::time_point tp) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count();
 }
 
-// True when `url` failed a fetch recently enough to still be inside the backoff window.
-bool IconUrlFetchInBackoff(const std::string& url) {
+// True when `key` failed to resolve recently enough to still be inside the backoff window.
+bool IconInBackoff(const std::string& key) {
     const auto now = std::chrono::steady_clock::now();
     const long long backoffMs =
         std::chrono::duration_cast<std::chrono::milliseconds>(kIconFetchNegativeBackoff).count();
-    std::lock_guard<std::mutex> lock(IconUrlFetchNegativeMutex());
-    const auto& m = IconUrlFetchNegativeMap();
-    const auto it = m.find(url);
+    std::lock_guard<std::mutex> lock(IconNegativeMutex());
+    const auto& m = IconNegativeMap();
+    const auto it = m.find(key);
     const bool have = it != m.end();
     const long long lastMs = have ? SteadyMillis(it->second) : 0;
     return !SmatchetFieldIconRender::ShouldAttemptIconResolve(have, lastMs, SteadyMillis(now), backoffMs);
 }
 
-void RecordIconUrlFetchFailure(const std::string& url) {
-    if (url.empty()) {
+void RecordIconFailure(const std::string& key) {
+    if (key.empty()) {
         return;
     }
     const auto now = std::chrono::steady_clock::now();
-    std::lock_guard<std::mutex> lock(IconUrlFetchNegativeMutex());
-    auto& m = IconUrlFetchNegativeMap();
+    std::lock_guard<std::mutex> lock(IconNegativeMutex());
+    auto& m = IconNegativeMap();
     if (m.size() >= static_cast<size_t>(smatchet::limits::Get().FieldIconFetchNegativeMax)) {
         m.clear();
     }
-    m[url] = now;
+    m[key] = now;
 }
 
-void ClearIconUrlFetchFailure(const std::string& url) {
-    std::lock_guard<std::mutex> lock(IconUrlFetchNegativeMutex());
-    IconUrlFetchNegativeMap().erase(url);
+void ClearIconFailure(const std::string& key) {
+    std::lock_guard<std::mutex> lock(IconNegativeMutex());
+    IconNegativeMap().erase(key);
 }
 
-// In-flight file-read set. Mirrors the URL fetch set shape — the URL-disk-cache-hit branch and
-// the file-path branch both defer their ifstream off the UI thread; the worker's PostToMainThread
-// invokes GetOrLoadFromMemory on the bytes (GPU texture upload requires UI thread). Keyed by the
-// canonical texture-cache key (`url:` + url for cached URLs, `file:` + path for local files) so
-// each call site uses a stable handle.
-std::mutex& IconFileReadInFlightMutex() {
-    static std::mutex m;
-    return m;
-}
-std::unordered_set<std::string>& IconFileReadInFlightSet() {
-    static std::unordered_set<std::string> s;
-    return s;
-}
-
-bool IconFileReadInFlight(const std::string& cacheKey) {
-    std::lock_guard<std::mutex> lock(IconFileReadInFlightMutex());
-    return IconFileReadInFlightSet().count(cacheKey) > 0;
-}
-
-bool MarkIconFileReadInFlight(const std::string& cacheKey) {
-    std::lock_guard<std::mutex> lock(IconFileReadInFlightMutex());
-    auto& s = IconFileReadInFlightSet();
-    if (s.count(cacheKey) > 0) {
-        return false;
+/// Runs `resolve` on a worker and uploads the decoded pixels on the UI thread. UI thread only.
+/// The caller has already checked the texture cache, the backoff and the in-flight set. The key is marked
+/// in flight BEFORE the launch and released exactly once by InFlightClaim: after the upload, after a failed
+/// resolve, if the launch throws, or if the task is destroyed unrun at shutdown. A failure is recorded in
+/// the backoff map; a success posts exactly one completion (non-droppable, so the mark always clears).
+void LaunchIconResolve(AppController& app, const std::string& key,
+                       std::function<SmatchetFieldIconDiskCache::IconResolveOutcome()> resolve) {
+    if (!MarkIconInFlight(key)) {
+        return; // another call won the race; its worker will warm the cache
     }
-    s.insert(cacheKey);
-    return true;
-}
-
-void ClearIconFileReadInFlight(const std::string& cacheKey) {
-    std::lock_guard<std::mutex> lock(IconFileReadInFlightMutex());
-    IconFileReadInFlightSet().erase(cacheKey);
+    const std::shared_ptr<InFlightClaim> claim = std::make_shared<InFlightClaim>(key);
+    try {
+        app.LaunchBackgroundTask([&app, key, resolve, claim]() {
+            SmatchetFieldIconDiskCache::IconResolveOutcome outcome;
+            try {
+                outcome = resolve();
+            } catch (const std::exception& ex) {
+                outcome.Ok = false;
+                outcome.Error = ex.what();
+            }
+            if (!outcome.Ok) {
+                // The key may carry a signed query string: log only the part before it. An optional bundled
+                // icon that is simply absent is expected, so it is not a warning.
+                const std::string shown = key.substr(0, key.find('?'));
+                if (outcome.NotFound) {
+                    LOG_DEBUG("FieldIcon: '%s' not found: %s", shown.c_str(), outcome.Error.c_str());
+                } else {
+                    LOG_WARN("FieldIcon: could not resolve '%s': %s", shown.c_str(), outcome.Error.c_str());
+                }
+                RecordIconFailure(key);
+                claim->Release();
+                return;
+            }
+            const std::shared_ptr<DecodedIcon> icon = std::make_shared<DecodedIcon>(std::move(outcome.Icon));
+            app.mainThreadDispatcher.PostCompletionToMainThread([key, icon, claim]() {
+                const Result<SmatchetLoadedIconTexture> uploaded =
+                    SmatchetImageTextureCache::GetOrCreateFromRgba(key, icon->Rgba, icon->Width, icon->Height);
+                if (uploaded.has_value()) {
+                    ClearIconFailure(key);
+                } else {
+                    LOG_WARN("FieldIcon: texture upload failed for '%s': %s", key.c_str(), uploaded.error().c_str());
+                    RecordIconFailure(key);
+                }
+                claim->Release();
+            });
+        });
+    } catch (const std::exception& ex) {
+        LOG_WARN("FieldIcon: could not start the resolve worker for '%s': %s", key.c_str(), ex.what());
+        RecordIconFailure(key);
+        claim->Release();
+    }
 }
 
 /// Loads the URL-keyed icon texture. Returns:
-///   - `true` + populated `out` when the texture is in the cache or on disk (decoded inline).
-///   - `false` + `outDeferred=true` when a background fetch was scheduled (or one is already
-///     in-flight); the caller MUST NOT negative-memo this result — the URL will be cached on a
-///     subsequent frame and the next memo lookup will hit.
-///   - `false` + `outDeferred=false` when the load genuinely failed (bad path, disk error).
+///   - `true` + populated `out` when the texture is already resident.
+///   - `false` + `outDeferred=true` when a worker was started (or one is already running) to read the
+///     cache file or fetch the icon, decode it and hand the pixels back; the caller MUST NOT negative-memo
+///     this result — the texture will be resident on a later frame.
+///   - `false` + `outDeferred=false` when the resolve failed recently and is backing off.
+/// The UI thread does no file, network or decode work here: only the texture-cache lookup, the backoff and
+/// in-flight checks, and the launch.
 bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoadedIconTexture& out,
                          std::string& outError, bool& outDeferred) {
     out = {};
     outError.clear();
     outDeferred = false;
-    // Canonical cache key for URL-loaded icons. All paths through this function MUST
-    // end up storing the texture under this key — otherwise the caller's memo (which
-    // derives its key from the URL candidate) will look it up and miss, falling back
-    // to the slow path every frame.
+    // Canonical cache key for URL-loaded icons: the caller's memo derives its key from the URL candidate.
     const std::string urlKey = std::string("url:") + url;
     if (SmatchetImageTextureCache::TryGetCached(urlKey, out)) {
         return true;
     }
-    std::string cacheDir;
-    if (!EnsureFieldIconsCacheDir(cacheDir, outError)) {
-        return false;
-    }
-    const std::string fileName = UrlToCacheFileName(url);
-    const std::string diskPath = cacheDir + fileName;
-    // If the bytes are on disk, defer the read off the UI thread (Pillar 2 — disk-cache-hit was
-    // still ifstream-on-UI). Worker reads the file; PostToMainThread invokes GetOrLoadFromMemory
-    // which uploads the GPU texture (UI-thread-only). Caller sees outDeferred=true on this frame;
-    // the next frame's TryGetCached hits.
-    std::error_code ec;
-    if (fs::exists(fs::path(diskPath), ec) && fs::file_size(fs::path(diskPath), ec) > 0) {
-        if (IconFileReadInFlight(urlKey)) {
-            outDeferred = true;
-            return false;
-        }
-        if (!MarkIconFileReadInFlight(urlKey)) {
-            outDeferred = true;
-            return false;
-        }
-        const std::string capturedDiskPath = diskPath;
-        const std::string capturedUrlKey = urlKey;
-        app.LaunchBackgroundTask([&app, capturedDiskPath, capturedUrlKey]() {
-            std::vector<unsigned char> bytes;
-            /* PILLAR2_WORKER_ONLY */ // est-latency: ~10ms — read of cached icon file (typically < 100 KB).
-            std::ifstream ifs(capturedDiskPath.c_str(), std::ios::binary);
-            if (ifs) {
-                bytes.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-            }
-            app.PostToMainThread([capturedUrlKey, bytes]() {
-                ClearIconFileReadInFlight(capturedUrlKey);
-                if (bytes.empty()) {
-                    return;
-                }
-                // Fire-and-forget: warms the LRU texture cache for a later frame; the
-                // Result (texture / error) is intentionally discarded here.
-                (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedUrlKey, bytes.data(), bytes.size());
-            });
-        });
-        outDeferred = true;
-        return false;
-    }
-    // No cache, no disk → defer HTTP fetch to a worker thread (Pillar 2 — finding #1).
-    // The grid-render path was blocking up to 3s per priority icon on first frame.
-    // DR28: if this URL failed to fetch recently, report a genuine (non-deferred) failure so the
-    // caller negative-memos the cell instead of re-issuing the 3s cpr GET every frame. Backoff
-    // expiry lets a transient outage recover on a later frame.
-    if (IconUrlFetchInBackoff(url)) {
+    // DR28: a recent failure is reported as a genuine failure (not deferred), so the caller negative-memos
+    // the cell. The backoff expires, so a transient outage recovers on a later frame.
+    if (IconInBackoff(urlKey)) {
         outError = "Icon fetch in backoff after a prior failure.";
-        outDeferred = false;
         return false;
     }
-    if (IconUrlFetchInFlight(url)) {
-        outDeferred = true;
-        return false;
-    }
-    if (!MarkIconUrlFetchInFlight(url)) {
-        // Lost a race; another thread is now fetching. Treat as deferred.
+    if (IconInFlight(urlKey)) {
         outDeferred = true;
         return false;
     }
     const std::string capturedUrl = url;
-    const std::string capturedDiskPath = diskPath;
-    const std::string capturedUrlKey = urlKey;
-    app.LaunchBackgroundTask([&app, capturedUrl, capturedDiskPath, capturedUrlKey]() {
-        std::vector<unsigned char> bytes;
-        std::string fetchError;
-        bool fetchOk = false;
-        UnpackResult(HttpGetBinary(capturedUrl), fetchOk, bytes, fetchError);
-        if (fetchOk) {
-            std::ofstream ofs(capturedDiskPath.c_str(), std::ios::binary | std::ios::trunc);
-            if (ofs) {
-                ofs.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-            }
+    LaunchIconResolve(app, urlKey, [capturedUrl]() {
+        /* PILLAR2_WORKER_ONLY */ // est-latency: ~10ms cache read, up to ~3000ms fetch — runs on the resolve worker.
+        SmatchetFieldIconDiskCache::IconResolveOutcome failure;
+        std::string cacheDir;
+        if (!SmatchetFieldIconDiskCache::EnsureCacheDir(ConfigManager::GetUserDataDirectory(), cacheDir,
+                                                        failure.Error)) {
+            return failure;
         }
-        // Post texture upload + in-flight-set release back to the UI thread. The image-texture
-        // cache requires UI-thread invocation (GL / DX12 resource creation).
-        app.PostToMainThread([capturedUrl, capturedUrlKey, bytes, fetchOk, fetchError]() {
-            ClearIconUrlFetchInFlight(capturedUrl);
-            if (!fetchOk || bytes.empty()) {
-                // DR28: memoise the failure so subsequent frames back off (see IconUrlFetchInBackoff)
-                // rather than re-fetching this URL every frame for the rest of the session.
-                (void)fetchError;
-                RecordIconUrlFetchFailure(capturedUrl);
-                return;
-            }
-            ClearIconUrlFetchFailure(capturedUrl);
-            // Fire-and-forget: warms the LRU texture cache for a later frame; the
-            // Result (texture / error) is intentionally discarded here.
-            (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedUrlKey, bytes.data(), bytes.size());
-        });
+        return SmatchetFieldIconDiskCache::ResolveUrlIcon(cacheDir, capturedUrl, CurrentIconFetchFn(),
+                                                          &SmatchetImageTextureCache::DecodeIconBytesAnyThread);
     });
     outDeferred = true;
     return false;
@@ -351,47 +310,34 @@ bool LoadTextureForResolvedPath(AppController& app, const std::string& resolved,
     if (resolved.rfind("https://", 0) == 0 || resolved.rfind("http://", 0) == 0) {
         return LoadOrFetchUrlImage(app, resolved, out, outError, outDeferred);
     }
-    // Pillar 2 — local-file branch. Fast path: cache hit is cheap (no I/O). Slow path on cache
-    // miss is deferred to a worker — worker reads the bytes, posts back to UI thread for GPU
-    // texture upload via GetOrLoadFromMemory.
+    // Local-file branch. A resident texture is a cheap lookup; otherwise a worker reads (bounded) and decodes
+    // the file and the UI thread uploads the pixels. A file that is missing or does not decode backs off like
+    // a failed fetch, so it is not re-read every frame.
     const std::string cacheKey = std::string("file:") + resolved;
     if (SmatchetImageTextureCache::TryGetCached(cacheKey, out)) {
         return true;
     }
-    if (IconFileReadInFlight(cacheKey)) {
-        outDeferred = true;
+    if (IconInBackoff(cacheKey)) {
+        outError = "Icon file could not be loaded recently.";
         return false;
     }
-    if (!MarkIconFileReadInFlight(cacheKey)) {
+    if (IconInFlight(cacheKey)) {
         outDeferred = true;
         return false;
     }
     const std::string capturedResolved = resolved;
-    const std::string capturedCacheKey = cacheKey;
-    app.LaunchBackgroundTask([&app, capturedResolved, capturedCacheKey]() {
-        std::vector<unsigned char> bytes;
-        /* PILLAR2_WORKER_ONLY */ // est-latency: ~10ms — read of cached icon file (typically < 100 KB).
-        std::ifstream ifs(capturedResolved.c_str(), std::ios::binary);
-        if (ifs) {
-            bytes.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-        }
-        app.PostToMainThread([capturedCacheKey, bytes]() {
-            ClearIconFileReadInFlight(capturedCacheKey);
-            if (bytes.empty()) {
-                return;
-            }
-            // Fire-and-forget: warms the LRU texture cache for a later frame; the
-            // Result (texture / error) is intentionally discarded here.
-            (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedCacheKey, bytes.data(), bytes.size());
-        });
+    LaunchIconResolve(app, cacheKey, [capturedResolved]() {
+        /* PILLAR2_WORKER_ONLY */ // est-latency: ~10ms — bounded read + decode of a small icon file.
+        return SmatchetFieldIconDiskCache::ResolveFileIcon(capturedResolved,
+                                                           &SmatchetImageTextureCache::DecodeIconBytesAnyThread);
     });
     outDeferred = true;
     return false;
 }
 
 // Backwards-compat wrapper for the const-AppController call sites that don't need the deferred
-// distinction (e.g. preview-only/non-priority paths). HTTP fetch still defers; caller sees
-// `false` while the fetch is in flight.
+// distinction (e.g. preview-only/non-priority paths). The resolve still defers to a worker; the caller sees
+// `false` until the texture is resident.
 bool LoadTextureForResolvedPath(const AppController& app, const std::string& resolved, SmatchetLoadedIconTexture& out,
                                 std::string& outError) {
     bool deferred = false;
@@ -410,10 +356,24 @@ bool LoadTextureForResolvedPath(const AppController& app, const std::string& res
  */
 size_t PriorityResolveMemoCap() { return static_cast<size_t>(smatchet::limits::Get().PriorityResolveMemoMax); }
 struct PriorityResolveMemo {
-    std::string CacheKey;  ///< Texture-cache key (empty iff Negative).
-    std::string Label;     ///< Parsed friendly name; preserves tooltip text on the fast path.
-    bool Negative = false; ///< True when the load failed and we want to suppress future retries.
+    std::string CacheKey;       ///< Texture-cache key (empty iff Negative).
+    std::string Label;          ///< Parsed friendly name; preserves tooltip text on the fast path.
+    bool Negative = false;      ///< True when the load failed and we want to suppress future retries.
+    long long NegativeAtMs = 0; ///< Steady-clock ms the negative was recorded; it expires on the DR28 window.
 };
+
+/// True while a negative memo is still inside the DR28 backoff window. An expired negative falls through to
+/// the slow path so a transient failure (offline start, a server that was briefly down) can recover instead
+/// of hiding the icon for the whole session.
+bool NegativeMemoActive(const PriorityResolveMemo& memo) {
+    if (!memo.Negative) {
+        return false;
+    }
+    const long long backoffMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(kIconFetchNegativeBackoff).count();
+    return !SmatchetFieldIconRender::ShouldAttemptIconResolve(
+        true, memo.NegativeAtMs, SteadyMillis(std::chrono::steady_clock::now()), backoffMs);
+}
 std::unordered_map<std::string, PriorityResolveMemo>& PriorityRawValueToCacheKey() {
     static std::unordered_map<std::string, PriorityResolveMemo> m;
     return m;
@@ -448,6 +408,7 @@ void RememberNegativePriorityResolution(const std::string& rawValue, const std::
     PriorityResolveMemo entry;
     entry.Label = label;
     entry.Negative = true;
+    entry.NegativeAtMs = SteadyMillis(std::chrono::steady_clock::now());
     m[rawValue] = entry;
 }
 
@@ -538,6 +499,11 @@ void DrawLoadedIconWithLazyTooltip(const SmatchetLoadedIconTexture& icon, float 
 
 namespace SmatchetFieldIconRender {
 
+void SetIconFetchFnForTest(SmatchetFieldIconDiskCache::FetchFn fn) {
+    std::lock_guard<std::mutex> lock(IconFetchFnMutex());
+    IconFetchFnSlot() = fn ? std::move(fn) : ProductionFetch();
+}
+
 bool DrawImagePathOrUrl(AppController& app, const std::string& pathOrUrl, float width, float height) {
     const std::string resolved = app.ResolveFieldIconAssetPath(pathOrUrl);
     if (resolved.empty()) {
@@ -597,11 +563,12 @@ bool TryGetInlineFieldIconTexture(const AppController& app, const TrackerField& 
         const auto& memo = PriorityRawValueToCacheKey();
         const auto it = memo.find(rawValue);
         if (it != memo.end()) {
-            // Negative entry: load failed previously — return false without re-attempting.
-            if (it->second.Negative) {
+            // Negative entry inside its backoff window: return false without re-attempting. An expired
+            // one falls through to the slow path.
+            if (NegativeMemoActive(it->second)) {
                 return false;
             }
-            if (SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, outIcon)) {
+            if (!it->second.Negative && SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, outIcon)) {
                 return true;
             }
             // Texture evicted — fall through to slow path which will re-load and refresh the memo.
@@ -666,11 +633,12 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
         const auto& memo = PriorityRawValueToCacheKey();
         const auto it = memo.find(rawValue);
         if (it != memo.end()) {
-            // DR28: a known-negative cell short-circuits — no re-parse, no re-fetch this frame.
-            if (it->second.Negative) {
+            // DR28: a known-negative cell short-circuits — no re-parse, no re-fetch this frame — until its
+            // backoff window ends; then the slow path retries it.
+            if (NegativeMemoActive(it->second)) {
                 return false;
             }
-            if (SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, icon)) {
+            if (!it->second.Negative && SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, icon)) {
                 const float maxEdge = ImGui::GetFrameHeight();
                 const std::string& memoLabel = it->second.Label;
                 DrawLoadedIconWithLazyTooltip(icon, maxEdge, tooltipsEnabled, [&]() {

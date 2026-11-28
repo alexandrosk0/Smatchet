@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Persistence/DecodedIcon.h"
 #include "SmatchetResult.h"
 #include "imgui.h"
 
@@ -18,6 +19,15 @@ struct SmatchetLoadedIconTexture {
 };
 
 namespace SmatchetImageTextureCache {
+
+// --- Any thread ---
+
+/**
+ * Decode image bytes (any format stb_image reads) to RGBA32 with the same dimension limits as GetOrLoadFromMemory.
+ * Touches no texture-cache state and no ImGui, so a worker may call it (ANY_THREAD); the UI thread then uploads the
+ * pixels with GetOrCreateFromRgba. Err(reason) on empty or oversized input or a decode failure.
+ */
+Result<DecodedIcon> DecodeIconBytesAnyThread(const unsigned char* bytes, std::size_t byteCount);
 
 // --- UI thread only (every function below touches ImGui state) ---
 

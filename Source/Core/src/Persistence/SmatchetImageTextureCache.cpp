@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <list>
 #include <mutex>
 #include <unordered_map>
@@ -346,6 +347,26 @@ void DropAllForContextTeardown() {
         ReleaseUserTexture(pending[i]);
     }
     pending.clear();
+}
+
+Result<DecodedIcon> DecodeIconBytesAnyThread(const unsigned char* bytes, std::size_t byteCount) {
+    // ANY_THREAD. Safe off the UI thread because DecodeWithStb uses only stb_image entry points that keep
+    // no shared state here: STBI_NO_FAILURE_STRINGS (above) removes stb's failure-reason global, and
+    // stbi_set_flip_vertically_on_load (a global) must never be called anywhere in this program. It reads
+    // no cache statics and no ImGui state.
+    using R = Result<DecodedIcon>;
+    if (bytes == nullptr || byteCount == 0) {
+        return R::Err("Empty image bytes.");
+    }
+    if (byteCount > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        return R::Err("Image bytes exceed the decoder's int length.");
+    }
+    DecodedIcon icon;
+    std::string error;
+    if (!DecodeWithStb(bytes, byteCount, icon.Rgba, icon.Width, icon.Height, error)) {
+        return R::Err(std::move(error));
+    }
+    return R::Ok(std::move(icon));
 }
 
 bool TryGetCached(const std::string& cacheKey, SmatchetLoadedIconTexture& out) {

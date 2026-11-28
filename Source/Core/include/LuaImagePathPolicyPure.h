@@ -3,7 +3,7 @@
 // Pure allowlist policy for the Lua `imgui.image(path)` binding (LuaDrawList::Image).
 //
 // SECURITY (Pillar 3 / SSRF): the image replay path (SmatchetFieldIconRender::DrawImagePathOrUrl ->
-// AppController::ResolveFieldIconAssetPath) passes http(s) URLs straight through to HttpGetBinary,
+// AppController::ResolveFieldIconAssetPath) passes http(s) URLs straight through to the icon fetch,
 // which performs an unauthenticated outbound GET. A Lua-console script must NOT be able to drive an
 // arbitrary outbound request (server-side request forgery, data exfil via crafted URL, or a tracking
 // pixel), so the Lua binding refuses http(s) URLs and permits only non-http(s) local asset paths.

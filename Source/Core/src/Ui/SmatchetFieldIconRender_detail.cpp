@@ -1,6 +1,7 @@
 #include "SmatchetFieldIconRender_detail.h"
 
 #include "JsonParseUtil.h"
+#include "Sha256.h"
 #include "StringUtil.h"
 
 #include <nlohmann/json.hpp>
@@ -8,7 +9,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <functional>
-#include <sstream>
 #include <unordered_set>
 
 namespace SmatchetFieldIconRender {
@@ -148,12 +148,36 @@ bool ParsePriorityJson(const std::string& raw, std::string& outIconUrl, std::str
     return !outIconUrl.empty() || !outSlug.empty() || !outLabel.empty();
 }
 
-std::string UrlToCacheFileName(const std::string& url) {
-    const std::size_t h = std::hash<std::string>{}(url);
-    std::ostringstream oss;
-    oss << "icon_" << std::hex << h << ".bin";
-    return oss.str();
+std::string UrlToCacheFileName(const std::string& url) { return "icon_" + smatchet::hashing::Sha256Hex(url) + ".bin"; }
+
+namespace {
+
+bool IsLowerHexRun(const std::string& s, std::size_t from, std::size_t to) {
+    for (std::size_t i = from; i < to; ++i) {
+        const char c = s[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+            return false;
+        }
+    }
+    return true;
 }
+
+// "icon_" + `hexLen` lowercase hex digits + ".bin"; `minHex`..`maxHex` bounds the digit count.
+bool MatchesIconName(const std::string& name, std::size_t minHex, std::size_t maxHex) {
+    constexpr std::size_t kPrefix = 5; // "icon_"
+    constexpr std::size_t kSuffix = 4; // ".bin"
+    if (name.size() < kPrefix + minHex + kSuffix || name.size() > kPrefix + maxHex + kSuffix ||
+        name.compare(0, kPrefix, "icon_") != 0 || name.compare(name.size() - kSuffix, kSuffix, ".bin") != 0) {
+        return false;
+    }
+    return IsLowerHexRun(name, kPrefix, name.size() - kSuffix);
+}
+
+} // namespace
+
+bool IsIconCacheFileName(const std::string& name) { return MatchesIconName(name, 64, 64); }
+
+bool IsLegacyIconCacheFileName(const std::string& name) { return MatchesIconName(name, 1, 16); }
 
 } // namespace detail
 } // namespace SmatchetFieldIconRender

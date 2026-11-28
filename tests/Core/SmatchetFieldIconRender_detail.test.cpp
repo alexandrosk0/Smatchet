@@ -118,11 +118,38 @@ TEST_CASE("ParsePriorityJson — object, double-encoded, bare label, hostile jun
     CHECK_FALSE(ParsePriorityJson("   ", iconUrl, label, slug));
 }
 
-TEST_CASE("UrlToCacheFileName — stable, distinct, filesystem-safe") {
+TEST_CASE("UrlToCacheFileName — SHA-256 of the URL, stable, distinct, filesystem-safe") {
     const std::string a = UrlToCacheFileName("https://j/i.png");
     CHECK(a == UrlToCacheFileName("https://j/i.png"));
-    CHECK(a.rfind("icon_", 0) == 0);
-    CHECK(a.substr(a.size() - 4) == ".bin");
+    // Golden: icon_ + the NIST SHA-256 of the URL bytes + .bin (64-bit std::hash names collided far sooner).
+    CHECK(a == "icon_c445ec32465dab4696831c7109373dad7d27a9917516186121812d182eae6e15.bin");
     CHECK(a != UrlToCacheFileName("https://j/other.png"));
     CHECK(a.find('/') == std::string::npos);
+    CHECK(a.size() == 5 + 64 + 4);
+}
+
+TEST_CASE("IsIconCacheFileName / IsLegacyIconCacheFileName — exact shapes") {
+    const std::string current = UrlToCacheFileName("https://j/i.png");
+    CHECK(IsIconCacheFileName(current));
+    CHECK_FALSE(IsLegacyIconCacheFileName(current));
+
+    // Older builds named files after a 64-bit std::hash: icon_<1-16 hex>.bin.
+    CHECK(IsLegacyIconCacheFileName("icon_1a2b3c4d5e6f7a8b.bin"));
+    CHECK(IsLegacyIconCacheFileName("icon_0.bin"));
+    CHECK_FALSE(IsIconCacheFileName("icon_1a2b3c4d5e6f7a8b.bin"));
+
+    // Neither: wrong prefix/suffix, uppercase, non-hex, or a length that is neither shape.
+    const std::string sixtyThree(63, 'a');
+    const std::string sixtyFive(65, 'a');
+    CHECK_FALSE(IsIconCacheFileName("icon_" + sixtyThree + ".bin"));
+    CHECK_FALSE(IsIconCacheFileName("icon_" + sixtyFive + ".bin"));
+    CHECK_FALSE(IsLegacyIconCacheFileName("icon_" + sixtyThree + ".bin"));
+    CHECK_FALSE(IsLegacyIconCacheFileName("icon_" + std::string(17, 'a') + ".bin"));
+    CHECK_FALSE(IsIconCacheFileName("icon_" + std::string(64, 'A') + ".bin"));
+    CHECK_FALSE(IsLegacyIconCacheFileName("icon_ZZ.bin"));
+    CHECK_FALSE(IsLegacyIconCacheFileName("icon_.bin"));
+    CHECK_FALSE(IsLegacyIconCacheFileName("icon_ab.png"));
+    CHECK_FALSE(IsLegacyIconCacheFileName("xicon_ab.bin"));
+    CHECK_FALSE(IsLegacyIconCacheFileName(""));
+    CHECK_FALSE(IsIconCacheFileName("icon_" + std::string(64, 'a') + ".bin.part-1-2")); // a temp sibling
 }

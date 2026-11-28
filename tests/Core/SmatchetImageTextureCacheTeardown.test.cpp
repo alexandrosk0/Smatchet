@@ -11,6 +11,7 @@
 #include "imgui_internal.h" // RegisterUserTexture
 
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -171,4 +172,75 @@ TEST_CASE("TextureCacheTeardown: CreateUserTexture validates its input and regis
     SmatchetImageTextureCache::QueueUserTextureDestroy(tex);
     SmatchetImageTextureCache::TickPendingDestroys();
     CHECK(SmatchetImageTextureCache::PendingDestroyCount() == 0);
+}
+
+// --- DecodeIconBytesAnyThread: decode with no ImGui context and no texture-cache state ---
+
+namespace {
+
+// A 2x2 opaque red RGBA PNG.
+const unsigned char kPng2x2[] = {
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
+    0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d, 0x24, 0x00, 0x00, 0x00, 0x11, 0x49,
+    0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x84, 0x19, 0x60, 0x0c, 0x00, 0x47, 0xca, 0x07,
+    0xf9, 0x67, 0x59, 0x6e, 0xb7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+
+// A 600x2 PNG: wider than the 512-pixel icon limit, so the header check must refuse it before decoding.
+const unsigned char kPng600x2[] = {
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x02,
+    0x58, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x84, 0xec, 0xa2, 0x64, 0x00, 0x00, 0x00, 0x24, 0x49,
+    0x44, 0x41, 0x54, 0x78, 0x9c, 0xed, 0xce, 0xb1, 0x09, 0x00, 0x00, 0x08, 0x03, 0xb0, 0xfe, 0xff, 0x74, 0x7d, 0x42,
+    0x10, 0x24, 0x43, 0xf6, 0xa4, 0x49, 0x01, 0x00, 0xd8, 0x93, 0xeb, 0x00, 0x00, 0xc0, 0x37, 0x03, 0xa7, 0x68, 0x57,
+    0x28, 0x30, 0xaa, 0xc4, 0x4b, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+
+} // namespace
+
+TEST_CASE("DecodeIconBytesAnyThread: decodes a PNG to tightly packed RGBA with no ImGui context") {
+    // Deliberately no HeadlessImGui: the decode must not need a context.
+    const Result<DecodedIcon> r = SmatchetImageTextureCache::DecodeIconBytesAnyThread(kPng2x2, sizeof(kPng2x2));
+    REQUIRE(r.has_value());
+    CHECK(r.value().Width == 2);
+    CHECK(r.value().Height == 2);
+    REQUIRE(r.value().Rgba.size() == 16);
+    CHECK(r.value().Rgba[0] == 255);
+    CHECK(r.value().Rgba[1] == 0);
+    CHECK(r.value().Rgba[3] == 255);
+}
+
+TEST_CASE("DecodeIconBytesAnyThread: refuses empty, garbage and oversized-dimension input") {
+    CHECK_FALSE(SmatchetImageTextureCache::DecodeIconBytesAnyThread(nullptr, 4).has_value());
+    CHECK_FALSE(SmatchetImageTextureCache::DecodeIconBytesAnyThread(kPng2x2, 0).has_value());
+    const unsigned char junk[] = {1, 2, 3, 4, 5, 6, 7, 8};
+    CHECK_FALSE(SmatchetImageTextureCache::DecodeIconBytesAnyThread(junk, sizeof(junk)).has_value());
+    // A truncated PNG fails the decode, not the process.
+    CHECK_FALSE(SmatchetImageTextureCache::DecodeIconBytesAnyThread(kPng2x2, sizeof(kPng2x2) / 2).has_value());
+    CHECK_FALSE(SmatchetImageTextureCache::DecodeIconBytesAnyThread(kPng600x2, sizeof(kPng600x2)).has_value());
+}
+
+TEST_CASE("DecodeIconBytesAnyThread: concurrent decodes agree and the result uploads on the UI thread") {
+    std::vector<std::thread> threads;
+    std::vector<int> widths(4, 0);
+    for (int t = 0; t < 4; ++t) {
+        threads.emplace_back([&widths, t]() {
+            for (int i = 0; i < 50; ++i) {
+                const Result<DecodedIcon> r =
+                    SmatchetImageTextureCache::DecodeIconBytesAnyThread(kPng2x2, sizeof(kPng2x2));
+                if (r.has_value()) {
+                    widths[static_cast<std::size_t>(t)] += r.value().Width;
+                }
+            }
+        });
+    }
+    for (std::size_t i = 0; i < threads.size(); ++i) {
+        threads[i].join();
+    }
+    for (std::size_t i = 0; i < widths.size(); ++i) {
+        CHECK(widths[i] == 100);
+    }
+
+    HeadlessImGui gui;
+    const Result<DecodedIcon> r = SmatchetImageTextureCache::DecodeIconBytesAnyThread(kPng2x2, sizeof(kPng2x2));
+    REQUIRE(r.has_value());
+    CHECK(SmatchetImageTextureCache::GetOrCreateFromRgba("decoded", r.value().Rgba, r.value().Width, r.value().Height)
+              .has_value());
 }
