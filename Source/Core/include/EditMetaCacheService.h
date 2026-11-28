@@ -191,9 +191,9 @@ class EditMetaCacheService {
     /// Fetch (or accept from the scope) the edit metadata of one issue; see LoadMode. `started` is a ticket the
     /// caller already began (the focused-row warm registers on the UI thread before launching); null begins one
     /// here. A fetch that is no longer current when it returns (superseded, invalidated) stores nothing. A
-    /// representative result is promoted to its scope and saved. `refused` (optional) is set when no request was
-    /// made because another fetch of this issue is running or `started` was superseded: the issue is neither loaded
-    /// nor failed. Runs on a worker or a caller that may block on the network.
+    /// representative result is promoted to its scope and saved. `refused` (optional) is set when no answer was
+    /// kept: another fetch of this issue is running, `started` was superseded, or the fetch was retired while in
+    /// flight. The issue is then neither loaded nor failed. Runs on a worker or a caller that may block on the network.
     VoidResult LoadIssueEditMeta(const std::shared_ptr<ITrackerBackend>& backend, const std::string& backendKey,
                                  const std::string& issueId, const std::string& issueTypeKey,
                                  const TrackerConfig* configSnapshot, LoadMode mode,
