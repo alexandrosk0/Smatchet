@@ -143,8 +143,11 @@ TEST_CASE("EditMetaCacheService: Refresh, Invalidate, Ensure and readers race wi
     deps.JoinLaunchedThreads();
     REQUIRE(svc.FlushScopeSaves(std::chrono::seconds(10)));
 
-    // Settled: nothing is stuck in flight, so a refresh now produces the scripted answer.
+    // Settled: nothing is stuck in flight, so a refresh now produces the scripted answer. Its scope save (if one is
+    // due) runs inline, so no thread outlives the service.
+    deps.RunOnRealThread = false;
     REQUIRE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", kIssue, "story").has_value());
     CHECK_FALSE(svc.CanEditFieldForIssue(kIssue, "labels"));
     CHECK(svc.CanEditFieldForIssue(kIssue, "summary"));
+    CHECK(svc.FlushScopeSaves(std::chrono::seconds(10)));
 }
