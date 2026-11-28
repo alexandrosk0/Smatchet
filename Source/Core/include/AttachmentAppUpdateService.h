@@ -89,8 +89,9 @@ class AttachmentAppUpdateService {
     /// if a later call rebinds. Safe from any thread; the cache's own methods do file I/O (worker only).
     std::shared_ptr<smatchet::attachments::AttachmentDiskCache> AttachmentCache();
 
-    /// Deletes every downloaded attachment copy (best effort, per entry; a file a viewer holds open is
-    /// skipped). Returns how many entries were removed. Worker only: it does file I/O.
+    /// Deletes every downloaded attachment copy: the cache entries and the copies written outside the cache
+    /// (best effort; a file a viewer holds open is skipped). Returns how many were removed. Worker only: it does file
+    /// I/O.
     std::size_t PurgeLocalAttachmentCache();
 
   private:

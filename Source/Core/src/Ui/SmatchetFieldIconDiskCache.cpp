@@ -1,6 +1,7 @@
 #include "SmatchetFieldIconDiskCache.h"
 
 #include "FileIo.h"
+#include "FileTimeSeconds.h"
 #include "ListRegularFiles.h"
 #include "Logger.h"
 #include "SmatchetFieldIconRender_detail.h"

@@ -120,6 +120,16 @@ TEST_SUITE("AttachmentUncachedStore") {
         CHECK(fs::exists(r.value().FilePath));
     }
 
+    TEST_CASE("SweepUncachedAttachments with a zero age removes every copy (the recreate purge)") {
+        ScopedTempDir dir;
+        const fs::path tmp = fs::path(dir.Path()) / "t";
+        fs::create_directories(tmp);
+        std::ofstream((tmp / "recent.bin").string()) << "r";
+        std::ofstream((tmp / "other.bin").string()) << "o";
+        CHECK(SweepUncachedAttachments(tmp.string(), /*maxAgeSeconds=*/0) == 2);
+        CHECK_FALSE(fs::exists(tmp / "recent.bin"));
+    }
+
     TEST_CASE("SweepUncachedAttachments counts removals and tolerates a missing folder") {
         ScopedTempDir dir;
         CHECK(SweepUncachedAttachments(dir.File("nope") + "/") == 0);

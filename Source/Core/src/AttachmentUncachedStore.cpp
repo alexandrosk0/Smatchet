@@ -37,7 +37,7 @@ std::string UniqueFilePath(const std::string& dir, const std::string& filename, 
 
 } // namespace
 
-std::size_t SweepUncachedAttachments(const std::string& dir) {
+std::size_t SweepUncachedAttachments(const std::string& dir, std::int64_t maxAgeSeconds) {
     std::size_t removed = 0;
     try {
         const std::int64_t now = filetime::NowFileClockEpochSeconds();
@@ -48,7 +48,7 @@ std::size_t SweepUncachedAttachments(const std::string& dir) {
             file.LastModifiedEpochSec = listed.ModifiedEpochSec;
             files.push_back(std::move(file));
         }
-        for (const std::string& name : SelectExpiredUncachedFiles(files, now, kUncachedMaxAgeSeconds)) {
+        for (const std::string& name : SelectExpiredUncachedFiles(files, now, maxAgeSeconds)) {
             std::error_code rmEc;
             if (fs::remove(fs::path(dir) / name, rmEc) && !rmEc) {
                 ++removed;

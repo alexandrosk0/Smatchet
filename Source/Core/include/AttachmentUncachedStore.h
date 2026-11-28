@@ -11,6 +11,7 @@
 #include "TrackerError.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace smatchet {
@@ -22,9 +23,9 @@ namespace attachments {
 Result<LocalAttachment, TrackerError>
 WriteUncachedAttachment(const std::string& userDataDir, const std::string& filename, const FetchedAttachment& fetched);
 
-/// Deletes files in `dir` last written at least kUncachedMaxAgeSeconds ago. Best-effort: a file a viewer still
-/// holds open (Windows) is skipped. Returns how many files were removed.
-std::size_t SweepUncachedAttachments(const std::string& dir);
+/// Deletes files in `dir` last written at least `maxAgeSeconds` ago (default: a day; 0 removes every file).
+/// Best-effort: a file a viewer still holds open (Windows) is skipped. Returns how many files were removed.
+std::size_t SweepUncachedAttachments(const std::string& dir, std::int64_t maxAgeSeconds = kUncachedMaxAgeSeconds);
 
 } // namespace attachments
 } // namespace smatchet

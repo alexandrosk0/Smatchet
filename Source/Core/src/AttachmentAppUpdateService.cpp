@@ -247,7 +247,11 @@ std::shared_ptr<smatchet::attachments::AttachmentDiskCache> AttachmentAppUpdateS
 
 std::size_t AttachmentAppUpdateService::PurgeLocalAttachmentCache() {
     const std::shared_ptr<smatchet::attachments::AttachmentDiskCache> cache = AttachmentCache();
-    return cache->PurgeAll();
+    std::size_t removed = cache->PurgeAll();
+    // Copies written outside the cache (when it could not hold a download) are downloaded copies too.
+    removed += smatchet::attachments::SweepUncachedAttachments(
+        smatchet::attachments::ResolveUncachedAttachmentDir(cache->UserDataDir()), /*maxAgeSeconds=*/0);
+    return removed;
 }
 
 Result<smatchet::attachments::LocalAttachment>
