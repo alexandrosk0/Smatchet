@@ -637,6 +637,10 @@ void AppController::SaveTicketThenRefresh_(GridLiveContext& ctx, std::uint64_t c
                   capturedKey.c_str(), ticket.id.c_str(), ex.what());
         return;
     }
+    if (shuttingDown_.load()) {
+        // The tail flush at quit runs a stranded save here: the row is stored; nothing is left to show it.
+        return;
+    }
     if (ctx.ticketSaveSeq_.load() != saveSeq) {
         // A newer save for this pane is queued and its re-read shows both rows. That re-read admits only its own
         // id, so record this row as the pane's now, as the skipped re-read would have (a no-op on a pane with no
@@ -876,14 +880,45 @@ void AppController::SaveAvailableUsersForOfflineAsync(const std::string& cacheBa
     if (!store || cacheBackendKey.empty() || usersPayloadJson.empty()) {
         return;
     }
-    try {
-        LaunchBackgroundTask([store, cacheBackendKey, payload = std::move(usersPayloadJson)]() {
-            store->UpsertLookup(cacheBackendKey, smatchet::lookup::kUsersKind, smatchet::lookup::kUsersKey, payload);
-        });
-    } catch (const std::exception& ex) {
-        LOG_WARN("AppController: saving the user roster did not start: %s", ex.what());
+    {
+        // Latest wins: a roster still waiting for its turn is replaced, never written after the newer one.
+        std::lock_guard<std::mutex> lock(pendingRosterMutex_);
+        PendingRoster& slot = pendingRosterByBackend_[cacheBackendKey];
+        slot.Store = store;
+        slot.Payload = std::move(usersPayloadJson);
+    }
+    const std::string launchError =
+        usersRosterIo_.Post([this, cacheBackendKey]() { WritePendingRoster_(cacheBackendKey); });
+    if (!launchError.empty()) {
+        // The roster stays queued and is written by the next post (or the shutdown flush).
+        LOG_WARN("AppController: saving the user roster did not start: %s", launchError.c_str());
     }
 }
+
+void AppController::WritePendingRoster_(const std::string& cacheBackendKey) {
+    PendingRoster pending;
+    {
+        std::lock_guard<std::mutex> lock(pendingRosterMutex_);
+        const auto it = pendingRosterByBackend_.find(cacheBackendKey);
+        if (it == pendingRosterByBackend_.end()) {
+            return; // an earlier task of this queue already wrote the newest roster
+        }
+        pending = std::move(it->second);
+        pendingRosterByBackend_.erase(it);
+    }
+    const std::shared_ptr<LocalCacheManager> store = pending.Store.lock();
+    if (!store) {
+        return; // the cache was replaced meanwhile: the new one resyncs and refetches the roster
+    }
+    try {
+        store->UpsertLookup(cacheBackendKey, smatchet::lookup::kUsersKind, smatchet::lookup::kUsersKey,
+                            pending.Payload);
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController: saving the user roster for '%s' failed: %s", cacheBackendKey.c_str(), ex.what());
+    }
+}
+
+bool AppController::FlushUsersRosterSaves(std::chrono::milliseconds timeout) { return usersRosterIo_.Flush(timeout); }
 
 void AppController::SeedAvailableUsersFromStoreAsync() {
     GridLiveContext& ctx = focusedContext(); // latch once: the apply below targets this pane

@@ -291,13 +291,10 @@ AppController::~AppController() {
 #endif
 
     // Join UiDrawSession std::async futures that captured this controller (via static `g_ui`) before
-
     // tearing down members other threads may still touch.
-
     DrainUiDrawSessionFuturesBeforeAppTeardown(*this);
 
-    DrainCatalogWorkBeforeShutdown_(); // queued snapshot saves reach the file; the startup restore read is joined
-    FlushTicketSavesBeforeShutdown_(); // the same for UpdateTicket's queued cache writes
+    FlushQueuesBeforeShutdownFlag_(); // queued snapshot / ticket / left-view writes reach their files
     shuttingDown_.store(true);
 
     // Drain the in-flight connectivity probe future before joining the background pool — the FSM's
@@ -308,6 +305,8 @@ AppController::~AppController() {
     }
 
     JoinBackgroundTasks();
+
+    FlushSerialQueuesOnShutdownThread_(); // saves posted once the pool was flagged lost their drain: run them here
 
     // A4 (BACKLOG_CODE_REVIEW.md): every background thread that can emit a log line is joined
     // above, so flush the async file sink now — this guarantees the whole shutdown-sequence log

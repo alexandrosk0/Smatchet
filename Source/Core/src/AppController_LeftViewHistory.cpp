@@ -93,11 +93,12 @@ void AppController::initLeftViewHistory_() {
     leftViewHistory_->Load();
 }
 
-void AppController::FlushLeftViewHistoryBeforeShutdown_() {
+void AppController::FlushLeftViewHistoryBeforeShutdown_(std::chrono::steady_clock::time_point deadline) {
     // Once shuttingDown_ is set, LaunchBackgroundTask drops the queue's drain task, so a departure recorded just
     // before quit would never reach SQLite. Bounded like the other pre-shutdown flushes.
-    if (leftViewHistory_ && !leftViewHistory_->Flush(std::chrono::seconds(5))) {
-        LOG_WARN("AppController shutdown: a queued left-view history write did not finish within 5 s.");
+    if (leftViewHistory_ && !leftViewHistory_->Flush(smatchet::RemainingUntil(deadline))) {
+        LOG_WARN("AppController shutdown: a queued left-view history write did not finish within the shared "
+                 "pre-shutdown budget.");
     }
 }
 

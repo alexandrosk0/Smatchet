@@ -965,8 +965,12 @@ class AppController : public IAppThreading,
     void SetAvailableUsers(std::vector<TrackerUser> users);
     /// UI thread. Save a live user roster (smatchet::lookup::SerializeUsers output) to the lookup cache
     /// under `cacheBackendKey`, on a worker, for offline use (Quality Pillar 6). An empty payload saves
-    /// nothing, so an empty or failed fetch never replaces a saved roster.
+    /// nothing, so an empty or failed fetch never replaces a saved roster. Saves for one backend are
+    /// latest-wins: a newer roster replaces one still waiting to be written, so the stored row is always the
+    /// newest and no obsolete write reaches SQLite.
     void SaveAvailableUsersForOfflineAsync(const std::string& cacheBackendKey, std::string usersPayloadJson);
+    /// Blocks until every queued roster save has run, or `timeout` passes (true: none left). Shutdown and tests.
+    bool FlushUsersRosterSaves(std::chrono::milliseconds timeout);
     /// UI thread. When the focused pane has no users yet, load the roster saved by an earlier session
     /// on a worker and apply it on the UI thread, unless a live roster (or another tracker) got there
     /// first. Lets the JQL autocomplete and assignee names work before, or without, a live fetch.
@@ -1999,6 +2003,12 @@ class AppController : public IAppThreading,
     /// poll it from its warm worker to bail out of long loops (god-object decomposition Phase 1).
     bool IsShuttingDown() const override { return shuttingDown_.load(); }
 
+    /// UI thread. Waits up to `budget` (shared by every queue) for the queued writes that reach the local cache:
+    /// UpdateTicket's saves, the left-view history, the user-roster saves and the edit-permissions saves. A task a
+    /// refused launch left queued runs on the caller. For the Android host's APP_CMD_SAVE_STATE, where the process
+    /// may be killed once backgrounded. True when every queue drained.
+    bool FlushPendingCacheWrites(std::chrono::milliseconds budget);
+
   private:
     void JoinBackgroundTasks();
     /// Join + erase any background workers whose task has completed (their `done` flag is set,
@@ -2052,6 +2062,22 @@ class AppController : public IAppThreading,
     /// also flushes the queue before shutdown flags the pool, so a save still queued reaches the file.
     smatchet::SerialTaskQueue catalogSnapshotIo_{
         [this](std::function<void()> task) { LaunchBackgroundTask(std::move(task)); }};
+    /// The user roster's saves (`SaveAvailableUsersForOfflineAsync`), off the UI thread (Pillar 2). A save sets the
+    /// backend's slot in `pendingRosterByBackend_` and posts a task that writes whatever the slot holds then, so
+    /// the newest roster wins and the queue never writes an obsolete one. Declared after `ticketSaves_` and
+    /// `catalogSnapshotIo_` only for readability: each queue is flushed explicitly at shutdown.
+    smatchet::SerialTaskQueue usersRosterIo_{
+        [this](std::function<void()> task) { LaunchBackgroundTask(std::move(task)); }};
+    /// One roster waiting to be written: the cache it was meant for (weak: a save never keeps a replaced
+    /// database file open) and its payload.
+    struct PendingRoster {
+        std::weak_ptr<LocalCacheManager> Store;
+        std::string Payload;
+    };
+    std::mutex pendingRosterMutex_; ///< guards pendingRosterByBackend_ (a leaf lock)
+    std::unordered_map<std::string, PendingRoster> pendingRosterByBackend_; ///< cache backend key -> newest roster
+    /// usersRosterIo_ task body: write (and clear) the roster waiting under `cacheBackendKey`, if any.
+    void WritePendingRoster_(const std::string& cacheBackendKey);
 
     // Offline-replay throttle + in-flight guards + legacyPendingStartupBanner_ all moved to
     // OfflineQueueService (item 12 extraction phases 1A / 1C). Accessed via offlineQueue_.
@@ -2148,13 +2174,21 @@ class AppController : public IAppThreading,
     /// UI thread: lift the gate on every service, refresh what the new (or missing) database changed, call `onDone`.
     void FinishCacheRecreate_(const smatchet::sync::CacheRecreateOutcome& outcome,
                               const std::function<void(const smatchet::sync::CacheRecreateOutcome&)>& onDone);
+    /// ~AppController, before `shuttingDown_` is set: every serial queue that writes (catalog snapshot, ticket
+    /// saves, left-view history, user roster, edit-permission scopes) flushes under ONE shared budget
+    /// (`kShutdownPreFlagBudget`), not one budget each.
+    void FlushQueuesBeforeShutdownFlag_();
     /// ~AppController: a field-catalog snapshot save still queued must reach the file (once the pool is flagged its
     /// drain would be skipped; bounded, a save is one small file write), and the startup restore's std::async read
     /// is waited for (RAII join) rather than left to the member destructor.
-    void DrainCatalogWorkBeforeShutdown_();
+    void DrainCatalogWorkBeforeShutdown_(std::chrono::steady_clock::time_point deadline);
     /// ~AppController: flush `ticketSaves_` (bounded) before shutdown makes LaunchBackgroundTask drop its drain.
-    void FlushTicketSavesBeforeShutdown_();
-    void FlushLeftViewHistoryBeforeShutdown_();
+    void FlushTicketSavesBeforeShutdown_(std::chrono::steady_clock::time_point deadline);
+    void FlushLeftViewHistoryBeforeShutdown_(std::chrono::steady_clock::time_point deadline);
+    /// ~AppController, after JoinBackgroundTasks: a Post that raced `shuttingDown_` had its drain dropped and its
+    /// task left queued. Runs those on this thread (they run to completion: the budget bounds only the wait on a
+    /// drain another thread is still running); logs ERROR for what is left.
+    void FlushSerialQueuesOnShutdownThread_();
     std::unique_ptr<smatchet::LeftViewHistoryService> leftViewHistory_;
     bool leftViewNotifyEnabled_ = false; ///< The user's notify preference, from the last reload's config; UI thread.
     /// ~AppController: a cache recreate still running stops waiting on the UI thread (its posts are dropped once the

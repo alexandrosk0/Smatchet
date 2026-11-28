@@ -268,7 +268,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # redactor — link its TU so the connectivity-banner scrub resolves in this target.
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiErrorRedact.cpp"
         # --- EditMetaCacheService (AppController god-object decomposition Phase 1): per-issue +
-        #     per-issue-type editmeta cache (editMetaMutex_) loaded from BOTH the UI thread and
+        #     per-(project, issue type) scope editmeta cache (editMetaMutex_) loaded from BOTH the UI thread and
         #     the background warm worker — a genuine cross-thread mutex, highest-value TSan
         #     surface. EditMetaCacheConcurrent.test runs the warm worker on a real std::thread
         #     against a concurrent CanEditFieldForIssue reader (sibling of TicketSyncService
@@ -278,6 +278,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         #     (it is in the SmatchetTests block but not this one). cpr/ImGui/SQLite-free; tests
         #     construct via header-only fakes (FakeEditMetaDeps / FakeTrackerClient).
         Core/EditMetaCacheService.test.cpp
+        Core/EditMetaScopePure.test.cpp
         Core/EditMetaCacheConcurrent.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/EditMetaCacheService.cpp"
         # --- FieldEditPipelineService (AppController god-object decomposition Phase 2): the
@@ -372,6 +373,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/CommentBlobFormatPure.test.cpp
         Core/PublishedSnapshot.test.cpp
         Core/SerialTaskQueue.test.cpp
+        Core/LaunchClaim.test.cpp
         Core/StringUtilTrim.test.cpp
         Core/TrackerIssueExistsProbe.test.cpp
         Core/Tracker2xxErrorGuard.test.cpp
@@ -1048,6 +1050,7 @@ add_executable(SmatchetTests
     # SQLite. Production TU added to the prod-src block below; ProjectResolver.cpp (its
     # ExtractIssueKeyPrefix dep) is already linked in this target.
     Core/EditMetaCacheService.test.cpp
+    Core/EditMetaScopePure.test.cpp
     # FieldEditPipelineService (AppController god-object decomposition Phase 2) — the field-edit
     # network pipeline: regular/sprint/timetracking success, read-only + editmeta-deny blocks,
     # 400-retry editmeta refresh, offline-prepare contract, ApplyFieldEditResult. Drives a
@@ -1382,6 +1385,7 @@ add_executable(SmatchetTests
     Core/CommentBlobFormatPure.test.cpp
     Core/PublishedSnapshot.test.cpp
     Core/SerialTaskQueue.test.cpp
+    Core/LaunchClaim.test.cpp
     Core/BulkImportStatusPure.test.cpp
     Core/LazyEnrichmentCarryForwardPure.test.cpp
     Core/SmatchetCommentsModalSeedPure.test.cpp
@@ -2301,6 +2305,7 @@ set(_smatchet_pure_sync_test_files
     # TUs + FakeEditMetaDeps stay SQLite-free (run on header-only fakes; the editmeta cache is
     # plain in-memory containers, no LocalCacheManager).
     Core/EditMetaCacheService.test.cpp
+    Core/EditMetaScopePure.test.cpp
     Core/EditMetaCacheConcurrent.test.cpp
     # FieldEditPipelineService (Phase 2) + its fake stay SQLite-free too (HasCache() is a
     # predicate, not the raw Cache* — ADR-0020 sync-cache purity).
