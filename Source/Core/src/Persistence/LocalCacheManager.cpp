@@ -243,8 +243,24 @@ int OpenBusyHandler(void* context, int /*attempts*/) {
 
 LocalCacheManager::LocalCacheManager(const std::string& dbPath) : LocalCacheManager(dbPath, OpenOptions()) {}
 
+namespace {
+
+/// The cache needs `INSERT ... RETURNING` (SQLite 3.35). The compile-time check covers the SQLite we build against;
+/// this covers the library the process actually loaded, so an older one fails the open (a session-only cache) instead
+/// of failing the first enqueue.
+const std::string& CheckSqliteVersionForOpen(const std::string& dbPath) {
+    if (sqlite3_libversion_number() < lcm_detail::kMinSqliteVersionNumber) {
+        throw std::runtime_error(std::string("SQLite ") + sqlite3_libversion() +
+                                 " is too old for the local cache (3.35 or newer is required)");
+    }
+    return dbPath;
+}
+
+} // namespace
+
 LocalCacheManager::LocalCacheManager(const std::string& dbPath, const OpenOptions& options)
-    : dbPath_(dbPath), db_(dbPath_, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX) {
+    : dbPath_(CheckSqliteVersionForOpen(dbPath)),
+      db_(dbPath_, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX) {
     LOG_INFO("LocalCacheManager: opening db path=%s", dbPath_.c_str());
     lcm_detail::OpenBusyState busyState;
     busyState.Abort = options.Abort;
@@ -991,13 +1007,12 @@ std::int64_t LocalCacheManager::AppendChatMessage(const AiMessage& msg) {
         const ConnGuard guard(*this, "AppendChatMessage");
         SQLite::Database& db = conn(guard);
         SQLite::Statement ins(db, "INSERT INTO ai_chat_messages (created_at, role, content, pinned) "
-                                  "VALUES (?, ?, ?, ?)");
+                                  "VALUES (?, ?, ?, ?) RETURNING id");
         ins.bind(1, static_cast<std::int64_t>(msg.CreatedAtUnixMs));
         ins.bind(2, msg.Role);
         ins.bind(3, msg.Content);
         ins.bind(4, msg.Pinned ? 1 : 0);
-        ins.exec();
-        return db.getLastInsertRowid();
+        return lcm_detail::StepReturningId(ins);
     } catch (const std::exception& ex) {
         // Pillar 3 graceful degradation — the UI keeps the in-memory copy; persistence
         // failures do not surface a modal. Same shape as ConfigManager::Save errors.
@@ -1013,8 +1028,7 @@ void LocalCacheManager::UpdateChatMessagePin(std::int64_t id, bool pinned) {
         SQLite::Statement upd(db, "UPDATE ai_chat_messages SET pinned = ? WHERE id = ?");
         upd.bind(1, pinned ? 1 : 0);
         upd.bind(2, static_cast<std::int64_t>(id));
-        upd.exec();
-        if (db.getChanges() == 0) {
+        if (upd.exec() == 0) {
             LOG_WARN("LocalCacheManager::UpdateChatMessagePin: no row id=%lld", static_cast<long long>(id));
         }
     } catch (const std::exception& ex) {

@@ -33,8 +33,7 @@ std::size_t RekeyRows(const LocalCacheManager::ConnGuard& /*guard*/, SQLite::Dat
     SQLite::Statement st(db, sql);
     st.bind(1, to);
     st.bind(2, from);
-    st.exec();
-    const int changed = db.getChanges();
+    const int changed = st.exec();
     return changed > 0 ? static_cast<std::size_t>(changed) : 0u;
 }
 

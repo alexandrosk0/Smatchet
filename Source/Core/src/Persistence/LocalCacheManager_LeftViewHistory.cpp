@@ -47,9 +47,6 @@ bool LocalCacheManager::CommitLeftViewDepartures(std::vector<smatchet::LeftViewR
         const std::vector<std::int64_t> ids = RunTxn_(
             "CommitLeftViewDepartures", [&](const ConnGuard& guard, SQLite::Database& db) -> std::vector<std::int64_t> {
                 std::vector<std::int64_t> inserted(rows.size());
-                for (std::size_t i = 0; i < rows.size(); ++i) {
-                    inserted[i] = rows[i].id; // kept when the insert reports no row
-                }
                 SQLite::Statement insert(db, "INSERT INTO left_view_history (backend_key, pane_id, view_id, "
                                              "view_name, query, issue_key, summary, kind, reason_kind, reason, "
                                              "reason_detail_json, author, browse_url, last_known_json, left_at, "
@@ -76,9 +73,7 @@ bool LocalCacheManager::CommitLeftViewDepartures(std::vector<smatchet::LeftViewR
                     insert.bind(15, static_cast<std::int64_t>(row.leftAtUnixSec));
                     insert.bind(16, static_cast<std::int64_t>(row.listedAtUnixSec));
                     // RETURNING reads the id from this statement itself, not from the connection.
-                    if (insert.executeStep()) {
-                        inserted[i] = insert.getColumn(0).getInt64();
-                    }
+                    inserted[i] = lcm_detail::StepReturningId(insert);
                     insert.reset(); // a statement still stepping would block the COMMIT
                 }
                 SQLite::Statement listing(db, "INSERT OR REPLACE INTO lookup_cache (backend_key, kind, cache_key, "

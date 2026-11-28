@@ -21,12 +21,11 @@ std::int64_t LocalCacheManager::EnqueuePendingCreate(const std::string& backendK
         const auto now = std::chrono::system_clock::now();
         const std::int64_t epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
         SQLite::Statement insert(db, "INSERT INTO pending_creates (payload, backend_key, attempts, last_error, "
-                                     "created_at) VALUES (?, ?, 0, '', ?)");
+                                     "created_at) VALUES (?, ?, 0, '', ?) RETURNING id");
         insert.bind(1, payload);
         insert.bind(2, backendKey);
         insert.bind(3, epoch);
-        insert.exec();
-        return db.getLastInsertRowid();
+        return lcm_detail::StepReturningId(insert);
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::EnqueuePendingCreate failed err=%s", ex.what());
         throw;
@@ -261,8 +260,7 @@ void LocalCacheManager::DeleteDeadPendingCreate(const std::int64_t deadId) {
         SQLite::Database& db = conn(guard);
         SQLite::Statement del(db, "DELETE FROM pending_creates_dead WHERE dead_id = ?");
         del.bind(1, deadId);
-        del.exec();
-        if (db.getChanges() == 0) {
+        if (del.exec() == 0) {
             LOG_WARN("LocalCacheManager::DeleteDeadPendingCreate: no row for dead_id=%lld",
                      static_cast<long long>(deadId));
         }
@@ -285,7 +283,7 @@ std::int64_t LocalCacheManager::EnqueuePendingFieldEdit(const std::string& backe
         const std::int64_t epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
         SQLite::Statement insert(db, "INSERT INTO pending_field_edits (issue_key, field_id, fields_payload_json, "
                                      "original_rich_value, original_value, has_original_value, backend_key, attempts, "
-                                     "last_error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', ?)");
+                                     "last_error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', ?) RETURNING id");
         insert.bind(1, issueKey);
         insert.bind(2, fieldId);
         insert.bind(3, fieldsPayloadJson);
@@ -302,8 +300,7 @@ std::int64_t LocalCacheManager::EnqueuePendingFieldEdit(const std::string& backe
         insert.bind(6, hasOriginalValue ? 1 : 0);
         insert.bind(7, backendKey);
         insert.bind(8, epoch);
-        insert.exec();
-        return db.getLastInsertRowid();
+        return lcm_detail::StepReturningId(insert);
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::EnqueuePendingFieldEdit failed err=%s", ex.what());
         throw;
@@ -597,8 +594,7 @@ void LocalCacheManager::DeleteDeadPendingFieldEdit(const std::int64_t deadId) {
         SQLite::Database& db = conn(guard);
         SQLite::Statement del(db, "DELETE FROM pending_field_edits_dead WHERE dead_id = ?");
         del.bind(1, deadId);
-        del.exec();
-        if (db.getChanges() == 0) {
+        if (del.exec() == 0) {
             LOG_WARN("LocalCacheManager::DeleteDeadPendingFieldEdit: no row for dead_id=%lld",
                      static_cast<long long>(deadId));
         }

@@ -10,13 +10,22 @@
 #include <SQLiteCpp/SQLiteCpp.h>
 
 #include <chrono>
+#include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <thread> // sleep_for: bounded backoff between transaction attempts
 #include <type_traits>
 #include <utility>
 
+// `INSERT ... RETURNING` (StepReturningId below) needs SQLite 3.35. The bundled amalgamation is far newer; this stops a
+// build pointed at an older system SQLite. The constructor also checks the version the process actually loaded.
+static_assert(SQLITE_VERSION_NUMBER >= 3035000, "LocalCacheManager needs SQLite 3.35 or newer (INSERT ... RETURNING)");
+
 namespace lcm_detail {
+
+/// Oldest SQLite the cache runs on (`INSERT ... RETURNING`). Checked against the loaded library at open.
+constexpr int kMinSqliteVersionNumber = 3035000;
 
 /// Total wall-clock budget for retrying one write transaction on a transient BUSY/LOCKED (issue #2045). The attempt
 /// count alone bounds nothing a user can feel: each attempt may sit for the whole armed busy_timeout (5 s) before
@@ -33,6 +42,21 @@ template <> struct TxnSlot<void> {
     template <typename Fn> void Run(Fn&& fn) { fn(); }
     void Take() {}
 };
+
+/// Runs an `INSERT ... RETURNING id` and returns the id. The id comes from the statement itself, so a second
+/// connection's insert can never be reported as this one's, and the statement is stepped to DONE so a failing
+/// autocommit COMMIT (a deferred foreign-key violation, a full disk) throws here instead of leaving the caller with the
+/// id of a row that is not there.
+inline std::int64_t StepReturningId(SQLite::Statement& insert) {
+    if (!insert.executeStep()) {
+        throw std::runtime_error("INSERT ... RETURNING produced no row");
+    }
+    const std::int64_t id = insert.getColumn(0).getInt64();
+    if (insert.executeStep()) {
+        throw std::runtime_error("INSERT ... RETURNING produced more than one row");
+    }
+    return id;
+}
 
 /// True if `table` has column `col` (identifier names only; must be fixed literals at call sites). The guard proves
 /// the caller holds the connection.

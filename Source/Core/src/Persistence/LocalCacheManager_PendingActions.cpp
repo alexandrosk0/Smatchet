@@ -108,10 +108,7 @@ std::int64_t LocalCacheManager::EnqueuePendingAction(const std::string& backendK
                                      "state, attempts, last_error, created_at) VALUES (?, ?, ?, ?, ?, 0, '', ?) "
                                      "RETURNING id");
         BindAll(insert, 1, backendKey, kind, issueKey, payloadJson, state, NowEpochSec());
-        if (!insert.executeStep()) {
-            throw std::runtime_error("pending_actions insert returned no id");
-        }
-        return insert.getColumn(0).getInt64();
+        return lcm_detail::StepReturningId(insert);
     });
 }
 

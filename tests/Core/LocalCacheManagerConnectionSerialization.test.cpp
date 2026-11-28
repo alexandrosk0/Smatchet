@@ -4,6 +4,7 @@
 // foreign-guard check, and carries the hidden hold-time benchmark.
 
 #include "LocalCacheManager.h"
+#include "../../Source/Core/src/Persistence/LocalCacheManagerInternal.h"
 
 #include "LocalCacheManagerTestAccess.h"
 #include "SqliteMemFixture.h"
@@ -299,9 +300,14 @@ TEST_CASE("LocalCacheManager snapshot: a read never mixes one ticket's old and n
     writer.SaveTicket(kBk, makeTicket(0));
 
     std::atomic<bool> stop{false};
+    std::atomic<bool> writerFailed{false};
     std::thread rewriting([&]() {
-        for (int generation = 1; !stop.load(); ++generation) {
-            writer.SaveTicket(kBk, makeTicket(generation));
+        try {
+            for (int generation = 1; !stop.load(); ++generation) {
+                writer.SaveTicket(kBk, makeTicket(generation));
+            }
+        } catch (const std::exception&) {
+            writerFailed.store(true); // reported by the CHECK below, never an escape from the thread
         }
     });
 
@@ -328,6 +334,42 @@ TEST_CASE("LocalCacheManager snapshot: a read never mixes one ticket's old and n
     }
     stop.store(true);
     rewriting.join();
+    CHECK_FALSE(writerFailed.load());
     CHECK(reads > 10);
     CHECK(torn == 0);
+}
+
+TEST_CASE("StepReturningId: returns the id of this statement's row, and a failing commit leaves no row and throws") {
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec("CREATE TABLE parent (id INTEGER PRIMARY KEY)");
+    db.exec("CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER "
+            "REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)");
+    db.exec("INSERT INTO parent (id) VALUES (7)");
+
+    SQLite::Statement ok(db, "INSERT INTO child (parent_id) VALUES (7) RETURNING id");
+    CHECK(lcm_detail::StepReturningId(ok) == 1);
+
+    // The violation of a deferred foreign key shows up only when the autocommit COMMIT runs, which is the statement's
+    // second step: the caller must get an exception, not the id of a row that is not there.
+    SQLite::Statement bad(db, "INSERT INTO child (parent_id) VALUES (999) RETURNING id");
+    CHECK_THROWS_AS(lcm_detail::StepReturningId(bad), SQLite::Exception);
+    SQLite::Statement count(db, "SELECT COUNT(*) FROM child");
+    REQUIRE(count.executeStep());
+    CHECK(count.getColumn(0).getInt() == 1); // only the good row
+
+    // A statement that returns no row is an error too.
+    SQLite::Statement none(db, "INSERT INTO child (parent_id) SELECT 7 WHERE 0 RETURNING id");
+    CHECK_THROWS_AS(lcm_detail::StepReturningId(none), std::runtime_error);
+}
+
+TEST_CASE("LocalCacheManager enqueue ids come from their own statements") {
+    smatchet_tests::SqliteMemFixture fix;
+    LocalCacheManager& mgr = fix.Ref();
+    const std::int64_t a = mgr.EnqueuePendingCreate(kBk, "{}");
+    const std::int64_t b = mgr.EnqueuePendingCreate(kBk, "{}");
+    CHECK(a > 0);
+    CHECK(b == a + 1);
+    const std::int64_t c = mgr.EnqueuePendingFieldEdit(kBk, "A-1", "summary", "{\"summary\":\"x\"}");
+    CHECK(c > 0);
 }
