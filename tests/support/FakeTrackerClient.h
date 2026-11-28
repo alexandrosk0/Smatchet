@@ -1047,7 +1047,7 @@ class FakeTrackerClient : public ITrackerBackend,
     std::size_t FetchFieldCatalogCalls() const { return fetchFieldCatalogCalls_; }
     void SetFieldCatalogResult(TrackerFieldCatalogResult result) { fieldCatalogResult_ = result; }
 
-    std::size_t FetchIssueTransitionsCalls() const { return fetchIssueTransitionsCalls_; }
+    std::size_t FetchIssueTransitionsCalls() const { return fetchIssueTransitionsCalls_.load(); }
     void SetIssueTransitions(const std::string& issueId, std::vector<TrackerFieldOption> transitions) {
         issueTransitionsByIssueId_[issueId] = std::move(transitions);
     }
@@ -1278,7 +1278,7 @@ class FakeTrackerClient : public ITrackerBackend,
     TrackerError issueTransitionsError_;
     bool issueTransitionsThrows_ = false;
     bool supportsIssueTransitions_ = false;
-    std::size_t fetchIssueTransitionsCalls_ = 0;
+    std::atomic<std::size_t> fetchIssueTransitionsCalls_{0}; // workers fetch concurrently in the TSan cases
 
     // FetchIssueComments (Pillar 6)
     std::unordered_map<std::string, std::vector<TrackerIssueComment>> issueCommentsByIssueKey_;
