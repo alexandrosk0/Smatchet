@@ -1999,6 +1999,11 @@ class AppController : public IAppThreading,
     /// poll it from its warm worker to bail out of long loops (god-object decomposition Phase 1).
     bool IsShuttingDown() const override { return shuttingDown_.load(); }
 
+    /// UI thread. Waits up to `budget` (shared by every queue) for the queued writes that reach the local cache:
+    /// UpdateTicket's saves and the left-view history. A task a refused launch left queued runs on the caller. For the Android host's
+    /// APP_CMD_SAVE_STATE, where the process may be killed once backgrounded. True when every queue drained.
+    bool FlushPendingCacheWrites(std::chrono::milliseconds budget);
+
   private:
     void JoinBackgroundTasks();
     /// Join + erase any background workers whose task has completed (their `done` flag is set,
@@ -2148,13 +2153,20 @@ class AppController : public IAppThreading,
     /// UI thread: lift the gate on every service, refresh what the new (or missing) database changed, call `onDone`.
     void FinishCacheRecreate_(const smatchet::sync::CacheRecreateOutcome& outcome,
                               const std::function<void(const smatchet::sync::CacheRecreateOutcome&)>& onDone);
+    /// ~AppController, before `shuttingDown_` is set: every serial queue that writes (catalog snapshot, ticket
+    /// saves, left-view history) flushes under ONE shared budget (`kShutdownPreFlagBudget`), not one budget each.
     /// ~AppController: a field-catalog snapshot save still queued must reach the file (once the pool is flagged its
     /// drain would be skipped; bounded, a save is one small file write), and the startup restore's std::async read
     /// is waited for (RAII join) rather than left to the member destructor.
-    void DrainCatalogWorkBeforeShutdown_();
+    void FlushQueuesBeforeShutdownFlag_();
+    void DrainCatalogWorkBeforeShutdown_(std::chrono::steady_clock::time_point deadline);
     /// ~AppController: flush `ticketSaves_` (bounded) before shutdown makes LaunchBackgroundTask drop its drain.
-    void FlushTicketSavesBeforeShutdown_();
-    void FlushLeftViewHistoryBeforeShutdown_();
+    void FlushTicketSavesBeforeShutdown_(std::chrono::steady_clock::time_point deadline);
+    void FlushLeftViewHistoryBeforeShutdown_(std::chrono::steady_clock::time_point deadline);
+    /// ~AppController, after JoinBackgroundTasks: a Post that raced `shuttingDown_` had its drain dropped and its
+    /// task left queued. Runs those on this thread (they run to completion: the budget bounds only the wait on a
+    /// drain another thread is still running); logs ERROR for what is left.
+    void FlushSerialQueuesOnShutdownThread_();
     std::unique_ptr<smatchet::LeftViewHistoryService> leftViewHistory_;
     bool leftViewNotifyEnabled_ = false; ///< The user's notify preference, from the last reload's config; UI thread.
     /// ~AppController: a cache recreate still running stops waiting on the UI thread (its posts are dropped once the

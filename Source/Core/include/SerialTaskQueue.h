@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <deque>
 #include <exception>
 #include <functional>
@@ -25,6 +26,13 @@
 #include <utility>
 
 namespace smatchet {
+
+/// Time left until `deadline`, never negative. Lets several queues share one flush budget (shutdown).
+inline std::chrono::milliseconds RemainingUntil(std::chrono::steady_clock::time_point deadline) {
+    const auto left =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+    return left.count() > 0 ? left : std::chrono::milliseconds(0);
+}
 
 class SerialTaskQueue {
   public:
@@ -64,8 +72,15 @@ class SerialTaskQueue {
         return std::string();
     }
 
-    /// Blocks until every task posted so far has run, or `timeout` passes (true: the queue is idle). A task
-    /// stranded by a failed launch runs on the calling thread. Tests and the owner's shutdown only: it parks
+    /// Tasks not yet finished: the queued ones plus the one running. Any thread; for shutdown diagnostics.
+    std::size_t PendingCount() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return tasks_.size() + (running_ ? 1U : 0U);
+    }
+
+    /// Blocks until every task posted so far has run, or `timeout` passes (true: the queue is idle). `timeout`
+    /// bounds the wait for a drain another thread is running; a task stranded by a failed launch runs on the
+    /// calling thread to completion, whatever the budget. Tests and the owner's shutdown only: it parks
     /// the caller for as long as the tasks take.
     bool Flush(std::chrono::milliseconds timeout = std::chrono::hours(24)) {
         const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -89,6 +104,7 @@ class SerialTaskQueue {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             draining_ = false;
+            running_ = false; // a task that threw ended its drain
         }
         idle_.notify_all();
     }
@@ -115,6 +131,7 @@ class SerialTaskQueue {
             std::function<void()> task;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
+                running_ = false; // the previous task finished
                 if (tasks_.empty()) {
                     draining_ = false;
                     released = true;
@@ -123,16 +140,18 @@ class SerialTaskQueue {
                 }
                 task = std::move(tasks_.front());
                 tasks_.pop_front();
+                running_ = true;
             }
             task();
         }
     }
 
     Launcher launch_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable idle_;
     std::deque<std::function<void()>> tasks_;
     bool draining_ = false;
+    bool running_ = false; ///< a popped task is executing (guarded by mutex_; counted by PendingCount)
 };
 
 } // namespace smatchet

@@ -40,6 +40,12 @@
 
 namespace {
 
+// ~AppController flush budgets (AGENTS.md § Persistence: SQLite writes must not be lost at quit). The pre-flag budget
+// is shared by every queue flushed before `shuttingDown_` is set; the tail budget by every queue flushed after the
+// pool is joined.
+constexpr std::chrono::seconds kShutdownPreFlagBudget{5};
+constexpr std::chrono::seconds kShutdownTailBudget{3};
+
 // Deletes the database file and its -wal/-shm sidecars. `anyRemoved` is set once the database file itself is
 // gone, so a caller can tell a wipe that removed the rows from one that left them in place.
 //
@@ -185,22 +191,70 @@ VoidResult AppController::StartRecreateLocalCacheDatabase(
     return VoidOk();
 }
 
-void AppController::DrainCatalogWorkBeforeShutdown_() {
-    if (!catalogSnapshotIo_.Flush(std::chrono::seconds(5))) {
-        LOG_WARN("AppController shutdown: the field-catalog snapshot save did not finish within 5 s.");
+void AppController::FlushQueuesBeforeShutdownFlag_() {
+    const auto deadline = std::chrono::steady_clock::now() + kShutdownPreFlagBudget;
+    DrainCatalogWorkBeforeShutdown_(deadline);
+    FlushTicketSavesBeforeShutdown_(deadline);
+}
+
+void AppController::DrainCatalogWorkBeforeShutdown_(std::chrono::steady_clock::time_point deadline) {
+    if (!catalogSnapshotIo_.Flush(smatchet::RemainingUntil(deadline))) {
+        LOG_WARN("AppController shutdown: the field-catalog snapshot save did not finish within the %lld s budget.",
+                 static_cast<long long>(kShutdownPreFlagBudget.count()));
     }
     if (startupCatalogRestoreSlot_.valid()) {
         startupCatalogRestoreSlot_.wait();
     }
 }
 
-void AppController::FlushTicketSavesBeforeShutdown_() {
+void AppController::FlushTicketSavesBeforeShutdown_(std::chrono::steady_clock::time_point deadline) {
     // Once shuttingDown_ is set, LaunchBackgroundTask drops the queue's drain task, so a save posted just before
-    // quit would never reach SQLite. Bounded like the catalog flush above.
-    if (!ticketSaves_.Flush(std::chrono::seconds(5))) {
-        LOG_WARN("AppController shutdown: a queued ticket cache save did not finish within 5 s.");
+    // quit would never reach SQLite. Bounded by the budget shared with the catalog flush above.
+    if (!ticketSaves_.Flush(smatchet::RemainingUntil(deadline))) {
+        LOG_WARN("AppController shutdown: a queued ticket cache save did not finish within the %lld s budget.",
+                 static_cast<long long>(kShutdownPreFlagBudget.count()));
     }
-    FlushLeftViewHistoryBeforeShutdown_(); // the same risk: its queue's drain is a background task too
+    FlushLeftViewHistoryBeforeShutdown_(deadline); // the same risk: its queue's drain is a background task too
+}
+
+void AppController::FlushSerialQueuesOnShutdownThread_() {
+    // Pool joined: no drain runs, so Flush runs every stranded task on this thread. A task found here ran after
+    // `shuttingDown_` was set (SaveTicketThenRefresh_ then skips its grid re-read).
+    const auto deadline = std::chrono::steady_clock::now() + kShutdownTailBudget;
+    const long long budgetSec = static_cast<long long>(kShutdownTailBudget.count());
+    struct NamedQueue {
+        const char* Name;
+        smatchet::SerialTaskQueue* Queue;
+    };
+    const NamedQueue queues[] = {{"ticket cache saves", &ticketSaves_},
+                                 {"field-catalog snapshot saves", &catalogSnapshotIo_}};
+    for (const NamedQueue& entry : queues) {
+        const std::size_t pending = entry.Queue->PendingCount();
+        if (!entry.Queue->Flush(smatchet::RemainingUntil(deadline))) {
+            LOG_ERROR("AppController shutdown: %s still pending after the %lld s tail flush (%zu task(s)).", entry.Name,
+                      budgetSec, entry.Queue->PendingCount());
+        } else if (pending > 0) {
+            LOG_INFO("AppController shutdown: tail flush ran %zu stranded %s task(s).", pending, entry.Name);
+        }
+    }
+    if (leftViewHistory_ && !leftViewHistory_->Flush(smatchet::RemainingUntil(deadline))) {
+        LOG_ERROR("AppController shutdown: left-view history writes still pending after the %lld s tail flush.",
+                  budgetSec);
+    }
+}
+
+bool AppController::FlushPendingCacheWrites(std::chrono::milliseconds budget) {
+    // catalogSnapshotIo_ writes a JSON file, not the cache, so it stays out.
+    const auto deadline = std::chrono::steady_clock::now() + budget;
+    bool drained = ticketSaves_.Flush(smatchet::RemainingUntil(deadline));
+    if (leftViewHistory_) {
+        drained = leftViewHistory_->Flush(smatchet::RemainingUntil(deadline)) && drained;
+    }
+    if (!drained) {
+        LOG_WARN("AppController: queued cache writes did not finish within %lld ms.",
+                 static_cast<long long>(budget.count()));
+    }
+    return drained;
 }
 
 void AppController::JoinCacheRecreateWorker_() {

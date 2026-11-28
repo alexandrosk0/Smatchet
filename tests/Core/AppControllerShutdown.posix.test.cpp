@@ -15,10 +15,15 @@
 #include "../support/OfflineQueueTestEnv.h"
 
 #include "AppController.h"
+#include "CachedTicketTypes.h"
+#include "ConfigManager.h"
+#include "LocalCacheManager.h"
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <memory>
+#include <string>
 #include <thread>
 
 namespace {
@@ -55,4 +60,84 @@ TEST_CASE("~AppController joins tasks that background workers launch while shutd
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
         CHECK(runs->load(std::memory_order_relaxed) == atDestruction);
     }
+}
+
+// A save UpdateTicket queued just before quit must reach the file: ~AppController flushes the ticket-save queue
+// before it flags shutdown. Every one of the quick-fire saves is present when the file is reopened.
+TEST_CASE("~AppController leaves every queued UpdateTicket save in the cache file") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    const std::string path = ConfigManager::GetUserDataDirectory() + "shutdown_saves_test.sqlite";
+    const auto removeFiles = [&path]() {
+        for (const char* suffix : {"", "-wal", "-shm", "-journal"}) {
+            std::remove((path + suffix).c_str());
+        }
+    };
+    removeFiles();
+    constexpr int kSaves = 60;
+    std::string backendKey;
+    {
+        AppController app;
+        REQUIRE(app.OpenLocalCacheFileForTest(path));
+        backendKey = app.FocusedCacheBackendKey();
+        for (int i = 0; i < kSaves; ++i) {
+            CachedTicket ticket;
+            ticket.id = "SHUT-" + std::to_string(i);
+            ticket.fieldValues["summary"] = "saved before quit " + std::to_string(i);
+            app.UpdateTicket(ticket);
+        }
+    } // ~AppController: flush, shutdown flag, join, tail flush
+    {
+        LocalCacheManager reopened(path);
+        for (int i = 0; i < kSaves; ++i) {
+            CachedTicket row;
+            const std::string id = "SHUT-" + std::to_string(i);
+            REQUIRE(reopened.TryGetTicket(backendKey, id, row));
+            CHECK(row.GetFieldValue("summary") == "saved before quit " + std::to_string(i));
+        }
+    }
+    removeFiles();
+}
+
+// A save posted AFTER shutdown was flagged loses its drain (LaunchBackgroundTask refuses once the flag is set) and
+// stays queued. The tail flush at the end of ~AppController runs it, so the row still reaches the file.
+TEST_CASE("~AppController's tail flush saves an UpdateTicket posted after the shutdown flag") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    const std::string path = ConfigManager::GetUserDataDirectory() + "shutdown_tail_test.sqlite";
+    const auto removeFiles = [&path]() {
+        for (const char* suffix : {"", "-wal", "-shm", "-journal"}) {
+            std::remove((path + suffix).c_str());
+        }
+    };
+    removeFiles();
+    std::string backendKey;
+    const auto started = std::make_shared<std::atomic<bool>>(false);
+    {
+        AppController app;
+        REQUIRE(app.OpenLocalCacheFileForTest(path));
+        backendKey = app.FocusedCacheBackendKey();
+        // The task is joined by ~AppController, so it can outlive the flush that precedes the flag: it waits for the
+        // flag, then posts its save, whose drain launch is refused.
+        app.LaunchBackgroundTask([&app, started]() {
+            started->store(true);
+            while (!app.IsShuttingDown()) {
+                std::this_thread::yield();
+            }
+            CachedTicket ticket;
+            ticket.id = "TAIL-1";
+            ticket.fieldValues["summary"] = "posted after the flag";
+            app.UpdateTicket(ticket);
+        });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!started->load() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::yield();
+        }
+        REQUIRE(started->load());
+    } // ~AppController: pre-flag flush (nothing queued), flag, join (the task posts), tail flush runs the save
+    {
+        LocalCacheManager reopened(path);
+        CachedTicket row;
+        REQUIRE(reopened.TryGetTicket(backendKey, "TAIL-1", row));
+        CHECK(row.GetFieldValue("summary") == "posted after the flag");
+    }
+    removeFiles();
 }

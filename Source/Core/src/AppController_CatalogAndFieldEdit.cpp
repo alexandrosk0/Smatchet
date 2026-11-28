@@ -637,6 +637,10 @@ void AppController::SaveTicketThenRefresh_(GridLiveContext& ctx, std::uint64_t c
                   capturedKey.c_str(), ticket.id.c_str(), ex.what());
         return;
     }
+    if (shuttingDown_.load()) {
+        // The tail flush at quit runs a stranded save here: the row is stored; nothing is left to show it.
+        return;
+    }
     if (ctx.ticketSaveSeq_.load() != saveSeq) {
         // A newer save for this pane is queued and its re-read shows both rows. That re-read admits only its own
         // id, so record this row as the pane's now, as the skipped re-read would have (a no-op on a pane with no
