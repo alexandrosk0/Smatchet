@@ -624,7 +624,7 @@ void AppController::SaveTicketThenRefresh_(GridLiveContext& ctx, std::uint64_t c
                  ticket.id.c_str());
         return;
     }
-    // A SQLite write can throw — most plausibly BUSY once RunWriteTxnWithBusyRetry's deadline is spent.
+    // A SQLite write can throw — most plausibly BUSY once RunTxn_'s deadline is spent.
     // Report it and keep the row as the grid shows it; the offline queue and the next sync already
     // expect a stale cache row. (Log-only: this domain TU cannot reach the grid's error state, which
     // lives in Ui/.)

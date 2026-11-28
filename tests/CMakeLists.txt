@@ -209,6 +209,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # background task) + SaveTicket (UI-thread write) from two std::threads sharing
         # one LocalCacheManager instance. LCM.cpp already linked above; no extra .cpp.
         Core/LocalCacheConcurrentSeed.test.cpp
+        # One shared connection, serialized: rollback isolation, no nested BEGIN, re-entry throws.
+        Core/LocalCacheManagerConnectionSerialization.test.cpp
         # lookup_cache (Pillar 6 offline lookups), in-memory cases — LocalCacheManager_Lookup.cpp
         # linked below.
         Core/LocalCacheManagerLookup.test.cpp
@@ -872,6 +874,8 @@ add_executable(SmatchetTests
     # multi-grid-tabs.md Slice 5 TSan pass — concurrent seed-read (GetAllTickets) +
     # write (SaveTicket) from two std::threads; also in SmatchetTsanTests for TSan.
     Core/LocalCacheConcurrentSeed.test.cpp
+    # One shared connection, serialized: rollback isolation, no nested BEGIN, re-entry throws.
+    Core/LocalCacheManagerConnectionSerialization.test.cpp
     # Multi-grid Slice 1b (ADR-0018) — tickets_v2 backend-key namespacing: one-time copy
     # migration round-trip on a pre-migration fixture DB, idempotence via cache_meta flag,
     # and two-backend disjointness on a colliding numeric id. Links the production LCM TU

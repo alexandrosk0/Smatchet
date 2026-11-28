@@ -1,4 +1,5 @@
 #include "LocalCacheManager.h"
+#include "LocalCacheManagerInternal.h"
 
 #include "Logger.h"
 
@@ -14,8 +15,8 @@
 
 // LocalCacheManager's pending-action queue (Quality Pillar 6): comments, worklogs and watches
 // saved while the tracker is unreachable, replayed by PendingActionQueueService. Additive
-// tables; an older cache file gains them on open. Every method uses its own local SQLite::Statement,
-// so none touches the cached-statement slots stmtMutex_ guards; the connection is OPEN_FULLMUTEX.
+// tables; an older cache file gains them on open. Every method holds the connection guard (connMutex_) for its
+// whole operation and uses its own local SQLite::Statement.
 // Failures are logged and rethrown — the service counts and retries them, like the field-edit queue.
 
 namespace {
@@ -36,7 +37,9 @@ void BindAll(SQLite::Statement& stmt, int index, const T& value, const Rest&... 
 }
 
 // One parameterised write; returns the number of rows it changed.
-template <typename... Args> int ExecBound(SQLite::Database& db, const char* sql, const Args&... args) {
+template <typename... Args>
+int ExecBound(const LocalCacheManager::ConnGuard& /*guard*/, SQLite::Database& db, const char* sql,
+              const Args&... args) {
     SQLite::Statement stmt(db, sql);
     BindAll(stmt, 1, args...);
     return stmt.exec();
@@ -75,7 +78,8 @@ PendingActionRecord ReadRow(SQLite::Statement& query, int first) {
 
 } // namespace
 
-void LocalCacheManager::InitPendingActionsSchema_() {
+void LocalCacheManager::InitPendingActionsSchema_(const ConnGuard& guard) {
+    SQLite::Database& db = conn(guard);
     db.exec("CREATE TABLE IF NOT EXISTS pending_actions ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, backend_key TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, "
             "issue_key TEXT NOT NULL, payload_json TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', "
@@ -96,6 +100,8 @@ std::int64_t LocalCacheManager::EnqueuePendingAction(const std::string& backendK
                                                      const std::string& issueKey, const std::string& payloadJson,
                                                      const std::string& state) {
     return LoggedQueueOp("EnqueuePendingAction", 0, [&]() {
+        const ConnGuard guard(*this, "EnqueuePendingAction");
+        SQLite::Database& db = conn(guard);
         // RETURNING reads the id from this statement itself: last_insert_rowid() on the shared
         // connection could report another thread's concurrent insert.
         SQLite::Statement insert(db, "INSERT INTO pending_actions (backend_key, kind, issue_key, payload_json, "
@@ -111,6 +117,8 @@ std::int64_t LocalCacheManager::EnqueuePendingAction(const std::string& backendK
 
 std::vector<PendingActionRecord> LocalCacheManager::LoadPendingActions() {
     return LoggedQueueOp("LoadPendingActions", 0, [&]() {
+        const ConnGuard guard(*this, "LoadPendingActions");
+        SQLite::Database& db = conn(guard);
         std::vector<PendingActionRecord> rows;
         SQLite::Statement query(db, std::string("SELECT ") + kRowColumns + " FROM pending_actions ORDER BY id ASC");
         while (query.executeStep()) {
@@ -123,8 +131,9 @@ std::vector<PendingActionRecord> LocalCacheManager::LoadPendingActions() {
 void LocalCacheManager::UpdatePendingAction(std::int64_t id, const std::string& state, int attempts,
                                             const std::string& lastError) {
     LoggedQueueOp("UpdatePendingAction", id, [&]() {
-        ExecBound(db, "UPDATE pending_actions SET state = ?, attempts = ?, last_error = ? WHERE id = ?", state,
-                  attempts, lastError, id);
+        const ConnGuard guard(*this, "UpdatePendingAction");
+        ExecBound(guard, conn(guard), "UPDATE pending_actions SET state = ?, attempts = ?, last_error = ? WHERE id = ?",
+                  state, attempts, lastError, id);
     });
 }
 
@@ -132,39 +141,48 @@ bool LocalCacheManager::TransitionPendingAction(std::int64_t id, const std::stri
                                                 const std::string& toState, int attempts,
                                                 const std::string& lastError) {
     return LoggedQueueOp("TransitionPendingAction", id, [&]() {
+        const ConnGuard guard(*this, "TransitionPendingAction");
         // One statement, so the state check and the write are atomic against a concurrent discard.
         return ExecBound(
-                   db, "UPDATE pending_actions SET state = ?, attempts = ?, last_error = ? WHERE id = ? AND state = ?",
+                   guard, conn(guard),
+                   "UPDATE pending_actions SET state = ?, attempts = ?, last_error = ? WHERE id = ? AND state = ?",
                    toState, attempts, lastError, id, fromState) == 1;
     });
 }
 
 void LocalCacheManager::DeletePendingAction(std::int64_t id) {
-    LoggedQueueOp("DeletePendingAction", id, [&]() { ExecBound(db, "DELETE FROM pending_actions WHERE id = ?", id); });
+    LoggedQueueOp("DeletePendingAction", id, [&]() {
+        const ConnGuard guard(*this, "DeletePendingAction");
+        ExecBound(guard, conn(guard), "DELETE FROM pending_actions WHERE id = ?", id);
+    });
 }
 
 void LocalCacheManager::ArchivePendingAction(std::int64_t id, const std::string& terminalReason,
                                              const std::string& terminalError) {
     LoggedQueueOp("ArchivePendingAction", id, [&]() {
-        SQLite::Transaction transaction(db);
-        // One INSERT … SELECT copies the row as stored; only last_error may be replaced.
-        const int copied = ExecBound(db,
-                                     "INSERT INTO pending_actions_dead (original_id, backend_key, kind, issue_key, "
-                                     "payload_json, state, attempts, last_error, created_at, archived_at, "
-                                     "terminal_reason) SELECT id, backend_key, kind, issue_key, payload_json, state, "
-                                     "attempts, CASE WHEN ? <> '' THEN ? ELSE last_error END, created_at, ?, ? "
-                                     "FROM pending_actions WHERE id = ?",
-                                     terminalError, terminalError, NowEpochSec(), terminalReason, id);
-        if (copied != 1) {
-            throw std::runtime_error("pending_actions row not found");
-        }
-        ExecBound(db, "DELETE FROM pending_actions WHERE id = ?", id);
-        transaction.commit();
+        // A missing row throws runtime_error, which is not a transient code: the attempt rolls back and propagates.
+        RunTxn_("ArchivePendingAction", [&](const ConnGuard& guard, SQLite::Database& db) {
+            // One INSERT … SELECT copies the row as stored; only last_error may be replaced.
+            const int copied =
+                ExecBound(guard, db,
+                          "INSERT INTO pending_actions_dead (original_id, backend_key, kind, issue_key, "
+                          "payload_json, state, attempts, last_error, created_at, archived_at, "
+                          "terminal_reason) SELECT id, backend_key, kind, issue_key, payload_json, state, "
+                          "attempts, CASE WHEN ? <> '' THEN ? ELSE last_error END, created_at, ?, ? "
+                          "FROM pending_actions WHERE id = ?",
+                          terminalError, terminalError, NowEpochSec(), terminalReason, id);
+            if (copied != 1) {
+                throw std::runtime_error("pending_actions row not found");
+            }
+            ExecBound(guard, db, "DELETE FROM pending_actions WHERE id = ?", id);
+        });
     });
 }
 
 std::vector<DeadPendingAction> LocalCacheManager::LoadDeadPendingActions() {
     return LoggedQueueOp("LoadDeadPendingActions", 0, [&]() {
+        const ConnGuard guard(*this, "LoadDeadPendingActions");
+        SQLite::Database& db = conn(guard);
         std::vector<DeadPendingAction> rows;
         SQLite::Statement query(db, std::string("SELECT dead_id, archived_at, terminal_reason, ") + kDeadRowColumns +
                                         " FROM pending_actions_dead ORDER BY archived_at DESC, dead_id DESC");
@@ -182,29 +200,30 @@ std::vector<DeadPendingAction> LocalCacheManager::LoadDeadPendingActions() {
 
 bool LocalCacheManager::RestoreDeadPendingAction(std::int64_t originalId) {
     return LoggedQueueOp("RestoreDeadPendingAction", originalId, [&]() {
-        SQLite::Transaction transaction(db);
-        SQLite::Statement newest(db, "SELECT dead_id FROM pending_actions_dead WHERE original_id = ? "
-                                     "ORDER BY dead_id DESC LIMIT 1");
-        newest.bind(1, originalId);
-        if (!newest.executeStep()) {
-            transaction.commit();
-            return false;
-        }
-        const std::int64_t deadId = newest.getColumn(0).getInt64();
-        // Same backend key and state as when it was archived (an ambiguous comment is still checked
-        // before it is resent); attempts start over.
-        ExecBound(db,
-                  "INSERT INTO pending_actions (backend_key, kind, issue_key, payload_json, state, attempts, "
-                  "last_error, created_at) SELECT backend_key, kind, issue_key, payload_json, state, 0, '', ? "
-                  "FROM pending_actions_dead WHERE dead_id = ?",
-                  NowEpochSec(), deadId);
-        ExecBound(db, "DELETE FROM pending_actions_dead WHERE dead_id = ?", deadId);
-        transaction.commit();
-        return true;
+        return RunTxn_("RestoreDeadPendingAction", [&](const ConnGuard& guard, SQLite::Database& db) -> bool {
+            SQLite::Statement newest(db, "SELECT dead_id FROM pending_actions_dead WHERE original_id = ? "
+                                         "ORDER BY dead_id DESC LIMIT 1");
+            newest.bind(1, originalId);
+            if (!newest.executeStep()) {
+                return false;
+            }
+            const std::int64_t deadId = newest.getColumn(0).getInt64();
+            // Same backend key and state as when it was archived (an ambiguous comment is still checked
+            // before it is resent); attempts start over.
+            ExecBound(guard, db,
+                      "INSERT INTO pending_actions (backend_key, kind, issue_key, payload_json, state, attempts, "
+                      "last_error, created_at) SELECT backend_key, kind, issue_key, payload_json, state, 0, '', ? "
+                      "FROM pending_actions_dead WHERE dead_id = ?",
+                      NowEpochSec(), deadId);
+            ExecBound(guard, db, "DELETE FROM pending_actions_dead WHERE dead_id = ?", deadId);
+            return true;
+        });
     });
 }
 
 void LocalCacheManager::DeleteDeadPendingAction(std::int64_t deadId) {
-    LoggedQueueOp("DeleteDeadPendingAction", deadId,
-                  [&]() { ExecBound(db, "DELETE FROM pending_actions_dead WHERE dead_id = ?", deadId); });
+    LoggedQueueOp("DeleteDeadPendingAction", deadId, [&]() {
+        const ConnGuard guard(*this, "DeleteDeadPendingAction");
+        ExecBound(guard, conn(guard), "DELETE FROM pending_actions_dead WHERE dead_id = ?", deadId);
+    });
 }

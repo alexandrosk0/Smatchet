@@ -4,6 +4,7 @@
 // stay in LocalCacheManager.cpp.
 
 #include "LocalCacheManager.h"
+#include "LocalCacheManagerInternal.h"
 
 #include "IssueDraft.h"
 #include "Logger.h"
@@ -15,6 +16,8 @@
 
 std::int64_t LocalCacheManager::EnqueuePendingCreate(const std::string& backendKey, const std::string& payload) {
     try {
+        const ConnGuard guard(*this, "EnqueuePendingCreate");
+        SQLite::Database& db = conn(guard);
         const auto now = std::chrono::system_clock::now();
         const std::int64_t epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
         SQLite::Statement insert(db, "INSERT INTO pending_creates (payload, backend_key, attempts, last_error, "
@@ -32,6 +35,8 @@ std::int64_t LocalCacheManager::EnqueuePendingCreate(const std::string& backendK
 
 std::vector<PendingCreate> LocalCacheManager::LoadPendingCreates() {
     try {
+        const ConnGuard guard(*this, "LoadPendingCreates");
+        SQLite::Database& db = conn(guard);
         std::vector<PendingCreate> results;
         SQLite::Statement query(db, "SELECT id, payload, attempts, last_error, created_at, backend_key "
                                     "FROM pending_creates ORDER BY id ASC");
@@ -54,6 +59,8 @@ std::vector<PendingCreate> LocalCacheManager::LoadPendingCreates() {
 
 void LocalCacheManager::UpdatePendingCreate(std::int64_t id, int attempts, const std::string& lastError) {
     try {
+        const ConnGuard guard(*this, "UpdatePendingCreate");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement update(db, "UPDATE pending_creates SET attempts = ?, last_error = ? WHERE id = ?");
         update.bind(1, attempts);
         update.bind(2, lastError);
@@ -68,6 +75,8 @@ void LocalCacheManager::UpdatePendingCreate(std::int64_t id, int attempts, const
 
 void LocalCacheManager::UpdatePendingCreatePayload(std::int64_t id, const std::string& payload) {
     try {
+        const ConnGuard guard(*this, "UpdatePendingCreatePayload");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement update(db, "UPDATE pending_creates SET payload = ? WHERE id = ?");
         update.bind(1, payload);
         update.bind(2, id);
@@ -81,6 +90,8 @@ void LocalCacheManager::UpdatePendingCreatePayload(std::int64_t id, const std::s
 
 void LocalCacheManager::DeletePendingCreate(std::int64_t id) {
     try {
+        const ConnGuard guard(*this, "DeletePendingCreate");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement del(db, "DELETE FROM pending_creates WHERE id = ?");
         del.bind(1, id);
         del.exec();
@@ -94,45 +105,47 @@ void LocalCacheManager::DeletePendingCreate(std::int64_t id) {
 void LocalCacheManager::ArchivePendingCreate(std::int64_t id, const std::string& terminalReason,
                                              const std::string& terminalError) {
     try {
-        SQLite::Transaction transaction(db);
-        SQLite::Statement select(
-            db, "SELECT payload, attempts, last_error, created_at, backend_key FROM pending_creates WHERE id = ?");
-        select.bind(1, id);
-        if (!select.executeStep()) {
-            throw std::runtime_error("pending_create row not found");
-        }
-        const std::string payload =
-            select.getColumn(0).isNull() ? std::string() : std::string(select.getColumn(0).getText());
-        const int attempts = select.getColumn(1).getInt();
-        const std::string lastError =
-            !terminalError.empty()
-                ? terminalError
-                : (select.getColumn(2).isNull() ? std::string() : std::string(select.getColumn(2).getText()));
-        const std::int64_t createdAtEpochSec = select.getColumn(3).getInt64();
-        const std::string backendKey =
-            select.getColumn(4).isNull() ? std::string() : std::string(select.getColumn(4).getText());
-        const std::int64_t archivedAtEpochSec =
-            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
-                .count();
+        // A missing row throws runtime_error, which is not a transient code: the attempt rolls back and propagates.
+        RunTxn_("ArchivePendingCreate", [&](const ConnGuard&, SQLite::Database& db) {
+            SQLite::Statement select(
+                db, "SELECT payload, attempts, last_error, created_at, backend_key FROM pending_creates WHERE id = ?");
+            select.bind(1, id);
+            if (!select.executeStep()) {
+                throw std::runtime_error("pending_create row not found");
+            }
+            const std::string payload =
+                select.getColumn(0).isNull() ? std::string() : std::string(select.getColumn(0).getText());
+            const int attempts = select.getColumn(1).getInt();
+            const std::string lastError =
+                !terminalError.empty()
+                    ? terminalError
+                    : (select.getColumn(2).isNull() ? std::string() : std::string(select.getColumn(2).getText()));
+            const std::int64_t createdAtEpochSec = select.getColumn(3).getInt64();
+            const std::string backendKey =
+                select.getColumn(4).isNull() ? std::string() : std::string(select.getColumn(4).getText());
+            const std::int64_t archivedAtEpochSec =
+                std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+                    .count();
 
-        SQLite::Statement insert(
-            db, "INSERT INTO pending_creates_dead "
+            SQLite::Statement insert(
+                db,
+                "INSERT INTO pending_creates_dead "
                 "(original_id, payload, backend_key, attempts, last_error, created_at, archived_at, terminal_reason) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-        insert.bind(1, id);
-        insert.bind(2, payload);
-        insert.bind(3, backendKey);
-        insert.bind(4, attempts);
-        insert.bind(5, lastError);
-        insert.bind(6, createdAtEpochSec);
-        insert.bind(7, archivedAtEpochSec);
-        insert.bind(8, terminalReason);
-        insert.exec();
+            insert.bind(1, id);
+            insert.bind(2, payload);
+            insert.bind(3, backendKey);
+            insert.bind(4, attempts);
+            insert.bind(5, lastError);
+            insert.bind(6, createdAtEpochSec);
+            insert.bind(7, archivedAtEpochSec);
+            insert.bind(8, terminalReason);
+            insert.exec();
 
-        SQLite::Statement del(db, "DELETE FROM pending_creates WHERE id = ?");
-        del.bind(1, id);
-        del.exec();
-        transaction.commit();
+            SQLite::Statement del(db, "DELETE FROM pending_creates WHERE id = ?");
+            del.bind(1, id);
+            del.exec();
+        });
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::ArchivePendingCreate failed id=%lld reason=%s err=%s", static_cast<long long>(id),
                   terminalReason.c_str(), ex.what());
@@ -142,6 +155,8 @@ void LocalCacheManager::ArchivePendingCreate(std::int64_t id, const std::string&
 
 std::vector<DeadPendingCreate> LocalCacheManager::LoadDeadPendingCreates() {
     try {
+        const ConnGuard guard(*this, "LoadDeadPendingCreates");
+        SQLite::Database& db = conn(guard);
         std::vector<DeadPendingCreate> results;
         SQLite::Statement query(db,
                                 "SELECT dead_id, original_id, payload, attempts, last_error, created_at, archived_at, "
@@ -170,6 +185,8 @@ std::vector<DeadPendingCreate> LocalCacheManager::LoadDeadPendingCreates() {
 
 size_t LocalCacheManager::GetDeadPendingCreateCount() {
     try {
+        const ConnGuard guard(*this, "GetDeadPendingCreateCount");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement countQuery(db, "SELECT COUNT(*) FROM pending_creates_dead");
         if (!countQuery.executeStep()) {
             return 0;
@@ -184,46 +201,52 @@ size_t LocalCacheManager::GetDeadPendingCreateCount() {
 
 bool LocalCacheManager::RestoreDeadPendingCreate(const std::int64_t originalPendingId) {
     try {
-        SQLite::Transaction transaction(db);
-        SQLite::Statement sel(db, "SELECT dead_id, payload, backend_key FROM pending_creates_dead "
-                                  "WHERE original_id = ? ORDER BY dead_id DESC LIMIT 1");
-        sel.bind(1, originalPendingId);
-        if (!sel.executeStep()) {
-            transaction.commit();
+        // The body returns the dead-letter id it restored (0 when none), so the log waits for the commit.
+        const std::int64_t restoredDeadId =
+            RunTxn_("RestoreDeadPendingCreate", [&](const ConnGuard&, SQLite::Database& db) -> std::int64_t {
+                SQLite::Statement sel(db, "SELECT dead_id, payload, backend_key FROM pending_creates_dead "
+                                          "WHERE original_id = ? ORDER BY dead_id DESC LIMIT 1");
+                sel.bind(1, originalPendingId);
+                if (!sel.executeStep()) {
+                    return 0;
+                }
+                const std::int64_t deadId = sel.getColumn(0).getInt64();
+                const std::string archivedPayload =
+                    sel.getColumn(1).isNull() ? std::string() : std::string(sel.getColumn(1).getText());
+                // Fresh-create scrub applied to the archived payload INSIDE this transaction (the
+                // service used to pre-load + scrub outside it — an exception there could skip the
+                // scrub and restore a stale ExistingIssueKey verbatim). Unparseable payloads restore
+                // verbatim; the replay tick's parse path terminally dead-letters real garbage.
+                std::string parseErr;
+                const std::string payload = IssueDraftHelpers::ScrubFreshCreatePayload(archivedPayload, parseErr);
+                if (!parseErr.empty()) {
+                    LOG_WARN("LocalCacheManager::RestoreDeadPendingCreate original_id=%lld payload parse failed (%s) — "
+                             "restoring verbatim",
+                             static_cast<long long>(originalPendingId), parseErr.c_str());
+                }
+                // Restore re-queues under the SAME backend the row was originally queued against
+                // (multi-grid Slice 1c) — never the currently-focused context's key.
+                const std::string backendKey =
+                    sel.getColumn(2).isNull() ? std::string() : std::string(sel.getColumn(2).getText());
+                const auto now = std::chrono::system_clock::now();
+                const std::int64_t epoch =
+                    std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+                SQLite::Statement ins(db, "INSERT INTO pending_creates (payload, backend_key, attempts, last_error, "
+                                          "created_at) VALUES (?, ?, 0, '', ?)");
+                ins.bind(1, payload);
+                ins.bind(2, backendKey);
+                ins.bind(3, epoch);
+                ins.exec();
+                SQLite::Statement delDead(db, "DELETE FROM pending_creates_dead WHERE dead_id = ?");
+                delDead.bind(1, deadId);
+                delDead.exec();
+                return deadId;
+            });
+        if (restoredDeadId == 0) {
             return false;
         }
-        const std::int64_t deadId = sel.getColumn(0).getInt64();
-        const std::string archivedPayload =
-            sel.getColumn(1).isNull() ? std::string() : std::string(sel.getColumn(1).getText());
-        // Fresh-create scrub applied to the archived payload INSIDE this transaction (the
-        // service used to pre-load + scrub outside it — an exception there could skip the
-        // scrub and restore a stale ExistingIssueKey verbatim). Unparseable payloads restore
-        // verbatim; the replay tick's parse path terminally dead-letters real garbage.
-        std::string parseErr;
-        const std::string payload = IssueDraftHelpers::ScrubFreshCreatePayload(archivedPayload, parseErr);
-        if (!parseErr.empty()) {
-            LOG_WARN("LocalCacheManager::RestoreDeadPendingCreate original_id=%lld payload parse failed (%s) — "
-                     "restoring verbatim",
-                     static_cast<long long>(originalPendingId), parseErr.c_str());
-        }
-        // Restore re-queues under the SAME backend the row was originally queued against
-        // (multi-grid Slice 1c) — never the currently-focused context's key.
-        const std::string backendKey =
-            sel.getColumn(2).isNull() ? std::string() : std::string(sel.getColumn(2).getText());
-        const auto now = std::chrono::system_clock::now();
-        const std::int64_t epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-        SQLite::Statement ins(db, "INSERT INTO pending_creates (payload, backend_key, attempts, last_error, "
-                                  "created_at) VALUES (?, ?, 0, '', ?)");
-        ins.bind(1, payload);
-        ins.bind(2, backendKey);
-        ins.bind(3, epoch);
-        ins.exec();
-        SQLite::Statement delDead(db, "DELETE FROM pending_creates_dead WHERE dead_id = ?");
-        delDead.bind(1, deadId);
-        delDead.exec();
-        transaction.commit();
         LOG_INFO("LocalCacheManager::RestoreDeadPendingCreate original_id=%lld dead_id=%lld",
-                 static_cast<long long>(originalPendingId), static_cast<long long>(deadId));
+                 static_cast<long long>(originalPendingId), static_cast<long long>(restoredDeadId));
         return true;
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::RestoreDeadPendingCreate failed original_id=%lld err=%s",
@@ -234,6 +257,8 @@ bool LocalCacheManager::RestoreDeadPendingCreate(const std::int64_t originalPend
 
 void LocalCacheManager::DeleteDeadPendingCreate(const std::int64_t deadId) {
     try {
+        const ConnGuard guard(*this, "DeleteDeadPendingCreate");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement del(db, "DELETE FROM pending_creates_dead WHERE dead_id = ?");
         del.bind(1, deadId);
         del.exec();
@@ -254,6 +279,8 @@ std::int64_t LocalCacheManager::EnqueuePendingFieldEdit(const std::string& backe
                                                         const std::string& originalRichValue,
                                                         const std::string& originalValue, bool hasOriginalValue) {
     try {
+        const ConnGuard guard(*this, "EnqueuePendingFieldEdit");
+        SQLite::Database& db = conn(guard);
         const auto now = std::chrono::system_clock::now();
         const std::int64_t epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
         SQLite::Statement insert(db, "INSERT INTO pending_field_edits (issue_key, field_id, fields_payload_json, "
@@ -285,6 +312,8 @@ std::int64_t LocalCacheManager::EnqueuePendingFieldEdit(const std::string& backe
 
 std::vector<PendingFieldEditRecord> LocalCacheManager::LoadPendingFieldEdits() {
     try {
+        const ConnGuard guard(*this, "LoadPendingFieldEdits");
+        SQLite::Database& db = conn(guard);
         std::vector<PendingFieldEditRecord> results;
         SQLite::Statement query(db, "SELECT id, issue_key, field_id, fields_payload_json, "
                                     "COALESCE(original_rich_value, ''), "
@@ -322,6 +351,8 @@ std::vector<PendingFieldEditRecord> LocalCacheManager::LoadPendingFieldEdits() {
 
 void LocalCacheManager::UpdatePendingFieldEdit(std::int64_t id, int attempts, const std::string& lastError) {
     try {
+        const ConnGuard guard(*this, "UpdatePendingFieldEdit");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement update(db, "UPDATE pending_field_edits SET attempts = ?, last_error = ? WHERE id = ?");
         update.bind(1, attempts);
         update.bind(2, lastError);
@@ -336,6 +367,8 @@ void LocalCacheManager::UpdatePendingFieldEdit(std::int64_t id, int attempts, co
 
 void LocalCacheManager::MarkFieldEditConflict(std::int64_t id, const std::string& contextJson) {
     try {
+        const ConnGuard guard(*this, "MarkFieldEditConflict");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement upd(
             db, "UPDATE pending_field_edits SET has_merge_conflict = 1, conflict_context_json = ? WHERE id = ?");
         upd.bind(1, contextJson);
@@ -350,6 +383,8 @@ void LocalCacheManager::MarkFieldEditConflict(std::int64_t id, const std::string
 
 void LocalCacheManager::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedPayloadJson) {
     try {
+        const ConnGuard guard(*this, "ResolveFieldEditConflict");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement upd(db,
                               "UPDATE pending_field_edits SET has_merge_conflict = 0, conflict_context_json = NULL, "
                               "original_rich_value = NULL, original_value = NULL, has_original_value = 0, "
@@ -366,6 +401,8 @@ void LocalCacheManager::ResolveFieldEditConflict(std::int64_t id, const std::str
 
 void LocalCacheManager::DeletePendingFieldEdit(std::int64_t id) {
     try {
+        const ConnGuard guard(*this, "DeletePendingFieldEdit");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement del(db, "DELETE FROM pending_field_edits WHERE id = ?");
         del.bind(1, id);
         del.exec();
@@ -379,69 +416,70 @@ void LocalCacheManager::DeletePendingFieldEdit(std::int64_t id) {
 void LocalCacheManager::ArchivePendingFieldEdit(std::int64_t id, const std::string& terminalReason,
                                                 const std::string& terminalError) {
     try {
-        SQLite::Transaction transaction(db);
-        SQLite::Statement select(db, "SELECT issue_key, field_id, fields_payload_json, "
-                                     "COALESCE(original_rich_value,''), attempts, last_error, created_at, "
-                                     "COALESCE(original_value,''), COALESCE(has_original_value, 0), "
-                                     "COALESCE(backend_key, '') FROM "
-                                     "pending_field_edits WHERE id = ?");
-        select.bind(1, id);
-        if (!select.executeStep()) {
-            throw std::runtime_error("pending_field_edits row not found");
-        }
-        const std::string issueKey =
-            select.getColumn(0).isNull() ? std::string() : std::string(select.getColumn(0).getText());
-        const std::string fieldId =
-            select.getColumn(1).isNull() ? std::string() : std::string(select.getColumn(1).getText());
-        const std::string payload =
-            select.getColumn(2).isNull() ? std::string() : std::string(select.getColumn(2).getText());
-        const std::string originalRichValue =
-            select.getColumn(3).isNull() ? std::string() : std::string(select.getColumn(3).getText());
-        const int attempts = select.getColumn(4).getInt();
-        const std::string lastError =
-            !terminalError.empty()
-                ? terminalError
-                : (select.getColumn(5).isNull() ? std::string() : std::string(select.getColumn(5).getText()));
-        const std::int64_t createdAtEpochSec = select.getColumn(6).getInt64();
-        const std::string originalValue =
-            select.getColumn(7).isNull() ? std::string() : std::string(select.getColumn(7).getText());
-        const bool hasOriginalValue = select.getColumn(8).getInt() != 0;
-        const std::string backendKey =
-            select.getColumn(9).isNull() ? std::string() : std::string(select.getColumn(9).getText());
-        const std::int64_t archivedAtEpochSec =
-            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
-                .count();
+        // A missing row throws runtime_error, which is not a transient code: the attempt rolls back and propagates.
+        RunTxn_("ArchivePendingFieldEdit", [&](const ConnGuard&, SQLite::Database& db) {
+            SQLite::Statement select(db, "SELECT issue_key, field_id, fields_payload_json, "
+                                         "COALESCE(original_rich_value,''), attempts, last_error, created_at, "
+                                         "COALESCE(original_value,''), COALESCE(has_original_value, 0), "
+                                         "COALESCE(backend_key, '') FROM "
+                                         "pending_field_edits WHERE id = ?");
+            select.bind(1, id);
+            if (!select.executeStep()) {
+                throw std::runtime_error("pending_field_edits row not found");
+            }
+            const std::string issueKey =
+                select.getColumn(0).isNull() ? std::string() : std::string(select.getColumn(0).getText());
+            const std::string fieldId =
+                select.getColumn(1).isNull() ? std::string() : std::string(select.getColumn(1).getText());
+            const std::string payload =
+                select.getColumn(2).isNull() ? std::string() : std::string(select.getColumn(2).getText());
+            const std::string originalRichValue =
+                select.getColumn(3).isNull() ? std::string() : std::string(select.getColumn(3).getText());
+            const int attempts = select.getColumn(4).getInt();
+            const std::string lastError =
+                !terminalError.empty()
+                    ? terminalError
+                    : (select.getColumn(5).isNull() ? std::string() : std::string(select.getColumn(5).getText()));
+            const std::int64_t createdAtEpochSec = select.getColumn(6).getInt64();
+            const std::string originalValue =
+                select.getColumn(7).isNull() ? std::string() : std::string(select.getColumn(7).getText());
+            const bool hasOriginalValue = select.getColumn(8).getInt() != 0;
+            const std::string backendKey =
+                select.getColumn(9).isNull() ? std::string() : std::string(select.getColumn(9).getText());
+            const std::int64_t archivedAtEpochSec =
+                std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+                    .count();
 
-        SQLite::Statement insert(db,
-                                 "INSERT INTO pending_field_edits_dead "
-                                 "(original_id, issue_key, field_id, fields_payload_json, original_rich_value, "
-                                 "original_value, has_original_value, backend_key, attempts, last_error, created_at, "
-                                 "archived_at, terminal_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        insert.bind(1, id);
-        insert.bind(2, issueKey);
-        insert.bind(3, fieldId);
-        insert.bind(4, payload);
-        if (originalRichValue.empty())
-            insert.bind(5);
-        else
-            insert.bind(5, originalRichValue);
-        if (originalValue.empty())
-            insert.bind(6);
-        else
-            insert.bind(6, originalValue);
-        insert.bind(7, hasOriginalValue ? 1 : 0);
-        insert.bind(8, backendKey);
-        insert.bind(9, attempts);
-        insert.bind(10, lastError);
-        insert.bind(11, createdAtEpochSec);
-        insert.bind(12, archivedAtEpochSec);
-        insert.bind(13, terminalReason);
-        insert.exec();
+            SQLite::Statement insert(
+                db, "INSERT INTO pending_field_edits_dead "
+                    "(original_id, issue_key, field_id, fields_payload_json, original_rich_value, "
+                    "original_value, has_original_value, backend_key, attempts, last_error, created_at, "
+                    "archived_at, terminal_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            insert.bind(1, id);
+            insert.bind(2, issueKey);
+            insert.bind(3, fieldId);
+            insert.bind(4, payload);
+            if (originalRichValue.empty())
+                insert.bind(5);
+            else
+                insert.bind(5, originalRichValue);
+            if (originalValue.empty())
+                insert.bind(6);
+            else
+                insert.bind(6, originalValue);
+            insert.bind(7, hasOriginalValue ? 1 : 0);
+            insert.bind(8, backendKey);
+            insert.bind(9, attempts);
+            insert.bind(10, lastError);
+            insert.bind(11, createdAtEpochSec);
+            insert.bind(12, archivedAtEpochSec);
+            insert.bind(13, terminalReason);
+            insert.exec();
 
-        SQLite::Statement del(db, "DELETE FROM pending_field_edits WHERE id = ?");
-        del.bind(1, id);
-        del.exec();
-        transaction.commit();
+            SQLite::Statement del(db, "DELETE FROM pending_field_edits WHERE id = ?");
+            del.bind(1, id);
+            del.exec();
+        });
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::ArchivePendingFieldEdit failed id=%lld reason=%s err=%s",
                   static_cast<long long>(id), terminalReason.c_str(), ex.what());
@@ -451,6 +489,8 @@ void LocalCacheManager::ArchivePendingFieldEdit(std::int64_t id, const std::stri
 
 std::vector<DeadPendingFieldEdit> LocalCacheManager::LoadDeadPendingFieldEdits() {
     try {
+        const ConnGuard guard(*this, "LoadDeadPendingFieldEdits");
+        SQLite::Database& db = conn(guard);
         std::vector<DeadPendingFieldEdit> results;
         SQLite::Statement query(
             db, "SELECT dead_id, original_id, issue_key, field_id, fields_payload_json, attempts, last_error, "
@@ -482,56 +522,67 @@ std::vector<DeadPendingFieldEdit> LocalCacheManager::LoadDeadPendingFieldEdits()
 
 bool LocalCacheManager::RestoreDeadPendingFieldEdit(const std::int64_t originalPendingId) {
     try {
-        SQLite::Transaction transaction(db);
-        SQLite::Statement sel(db, "SELECT dead_id, issue_key, field_id, fields_payload_json, original_rich_value, "
-                                  "original_value, COALESCE(has_original_value, 0), COALESCE(backend_key, '') "
-                                  "FROM pending_field_edits_dead WHERE original_id = ? "
-                                  "ORDER BY dead_id DESC LIMIT 1");
-        sel.bind(1, originalPendingId);
-        if (!sel.executeStep()) {
-            transaction.commit();
+        // The body returns the dead-letter id it restored (0 when none), so the log waits for the commit.
+        const std::int64_t restoredDeadId =
+            RunTxn_("RestoreDeadPendingFieldEdit", [&](const ConnGuard&, SQLite::Database& db) -> std::int64_t {
+                SQLite::Statement sel(db,
+                                      "SELECT dead_id, issue_key, field_id, fields_payload_json, original_rich_value, "
+                                      "original_value, COALESCE(has_original_value, 0), COALESCE(backend_key, '') "
+                                      "FROM pending_field_edits_dead WHERE original_id = ? "
+                                      "ORDER BY dead_id DESC LIMIT 1");
+                sel.bind(1, originalPendingId);
+                if (!sel.executeStep()) {
+                    return 0;
+                }
+                const std::int64_t deadId = sel.getColumn(0).getInt64();
+                const std::string issueKey =
+                    sel.getColumn(1).isNull() ? std::string() : std::string(sel.getColumn(1).getText());
+                const std::string fieldId =
+                    sel.getColumn(2).isNull() ? std::string() : std::string(sel.getColumn(2).getText());
+                const std::string payload =
+                    sel.getColumn(3).isNull() ? std::string() : std::string(sel.getColumn(3).getText());
+                const bool richIsNull = sel.getColumn(4).isNull();
+                const std::string originalRichValue =
+                    richIsNull ? std::string() : std::string(sel.getColumn(4).getText());
+                const bool valueIsNull = sel.getColumn(5).isNull();
+                const std::string originalValue = valueIsNull ? std::string() : std::string(sel.getColumn(5).getText());
+                const bool hasOriginalValue = sel.getColumn(6).getInt() != 0;
+                // Restore re-queues under the SAME backend the row was originally queued against
+                // (multi-grid Slice 1c) — never the currently-focused context's key.
+                const std::string backendKey =
+                    sel.getColumn(7).isNull() ? std::string() : std::string(sel.getColumn(7).getText());
+                const auto now = std::chrono::system_clock::now();
+                const std::int64_t epoch =
+                    std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+                SQLite::Statement ins(db,
+                                      "INSERT INTO pending_field_edits (issue_key, field_id, fields_payload_json, "
+                                      "original_rich_value, original_value, has_original_value, backend_key, attempts, "
+                                      "last_error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', ?)");
+                ins.bind(1, issueKey);
+                ins.bind(2, fieldId);
+                ins.bind(3, payload);
+                if (richIsNull)
+                    ins.bind(4); // NULL
+                else
+                    ins.bind(4, originalRichValue);
+                if (valueIsNull)
+                    ins.bind(5); // NULL
+                else
+                    ins.bind(5, originalValue);
+                ins.bind(6, hasOriginalValue ? 1 : 0);
+                ins.bind(7, backendKey);
+                ins.bind(8, epoch);
+                ins.exec();
+                SQLite::Statement delDead(db, "DELETE FROM pending_field_edits_dead WHERE dead_id = ?");
+                delDead.bind(1, deadId);
+                delDead.exec();
+                return deadId;
+            });
+        if (restoredDeadId == 0) {
             return false;
         }
-        const std::int64_t deadId = sel.getColumn(0).getInt64();
-        const std::string issueKey =
-            sel.getColumn(1).isNull() ? std::string() : std::string(sel.getColumn(1).getText());
-        const std::string fieldId = sel.getColumn(2).isNull() ? std::string() : std::string(sel.getColumn(2).getText());
-        const std::string payload = sel.getColumn(3).isNull() ? std::string() : std::string(sel.getColumn(3).getText());
-        const bool richIsNull = sel.getColumn(4).isNull();
-        const std::string originalRichValue = richIsNull ? std::string() : std::string(sel.getColumn(4).getText());
-        const bool valueIsNull = sel.getColumn(5).isNull();
-        const std::string originalValue = valueIsNull ? std::string() : std::string(sel.getColumn(5).getText());
-        const bool hasOriginalValue = sel.getColumn(6).getInt() != 0;
-        // Restore re-queues under the SAME backend the row was originally queued against
-        // (multi-grid Slice 1c) — never the currently-focused context's key.
-        const std::string backendKey =
-            sel.getColumn(7).isNull() ? std::string() : std::string(sel.getColumn(7).getText());
-        const auto now = std::chrono::system_clock::now();
-        const std::int64_t epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-        SQLite::Statement ins(db, "INSERT INTO pending_field_edits (issue_key, field_id, fields_payload_json, "
-                                  "original_rich_value, original_value, has_original_value, backend_key, attempts, "
-                                  "last_error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', ?)");
-        ins.bind(1, issueKey);
-        ins.bind(2, fieldId);
-        ins.bind(3, payload);
-        if (richIsNull)
-            ins.bind(4); // NULL
-        else
-            ins.bind(4, originalRichValue);
-        if (valueIsNull)
-            ins.bind(5); // NULL
-        else
-            ins.bind(5, originalValue);
-        ins.bind(6, hasOriginalValue ? 1 : 0);
-        ins.bind(7, backendKey);
-        ins.bind(8, epoch);
-        ins.exec();
-        SQLite::Statement delDead(db, "DELETE FROM pending_field_edits_dead WHERE dead_id = ?");
-        delDead.bind(1, deadId);
-        delDead.exec();
-        transaction.commit();
         LOG_INFO("LocalCacheManager::RestoreDeadPendingFieldEdit original_id=%lld dead_id=%lld",
-                 static_cast<long long>(originalPendingId), static_cast<long long>(deadId));
+                 static_cast<long long>(originalPendingId), static_cast<long long>(restoredDeadId));
         return true;
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::RestoreDeadPendingFieldEdit failed original_id=%lld err=%s",
@@ -542,6 +593,8 @@ bool LocalCacheManager::RestoreDeadPendingFieldEdit(const std::int64_t originalP
 
 void LocalCacheManager::DeleteDeadPendingFieldEdit(const std::int64_t deadId) {
     try {
+        const ConnGuard guard(*this, "DeleteDeadPendingFieldEdit");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement del(db, "DELETE FROM pending_field_edits_dead WHERE dead_id = ?");
         del.bind(1, deadId);
         del.exec();
