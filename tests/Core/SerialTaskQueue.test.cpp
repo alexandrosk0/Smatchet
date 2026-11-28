@@ -393,60 +393,61 @@ TEST_CASE("LaunchClaim: a body and a releaser racing never both win") {
         // Exactly one of the two paths ran: either the body or the release, never both, never neither.
         CHECK(bodies.load() + released.load() == 1);
     }
+}
 
-    TEST_CASE("SerialTaskQueue::PendingCount counts queued and running tasks") {
-        SerialTaskQueue queue([](std::function<void()>) { /* launch dropped: nothing runs */ });
-        CHECK(queue.PendingCount() == 0);
-        CHECK(queue.Post([]() {}).empty());
-        CHECK(queue.PendingCount() == 1); // a refused launch keeps its task queued
-        CHECK(queue.Post([]() {}).empty());
-        CHECK(queue.PendingCount() == 2);
-        CHECK(queue.Flush());
-        CHECK(queue.PendingCount() == 0);
-    }
+TEST_CASE("SerialTaskQueue::PendingCount counts queued and running tasks") {
+    SerialTaskQueue queue([](std::function<void()>) { /* launch dropped: nothing runs */ });
+    CHECK(queue.PendingCount() == 0);
+    CHECK(queue.Post([]() {}).empty());
+    CHECK(queue.PendingCount() == 1); // a refused launch keeps its task queued
+    CHECK(queue.Post([]() {}).empty());
+    CHECK(queue.PendingCount() == 2);
+    CHECK(queue.Flush());
+    CHECK(queue.PendingCount() == 0);
+}
 
-    TEST_CASE("SerialTaskQueue::PendingCount includes the task that is running") {
-        std::vector<std::thread> workers;
-        SerialTaskQueue queue([&workers](std::function<void()> drain) { workers.emplace_back(std::move(drain)); });
-        std::atomic<bool> started{false};
-        std::atomic<bool> release{false};
-        CHECK(queue
-                  .Post([&]() {
-                      started.store(true);
-                      while (!release.load()) {
-                          std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                      }
-                  })
-                  .empty());
-        while (!started.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        CHECK(queue.PendingCount() == 1); // popped, executing
-        CHECK(queue.Post([]() {}).empty());
-        CHECK(queue.PendingCount() == 2);
-        CHECK_FALSE(queue.Flush(std::chrono::milliseconds(20))); // residue under a short deadline
-        CHECK(queue.PendingCount() == 2);
-        release.store(true);
-        CHECK(queue.Flush());
-        CHECK(queue.PendingCount() == 0);
-        for (std::thread& w : workers) {
-            w.join();
-        }
+TEST_CASE("SerialTaskQueue::PendingCount includes the task that is running") {
+    std::vector<std::thread> workers;
+    SerialTaskQueue queue([&workers](std::function<void()> drain) { workers.emplace_back(std::move(drain)); });
+    std::atomic<bool> started{false};
+    std::atomic<bool> release{false};
+    CHECK(queue
+              .Post([&]() {
+                  started.store(true);
+                  while (!release.load()) {
+                      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                  }
+              })
+              .empty());
+    while (!started.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+    CHECK(queue.PendingCount() == 1); // popped, executing
+    CHECK(queue.Post([]() {}).empty());
+    CHECK(queue.PendingCount() == 2);
+    CHECK_FALSE(queue.Flush(std::chrono::milliseconds(20))); // residue under a short deadline
+    CHECK(queue.PendingCount() == 2);
+    release.store(true);
+    CHECK(queue.Flush());
+    CHECK(queue.PendingCount() == 0);
+    for (std::thread& w : workers) {
+        w.join();
+    }
+}
 
-    TEST_CASE("SerialTaskQueue::PendingCount drops the task that threw") {
-        std::vector<std::function<void()>> launched;
-        SerialTaskQueue queue([&launched](std::function<void()> drain) { launched.push_back(std::move(drain)); });
-        CHECK(queue.Post([]() { throw std::runtime_error("disk gone"); }).empty());
-        REQUIRE(launched.size() == 1);
-        CHECK_THROWS_AS(launched[0](), std::runtime_error);
-        CHECK(queue.PendingCount() == 0);
-    }
+TEST_CASE("SerialTaskQueue::PendingCount drops the task that threw") {
+    std::vector<std::function<void()>> launched;
+    SerialTaskQueue queue([&launched](std::function<void()> drain) { launched.push_back(std::move(drain)); });
+    CHECK(queue.Post([]() { throw std::runtime_error("disk gone"); }).empty());
+    REQUIRE(launched.size() == 1);
+    CHECK_THROWS_AS(launched[0](), std::runtime_error);
+    CHECK(queue.PendingCount() == 0);
+}
 
-    TEST_CASE("RemainingUntil never goes negative and shares one deadline") {
-        const auto now = std::chrono::steady_clock::now();
-        CHECK(smatchet::RemainingUntil(now - std::chrono::seconds(1)).count() == 0);
-        const auto left = smatchet::RemainingUntil(now + std::chrono::seconds(60));
-        CHECK(left.count() > 50000);
-        CHECK(left.count() <= 60000);
-    }
+TEST_CASE("RemainingUntil never goes negative and shares one deadline") {
+    const auto now = std::chrono::steady_clock::now();
+    CHECK(smatchet::RemainingUntil(now - std::chrono::seconds(1)).count() == 0);
+    const auto left = smatchet::RemainingUntil(now + std::chrono::seconds(60));
+    CHECK(left.count() > 50000);
+    CHECK(left.count() <= 60000);
+}
