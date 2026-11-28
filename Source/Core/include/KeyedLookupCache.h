@@ -7,11 +7,20 @@
 // already there; it records a retry-after deadline instead. No fetch starts while the tracker is
 // offline or inside the backoff window. RunKeyedFetch clears InFlight on every exit path, including a
 // throw. The mutex is never held while a fetch runs. Thread-safe.
+//
+// Admission. By default a value that is Live is served until the process ends or a caller Invalidates it.
+// A caller that needs a live value to be re-checked opts in with a FetchAdmission (an age limit, a forced
+// revalidation) or a stale predicate (TryBeginFetchIf). A revalidation never costs the entry what it holds:
+// the Payload, HasValue and Live flag stay put while it runs and when it fails, so the cue reads Refreshing
+// and then CachedStale instead of dropping the value (Pillar 6: a failed fetch never wipes cached data).
 
+#include "Config/TunableLimits.h"
 #include "OfflineFirstPure.h"
 #include "ScopeExit.h"
 #include "TrackerError.h"
 
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -20,6 +29,26 @@
 
 namespace smatchet {
 namespace offline {
+
+/// When a Live value may be fetched again. The default (no age limit, no revalidation) keeps the original
+/// rule: a Live value is never fetched again until it is invalidated.
+struct FetchAdmission {
+    /// A Live value older than this may be fetched again. Zero or negative disables the age limit.
+    std::chrono::seconds LiveMaxAge{0};
+    /// The caller wants a live answer now (a user's Refresh): no Live value counts as current. It still waits
+    /// for connectivity and the failure backoff, and never starts a second fetch for a key already in flight.
+    bool Revalidate = false;
+};
+
+/// The admission the revalidating callers use: a live value older than `lookup_live_max_age_sec` (0 = never)
+/// may be fetched again, and `revalidate` asks for it whatever its age. Reads the tunable limits (a short mutex and
+/// a copy of the limits struct): cheap, but not free, so call it once per lookup, not once per entry.
+inline FetchAdmission LiveMaxAgeAdmission(bool revalidate) {
+    FetchAdmission admit;
+    admit.LiveMaxAge = std::chrono::seconds(limits::Get().LookupLiveMaxAgeSec);
+    admit.Revalidate = revalidate;
+    return admit;
+}
 
 template <typename Value> class KeyedLookupCache {
   public:
@@ -35,6 +64,9 @@ template <typename Value> class KeyedLookupCache {
     struct Ticket {
         std::string Key;
         std::uint64_t Gen = 0;
+        /// The entry held a Live value when this fetch was admitted (a revalidation). Its saved-copy shortcut
+        /// must not run: a saved copy would replace the live value with an older one.
+        bool WasLive = false;
     };
 
     explicit KeyedLookupCache(int retryAfterSeconds = kLookupRetryAfterSeconds)
@@ -57,25 +89,60 @@ template <typename Value> class KeyedLookupCache {
         return ClassifyFreshness(in);
     }
 
-    /// True (and `out` filled) when the caller should launch a fetch for `key` now.
+    /// True (and `out` filled) when the caller should launch a fetch for `key` now. A key that is in flight is
+    /// never admitted. A Live value is admitted only when `admit` asks for it (see FetchAdmission).
     bool TryBeginFetch(const std::string& key, TrackerConnectivityState connectivity, Clock::time_point now,
-                       Ticket& out) {
+                       Ticket& out, const FetchAdmission& admit = FetchAdmission()) {
+        return TryBeginFetchIf(key, connectivity, now, out, admit, [](const Value&) { return false; });
+    }
+
+    /// TryBeginFetch with a stale predicate: `liveIsStale(const Value& livePayload)` returning true makes a Live
+    /// value admissible again (e.g. it answers a different question than the caller now asks). The predicate
+    /// runs under the cache's mutex: keep it cheap, never throw, never call back into this cache.
+    template <class StalePred>
+    bool TryBeginFetchIf(const std::string& key, TrackerConnectivityState connectivity, Clock::time_point now,
+                         Ticket& out, const FetchAdmission& admit, StalePred&& liveIsStale) {
         std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = slots_.find(key);
+        if (it == slots_.end()) {
+            if (!ShouldAttemptNetwork(connectivity, now, Clock::time_point())) {
+                return false; // a refusal creates no slot, so an offline probe of a new key leaves nothing behind
+            }
+        } else {
+            const Slot& existing = it->second;
+            if (existing.E.InFlight) {
+                return false;
+            }
+            if (existing.E.Live && !existing.E.LastAttemptFailed &&
+                !(admit.Revalidate || !LiveIsCurrent(existing, now, admit) || liveIsStale(existing.E.Payload))) {
+                return false;
+            }
+            if (!ShouldAttemptNetwork(connectivity, now, existing.RetryAfter)) {
+                return false;
+            }
+        }
         Slot& s = slots_[key];
-        if (s.E.InFlight || (s.E.Live && !s.E.LastAttemptFailed)) {
-            return false;
-        }
-        if (!ShouldAttemptNetwork(connectivity, now, s.RetryAfter)) {
-            return false;
-        }
         s.E.InFlight = true;
         s.Gen = ++nextGen_;
         out.Key = key;
         out.Gen = s.Gen;
+        out.WasLive = s.E.Live;
         return true;
     }
 
-    void CompleteSuccess(const Ticket& t, Value value) {
+    /// True when `key` holds a Live value from a successful fetch that `admit` would still serve: no failed last
+    /// attempt, no forced revalidation, and not older than `admit.LiveMaxAge`. Says nothing about an in-flight fetch.
+    bool IsCurrent(const std::string& key, Clock::time_point now, const FetchAdmission& admit) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = slots_.find(key);
+        return it != slots_.end() && it->second.E.Live && !it->second.E.LastAttemptFailed && !admit.Revalidate &&
+               LiveIsCurrent(it->second, now, admit);
+    }
+
+    void CompleteSuccess(const Ticket& t, Value value) { CompleteSuccess(t, std::move(value), Clock::now()); }
+
+    /// `now` stamps the value's live time, the origin of FetchAdmission::LiveMaxAge.
+    void CompleteSuccess(const Ticket& t, Value value, Clock::time_point now) {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto it = slots_.find(t.Key);
         if (it == slots_.end() || it->second.Gen != t.Gen) {
@@ -90,6 +157,7 @@ template <typename Value> class KeyedLookupCache {
         e.LastErrorKind = TrackerErrorKind::None;
         e.LastError.clear();
         it->second.RetryAfter = Clock::time_point();
+        it->second.LiveAt = now;
     }
 
     void CompleteFailure(const Ticket& t, const TrackerError& error, Clock::time_point now) {
@@ -125,6 +193,7 @@ template <typename Value> class KeyedLookupCache {
         e.LastErrorKind = TrackerErrorKind::None;
         e.LastError.clear();
         it->second.RetryAfter = retryAt;
+        it->second.LiveAt = Clock::time_point();
         it->second.Gen = 0;
     }
 
@@ -155,6 +224,33 @@ template <typename Value> class KeyedLookupCache {
         slots_.erase(key);
     }
 
+    /// Drop every entry `keep(const std::string& key, const Entry& entry)` rejects, and every entry that holds no
+    /// value, is not in flight and is no longer backing off at `now` (an empty failure record: while its backoff
+    /// runs it is what stops the next call from fetching again, so it stays). An in-flight entry is never erased:
+    /// its fetch still holds a ticket for it. Returns how many entries were erased. `keep` runs under the cache's
+    /// mutex: keep it cheap, never throw, never call back into this cache.
+    template <class KeepPred> std::size_t RetainIf(Clock::time_point now, KeepPred&& keep) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::size_t erased = 0;
+        for (auto it = slots_.begin(); it != slots_.end();) {
+            const Entry& e = it->second.E;
+            const bool backingOff = it->second.RetryAfter > now;
+            if (!e.InFlight && (e.HasValue ? !keep(it->first, e) : !backingOff)) {
+                it = slots_.erase(it);
+                ++erased;
+            } else {
+                ++it;
+            }
+        }
+        return erased;
+    }
+
+    /// Number of entries held, in-flight and empty ones included.
+    std::size_t Size() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return slots_.size();
+    }
+
     /// Connectivity came back: clear every backoff so failed keys retry on their next use.
     void OnConnectivityRecovered() {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -173,7 +269,13 @@ template <typename Value> class KeyedLookupCache {
         Entry E;
         Clock::time_point RetryAfter{};
         std::uint64_t Gen = 0;
+        Clock::time_point LiveAt{}; ///< when the Live value was recorded (CompleteSuccess)
     };
+
+    static bool LiveIsCurrent(const Slot& s, Clock::time_point now, const FetchAdmission& admit) {
+        return admit.LiveMaxAge.count() <= 0 || now - s.LiveAt < admit.LiveMaxAge;
+    }
+
     mutable std::mutex mutex_;
     std::unordered_map<std::string, Slot> slots_;
     std::uint64_t nextGen_ = 0;
@@ -183,23 +285,30 @@ template <typename Value> class KeyedLookupCache {
 /// Run `fetch` (returns Result<Value, TrackerError>) for a ticket from TryBeginFetch and record the
 /// outcome. Call it on a worker thread. A throw from the fetch or from recording its result (e.g. a
 /// throwing Value move-assignment) is recorded as an Unknown failure and rethrown, so InFlight can
-/// never stay latched.
-template <typename Value, typename FetchFn>
+/// never stay latched. `now()` (returns Clock::time_point) stamps the outcome; the overload without it
+/// reads the steady clock.
+template <typename Value, typename FetchFn, typename NowFn>
 void RunKeyedFetch(KeyedLookupCache<Value>& cache, const typename KeyedLookupCache<Value>::Ticket& ticket,
-                   FetchFn&& fetch) {
+                   FetchFn&& fetch, NowFn&& now) {
     bool recorded = false;
-    ScopeExit recordThrow([&cache, &ticket, &recorded]() {
+    ScopeExit recordThrow([&cache, &ticket, &recorded, &now]() {
         if (!recorded) {
-            cache.CompleteFailure(ticket, TrackerErrorUnknown("lookup fetch threw"), Clock::now());
+            cache.CompleteFailure(ticket, TrackerErrorUnknown("lookup fetch threw"), now());
         }
     });
     auto result = fetch();
     if (result.has_value()) {
-        cache.CompleteSuccess(ticket, std::move(result.value()));
+        cache.CompleteSuccess(ticket, std::move(result.value()), now());
     } else {
-        cache.CompleteFailure(ticket, result.error(), Clock::now());
+        cache.CompleteFailure(ticket, result.error(), now());
     }
     recorded = true; // only once a completion has actually been stored
+}
+
+template <typename Value, typename FetchFn>
+void RunKeyedFetch(KeyedLookupCache<Value>& cache, const typename KeyedLookupCache<Value>::Ticket& ticket,
+                   FetchFn&& fetch) {
+    RunKeyedFetch(cache, ticket, std::forward<FetchFn>(fetch), []() { return Clock::now(); });
 }
 
 } // namespace offline

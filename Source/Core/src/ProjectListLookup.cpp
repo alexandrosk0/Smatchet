@@ -42,6 +42,14 @@ void SaveProjects(const std::shared_ptr<ILookupCache>& store, const std::string&
     if (!store || backendKey.empty()) {
         return;
     }
+    // SerializeProjects keeps only a prefix past the stored cap, and a prefix read back would pass for the whole
+    // list. Store nothing instead: the older complete row stays (the roster save makes the same choice).
+    if (projects.size() > lookup::MaxStoredProjects()) {
+        LOG_WARN("ProjectListLookup: project list (%zu projects) is over lookup_max_stored_projects (%zu); not saving "
+                 "it for offline use",
+                 projects.size(), lookup::MaxStoredProjects());
+        return;
+    }
     const std::string payload = lookup::SerializeProjects(projects);
     if (payload.empty()) {
         return; // over the size cap: keep the older saved list rather than store an unreadable one
@@ -72,7 +80,10 @@ ProjectListOutcome LoadProjectList(ITrackerConnectivity& connectivity, const std
         std::int64_t savedAt = 0;
         std::vector<RemoteProject> saved;
         // An empty saved list never stands in: "No projects found" must come from the tracker, not from a copy.
+        // Neither does one at the stored cap: it may be the prefix an older build or a lowered cap left behind, so
+        // only the tracker can say it is complete. Offline it is still shown, as a saved copy, by the fallback below.
         if (LoadSavedProjects(store, backendKey, saved, &savedAt) && !saved.empty() &&
+            saved.size() < lookup::MaxStoredProjects() &&
             smatchet::sync::IsLookupRowFresh(savedAt, nowEpochSec, ttlSec)) {
             outcome.Projects = std::move(saved);
             outcome.Failed = false;

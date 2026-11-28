@@ -404,8 +404,10 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
         // Enqueue rather than Save (#2145): the end-of-frame drain now fills the worker's
         // coalescing slot, and a direct Save here could be overwritten by an older snapshot still
         // pending in that slot. Enqueue replaces the slot with this newest snapshot instead, and
-        // falls back to a synchronous save when the worker is already stopped, so the final state
-        // reaches disk either way (config_save::Stop flushes pending writes before joining).
+        // falls back to a synchronous save when the worker is already stopped (as it is when
+        // ~AppController reaches this drain). config_save::Stop does not guarantee a flush: it
+        // makes a best-effort, budget-bounded drain before joining, and a write still queued when
+        // the budget runs out is dropped.
         smatchet::config_save::EnqueueTrackerConfig(d.cfg);
         d.prefsDirty = false;
     }

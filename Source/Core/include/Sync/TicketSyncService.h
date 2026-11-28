@@ -136,11 +136,13 @@ class TicketSyncService {
     /// than the probe saw. Any thread.
     std::uint64_t SessionEpoch() const { return sessionEpoch_.load(); }
 
-    /// The query the most recently started session ran (its `TrackerConfig::JqlQuery`; empty means the backend's
-    /// default query), copied into `outJql`. False, with `outJql` untouched, while no session has started. Every
-    /// sync of the pane goes through StartStreamingSync, whatever started it (a pane kick, a view opened in place,
-    /// a refresh), so this is the query the pane's rows answer; the change monitor polls with it. UI thread.
-    bool LastSessionQuery(std::string& outJql) const;
+    /// The config and views the most recently started session ran with, copied into `outCfg` and `outViews` (the
+    /// views are shared and immutable: a later session latches a new store, it never edits this one). False, with
+    /// both outputs untouched, while no session has started. Every sync of the pane goes through StartStreamingSync,
+    /// whatever started it (a pane kick, a view opened in place, a refresh), so this is what the pane's rows answer:
+    /// its query (an empty `JqlQuery` is the backend's default query), its repository / project and its active
+    /// view's fields. The change monitor probes the pane with it. UI thread.
+    bool LastSessionConfig(TrackerConfig& outCfg, std::shared_ptr<const ViewsStore>& outViews) const;
 
     /// How many times the apply drain built its id -> index map from scratch (cumulative). A session builds it once
     /// and rebuilds only when the roster changed behind it; diagnostics and tests. UI thread.
@@ -429,6 +431,9 @@ class TicketSyncService {
     smatchet::sync::SyncMode activeMode_ = smatchet::sync::SyncMode::Delta;
     /// What the current session asked for, latched in StartStreamingSync; UI thread. See ViewListingCompletion.
     TrackerConfig sessionCfg_;
+    /// The views the current session ran with, latched beside sessionCfg_; UI thread (the store itself is immutable,
+    /// so a monitor probe may read its copy of the pointer on a worker).
+    std::shared_ptr<const ViewsStore> sessionViews_;
     std::string sessionViewId_;
     std::string sessionViewName_;
     /// Rows the session's convergence removed from the pane, consumed by PublishViewListing; UI thread.
