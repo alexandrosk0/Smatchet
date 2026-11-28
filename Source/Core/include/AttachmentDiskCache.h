@@ -45,7 +45,8 @@ class AttachmentDiskCache {
     Result<LocalAttachment, TrackerError> Store(const std::string& url, const std::string& fileName,
                                                 const FetchedAttachment& fetched);
 
-    /// Deletes entries, least recently used first, until the cache fits its cap (SelectEvictions).
+    /// Deletes entries, least recently used first, until the cache fits its cap (SelectEvictions), and first
+    /// removes orphaned temp files an interrupted write left inside an entry (SelectStaleEntryFiles).
     void Prune();
 
   private:

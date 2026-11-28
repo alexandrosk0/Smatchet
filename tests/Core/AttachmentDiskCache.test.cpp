@@ -5,6 +5,8 @@
 
 #include "AttachmentDiskCache.h"
 
+#include "FileIo.h"
+
 #include <doctest/doctest.h>
 #include <ghc/filesystem.hpp>
 
@@ -15,6 +17,10 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#endif
 
 namespace fs = ghc::filesystem;
 
@@ -89,6 +95,46 @@ void SetLastUsed(const std::string& dir, std::int64_t secondsAgo) {
     }
     fs::last_write_time(dir, when, ec);
 }
+
+// Ages one file so the grace window no longer protects it.
+void SetFileAge(const fs::path& file, std::int64_t secondsAgo) {
+    std::error_code ec;
+    fs::last_write_time(file, fs::file_time_type::clock::now() - std::chrono::seconds(secondsAgo), ec);
+}
+
+void WriteText(const fs::path& file, const std::string& text) {
+    std::ofstream out(file.string(), std::ios::binary | std::ios::trunc);
+    out << text;
+}
+
+// Squats a directory on each of the next kWindow temp names of `target`, so every exclusive create of the
+// atomic writer collides and a write of `target` fails. Released (directories removed) on destruction.
+class TempNameSquatter {
+  public:
+    explicit TempNameSquatter(const std::string& target) {
+        const std::string probe = smatchet::fileio::UniqueTempSuffix(); // ".part-<pid>-<n>"
+        const std::string::size_type dash = probe.rfind('-');
+        const std::string prefix = target + probe.substr(0, dash + 1);
+        const unsigned long long first = std::stoull(probe.substr(dash + 1)) + 1;
+        for (unsigned long long n = first; n < first + 64; ++n) {
+            const std::string dir = prefix + std::to_string(n);
+            std::error_code ec;
+            fs::create_directories(dir, ec);
+            dirs_.push_back(dir);
+        }
+    }
+    ~TempNameSquatter() {
+        std::error_code ec;
+        for (std::size_t i = 0; i < dirs_.size(); ++i) {
+            fs::remove_all(dirs_[i], ec);
+        }
+    }
+    TempNameSquatter(const TempNameSquatter&) = delete;
+    TempNameSquatter& operator=(const TempNameSquatter&) = delete;
+
+  private:
+    std::vector<std::string> dirs_;
+};
 
 } // namespace
 
@@ -278,4 +324,125 @@ TEST_SUITE("AttachmentDiskCache") {
         REQUIRE(cache.Lookup(kUrl, out));
         CHECK(ReadAll(out.FilePath) == "pixels");
     }
+
+    TEST_CASE("an old orphaned temp next to the stored file is swept; a young temp and a lookalike are kept") {
+        ScopedTempDir dir;
+        AttachmentDiskCache cache(dir.Path(), /*capBytes=*/1u << 20, /*graceSeconds=*/60);
+        const LocalResult stored = cache.Store(kUrl, "spec.pdf", Bytes("pdf-bytes", "application/pdf"));
+        REQUIRE(stored.has_value());
+        const fs::path entryDir = fs::path(dir.Path()) / "attachment_cache" / EntryKeyForUrl(kUrl);
+        const fs::path oldTemp = entryDir / "spec.pdf.part-4242-7";
+        const fs::path oldMetaTemp = entryDir / "entry.json.part-4242-8";
+        const fs::path youngTemp = entryDir / "spec.pdf.part-4242-9";
+        const fs::path lookalike = entryDir / "spec.part-2.pdf";
+        for (const fs::path& f : {oldTemp, oldMetaTemp, youngTemp, lookalike}) {
+            WriteText(f, "junk");
+        }
+        SetFileAge(oldTemp, 3600);
+        SetFileAge(oldMetaTemp, 3600);
+        SetFileAge(lookalike, 3600);
+
+        cache.Prune();
+
+        CHECK_FALSE(fs::exists(oldTemp));
+        CHECK_FALSE(fs::exists(oldMetaTemp));
+        CHECK(fs::exists(youngTemp)); // a writer may still be producing it
+        CHECK(fs::exists(lookalike)); // not base + the exact temp suffix: a different file
+        LocalAttachment hit;
+        REQUIRE(cache.Lookup(kUrl, hit));
+        CHECK(ReadAll(hit.FilePath) == "pdf-bytes");
+    }
+
+    TEST_CASE("orphaned temps do not count toward an entry's size when the cap is applied") {
+        ScopedTempDir dir;
+        AttachmentDiskCache cache(dir.Path(), /*capBytes=*/250, /*graceSeconds=*/60);
+        REQUIRE(cache.Store(kUrl, "f", Bytes(std::string(100, 'x'))).has_value());
+        const fs::path entryDir = fs::path(dir.Path()) / "attachment_cache" / EntryKeyForUrl(kUrl);
+        const fs::path orphan = entryDir / "f.png.part-1-1"; // Bytes() defaults to image/png, so the file is f.png
+        REQUIRE(fs::exists(entryDir / "f.png"));
+        WriteText(orphan, std::string(100, 'j'));
+        SetFileAge(orphan, 3600);
+        SetLastUsed(entryDir.string(), 3600);
+        SetFileAge(entryDir / "f.png", 3600);
+        SetFileAge(entryDir / "entry.json", 3600);
+
+        cache.Prune();
+
+        // 100 bytes of data + ~100 bytes of metadata fit the 250-byte cap only while the 100-byte orphan is not
+        // counted.
+        LocalAttachment hit;
+        CHECK(cache.Lookup(kUrl, hit));
+        CHECK_FALSE(fs::exists(orphan));
+    }
+
+    TEST_CASE("storing identical bytes again writes nothing, so a blocked replace is not an error") {
+        ScopedTempDir dir;
+        AttachmentDiskCache cache(dir.Path());
+        const LocalResult first = cache.Store(kUrl, "diagram", Bytes("pixels"));
+        REQUIRE(first.has_value());
+        const TempNameSquatter squat(first.value().FilePath);
+        // Identical bytes: nothing needs replacing, so the blocked write is not an error.
+        const LocalResult again = cache.Store(kUrl, "diagram", Bytes("pixels"));
+        REQUIRE(again.has_value());
+        CHECK(ReadAll(again.value().FilePath) == "pixels");
+    }
+
+    TEST_CASE("a live data file named like a temp survives Prune") {
+        ScopedTempDir dir;
+        AttachmentDiskCache cache(dir.Path(), /*capBytes=*/1u << 20, /*graceSeconds=*/60);
+        const LocalResult stored =
+            cache.Store(kUrl, "entry.json.part-1-2", Bytes("pixels", "application/octet-stream"));
+        REQUIRE(stored.has_value());
+        const fs::path dataFile = stored.value().FilePath;
+        REQUIRE(dataFile.filename() == "entry.json.part-1-2");
+        SetFileAge(dataFile, 3600);
+        cache.Prune();
+        CHECK(fs::exists(dataFile));
+        LocalAttachment hit;
+        REQUIRE(cache.Lookup(kUrl, hit));
+        CHECK(ReadAll(hit.FilePath) == "pixels");
+    }
+
+    TEST_CASE("sweeping orphaned temps does not refresh the entry's age") {
+        ScopedTempDir dir;
+        AttachmentDiskCache cache(dir.Path(), /*capBytes=*/1u << 20, /*graceSeconds=*/60);
+        REQUIRE(cache.Store(kUrl, "f", Bytes("x")).has_value());
+        const fs::path entryDir = fs::path(dir.Path()) / "attachment_cache" / EntryKeyForUrl(kUrl);
+        const fs::path orphan = entryDir / "f.png.part-1-1";
+        WriteText(orphan, "junk");
+        SetFileAge(orphan, 3600);
+        SetLastUsed(entryDir.string(), 3600); // the whole entry is old
+        std::error_code ec;
+        const fs::file_time_type before = fs::last_write_time(entryDir, ec);
+        cache.Prune();
+        REQUIRE_FALSE(fs::exists(orphan));
+        CHECK(fs::last_write_time(entryDir, ec) == before);
+    }
+
+    TEST_CASE("a blocked replace of different bytes fails and leaves the old file") {
+        ScopedTempDir dir;
+        AttachmentDiskCache cache(dir.Path());
+        const LocalResult first = cache.Store(kUrl, "diagram", Bytes("pixels"));
+        REQUIRE(first.has_value());
+        const TempNameSquatter squat(first.value().FilePath);
+        // Same size, different content: the old size-only rule would have called this the same file.
+        const LocalResult other = cache.Store(kUrl, "diagram", Bytes("PIXELS"));
+        CHECK_FALSE(other.has_value());
+        CHECK(ReadAll(first.value().FilePath) == "pixels");
+    }
+
+#if !defined(_WIN32)
+    TEST_CASE("POSIX: cache files are owner-only") {
+        ScopedTempDir dir;
+        AttachmentDiskCache cache(dir.Path());
+        const LocalResult stored = cache.Store(kUrl, "diagram", Bytes("pixels"));
+        REQUIRE(stored.has_value());
+        const fs::path entryDir = fs::path(stored.value().FilePath).parent_path();
+        for (const fs::path& f : {fs::path(stored.value().FilePath), entryDir / "entry.json"}) {
+            struct stat st {};
+            REQUIRE(::stat(f.string().c_str(), &st) == 0);
+            CHECK((st.st_mode & 0777) == (S_IRUSR | S_IWUSR));
+        }
+    }
+#endif
 }

@@ -1,5 +1,6 @@
 #include "AttachmentCachePure.h"
 
+#include "FileIo.h"
 #include "Json/BoundedJsonParse.h"
 #include "Sha256.h"
 
@@ -116,6 +117,28 @@ std::string StoredFileName(const std::string& filename, const std::string& exten
     // Sanitize again so the stored name is exactly what ParseEntryMeta accepts back (the cap, once the
     // extension is appended).
     return SanitizeFileName(name);
+}
+
+std::vector<std::string> SelectStaleEntryFiles(const std::vector<EntryFileInfo>& files,
+                                               const std::string& liveDataFileName, std::int64_t nowEpochSec,
+                                               std::int64_t graceSeconds) {
+    std::vector<std::string> stale;
+    for (const EntryFileInfo& candidate : files) {
+        if (candidate.Name == liveDataFileName || candidate.Name == kEntryMetaFileName) {
+            continue; // the entry's own files, whatever they are called
+        }
+        if (nowEpochSec - candidate.LastModifiedEpochSec < graceSeconds) {
+            continue; // possibly mid-write
+        }
+        for (const EntryFileInfo& base : files) {
+            if (&base != &candidate && smatchet::fileio::IsTempSiblingOf(candidate.Name, base.Name)) {
+                stale.push_back(candidate.Name);
+                break;
+            }
+        }
+    }
+    std::sort(stale.begin(), stale.end());
+    return stale;
 }
 
 std::vector<std::string> SelectEvictions(std::vector<CacheEntryInfo> entries, std::uint64_t capBytes,

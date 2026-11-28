@@ -42,10 +42,30 @@ std::string StoredFileName(const std::string& filename, const std::string& exten
 
 struct CacheEntryInfo {
     std::string Key;
-    std::uint64_t SizeBytes = 0;
+    std::uint64_t SizeBytes = 0; ///< excludes StaleFiles: they are about to be deleted
     std::int64_t LastUsedEpochSec = 0;
     bool Complete = true; ///< false when entry.json is missing: an interrupted download
+    /// Names of orphaned temp files in the entry directory (SelectStaleEntryFiles); deleted by Prune.
+    std::vector<std::string> StaleFiles;
 };
+
+/// One regular file in an entry directory.
+struct EntryFileInfo {
+    std::string Name;
+    std::int64_t LastModifiedEpochSec = 0;
+};
+
+/// The files in one entry directory that are orphaned temps: `X` is stale when another file `B` in the
+/// same directory exists with `X == B + ".part-<digits>-<digits>"` (the exact suffix the atomic writer
+/// stages through, FileIo.h IsTempSiblingOf) and `X` was last written at least `graceSeconds` before
+/// `nowEpochSec` (a younger one may still be being written). `liveDataFileName` is the file entry.json
+/// names; it is never stale however it is spelled, because the attachment's own name comes from the
+/// tracker and may itself look like a temp ("entry.json.part-1-2"). entry.json is never stale either.
+/// Nothing else is ever stale: a user file that merely resembles a temp, such as "spec.part-2.pdf" next to
+/// "spec.pdf", is kept. Sorted by name.
+std::vector<std::string> SelectStaleEntryFiles(const std::vector<EntryFileInfo>& files,
+                                               const std::string& liveDataFileName, std::int64_t nowEpochSec,
+                                               std::int64_t graceSeconds);
 
 /// The entry keys to delete, least recently used first. An interrupted entry older than `graceSeconds`
 /// is always deleted. The rest are deleted oldest first until the total fits `capBytes`, except that an

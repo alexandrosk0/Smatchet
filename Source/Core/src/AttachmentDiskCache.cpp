@@ -1,17 +1,17 @@
 #include "AttachmentDiskCache.h"
 
 #include "AttachmentMimeUtils.h"
+#include "FileIo.h"
 #include "Commands/PathConfinement.h"
 #include "Logger.h"
 
 #include <ghc/filesystem.hpp>
 
-#include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <functional>
 #include <system_error>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -31,50 +31,27 @@ std::int64_t ToEpochSeconds(const fs::file_time_type& t) {
 
 std::int64_t NowEpochSeconds() { return ToEpochSeconds(fs::file_time_type::clock::now()); }
 
-// A sibling temp name no other writer (thread or process) picks: time, thread and a counter.
-std::string UniqueTempSuffix() {
-    static std::atomic<std::uint64_t> counter{0};
-    const std::uint64_t now = static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
-    const std::uint64_t tid = static_cast<std::uint64_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
-    return ".part-" + std::to_string(now ^ (tid << 16)) + "-" + std::to_string(counter.fetch_add(1));
-}
-
-// Temp file then rename, so a reader never sees a half-written file. ghc streams take UTF-8 paths on
-// Windows too.
-bool WriteFileAtomically(const std::string& path, const std::string& bytes, bool isAttachmentData,
-                         std::string& errOut) {
-    const std::string temp = path + UniqueTempSuffix();
-    {
-        fs::ofstream out(fs::path(temp), std::ios::binary | std::ios::trunc);
-        if (!out.is_open()) {
-            errOut = "could not create the cache file";
-            return false;
-        }
-        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-        out.close();
-        if (!out) {
-            std::error_code rmEc;
-            fs::remove(fs::path(temp), rmEc);
-            errOut = "could not write the cache file";
-            return false;
-        }
-    }
-    std::error_code ec;
-    fs::rename(fs::path(temp), fs::path(path), ec);
-    if (!ec) {
+// Atomic temp-then-rename through the shared writer (FileIo.h): a reader never sees a half-written file, the
+// temp is a unique exclusive sibling created owner-only, and a failure removes it. No fsync: a cache entry
+// can be fetched again.
+bool WriteCacheFile(const std::string& path, const std::string& bytes, bool isAttachmentData, std::string& errOut) {
+    // An entry's file never changes for a URL, so identical bytes already on disk are the same attachment.
+    // Skipping the write keeps a file a viewer holds open (Windows refuses to replace it) untouched.
+    if (isAttachmentData && smatchet::fileio::FileContentEquals(path, bytes.data(), bytes.size())) {
         return true;
     }
-    std::error_code rmEc;
-    fs::remove(fs::path(temp), rmEc);
-    // Windows refuses to replace a file a viewer holds open. The entry's content never changes for a
-    // URL, so an existing file of the same size is the same attachment. Metadata can change and
-    // must be replaced successfully.
-    std::error_code sizeEc;
-    if (isAttachmentData && fs::is_regular_file(fs::path(path), sizeEc) &&
-        fs::file_size(fs::path(path), sizeEc) == static_cast<std::uintmax_t>(bytes.size()) && !sizeEc) {
+    smatchet::fileio::AtomicWriteOptions options;
+    options.OwnerOnly = true;
+    options.Durable = false;
+    if (smatchet::fileio::WriteFileAtomically(path, bytes.data(), bytes.size(), options, errOut)) {
         return true;
     }
-    errOut = "could not move the cache file into place: " + ec.message();
+    // The replace can still fail on Windows when a viewer opened the file between the compare and the move; an
+    // identical file is then still the right outcome. Metadata can change and must be replaced successfully.
+    if (isAttachmentData && smatchet::fileio::FileContentEquals(path, bytes.data(), bytes.size())) {
+        errOut.clear();
+        return true;
+    }
     return false;
 }
 
@@ -93,24 +70,49 @@ bool ReadSmallFile(const std::string& path, std::uintmax_t maxBytes, std::string
     return static_cast<std::uintmax_t>(in.gcount()) == size;
 }
 
-// Size, last use and completeness of one entry directory (its files are never nested).
-CacheEntryInfo DescribeEntry(const fs::path& dir, const std::string& key) {
+// Size, last use, completeness and orphaned temp files of one entry directory (its files are never nested).
+CacheEntryInfo DescribeEntry(const fs::path& dir, const std::string& key, std::int64_t nowEpochSec,
+                             std::int64_t graceSeconds) {
     CacheEntryInfo info;
     info.Key = key;
     info.Complete = false;
     std::error_code ec;
     info.LastUsedEpochSec = ToEpochSeconds(fs::last_write_time(dir, ec));
+    std::vector<EntryFileInfo> files;
+    std::vector<std::uint64_t> sizes;
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
         std::error_code fileEc;
         if (!it->is_regular_file(fileEc) || fileEc) {
             continue;
         }
-        info.SizeBytes += static_cast<std::uint64_t>(it->file_size(fileEc));
-        const std::int64_t used = ToEpochSeconds(it->last_write_time(fileEc));
-        if (!fileEc && used > info.LastUsedEpochSec) {
-            info.LastUsedEpochSec = used;
+        EntryFileInfo file;
+        file.Name = it->path().filename().string();
+        file.LastModifiedEpochSec = ToEpochSeconds(it->last_write_time(fileEc));
+        if (fileEc) {
+            file.LastModifiedEpochSec = nowEpochSec; // unknown age: treat as fresh so it is never deleted
         }
-        if (it->path().filename().string() == kEntryMetaFileName) {
+        std::error_code sizeEc;
+        const std::uintmax_t size = it->file_size(sizeEc);
+        files.push_back(std::move(file));
+        sizes.push_back(sizeEc ? 0u : static_cast<std::uint64_t>(size));
+    }
+    // Only an entry whose entry.json parses has a known live data file; for any other (an interrupted
+    // download, a damaged entry.json) nothing is swept here and SelectEvictions deals with the whole entry.
+    std::string metaJson;
+    EntryMeta meta;
+    if (ReadSmallFile((dir / kEntryMetaFileName).string(), kMaxEntryMetaBytes, metaJson) &&
+        ParseEntryMeta(metaJson, meta)) {
+        info.StaleFiles = SelectStaleEntryFiles(files, meta.FileName, nowEpochSec, graceSeconds);
+    }
+    for (std::size_t i = 0; i < files.size(); ++i) {
+        if (std::binary_search(info.StaleFiles.begin(), info.StaleFiles.end(), files[i].Name)) {
+            continue;
+        }
+        info.SizeBytes += sizes[i];
+        if (files[i].LastModifiedEpochSec > info.LastUsedEpochSec) {
+            info.LastUsedEpochSec = files[i].LastModifiedEpochSec;
+        }
+        if (files[i].Name == kEntryMetaFileName) {
             info.Complete = true;
         }
     }
@@ -187,8 +189,8 @@ Result<LocalAttachment, TrackerError> AttachmentDiskCache::Store(const std::stri
         fs::create_directories(fs::path(dataPath).parent_path(), ec);
         std::string writeErr;
         // The file first, entry.json last: an entry without entry.json never counts as a hit.
-        if (ec || !WriteFileAtomically(dataPath, fetched.Bytes, true, writeErr) ||
-            !WriteFileAtomically(metaPath, metaJson, false, writeErr)) {
+        if (ec || !WriteCacheFile(dataPath, fetched.Bytes, true, writeErr) ||
+            !WriteCacheFile(metaPath, metaJson, false, writeErr)) {
             return StoreResult::Err(TrackerErrorUnknown("The attachment could not be saved to the cache: " +
                                                         (ec ? ec.message() : writeErr)));
         }
@@ -213,17 +215,40 @@ void AttachmentDiskCache::Prune() {
         if (!fs::is_directory(root, ec)) {
             return;
         }
+        const std::int64_t now = NowEpochSeconds();
         std::vector<CacheEntryInfo> entries;
         for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
             std::error_code dirEc;
             const std::string name = it->path().filename().string();
             // Only entry directories are ever deleted; anything else in the folder is left alone.
             if (it->is_directory(dirEc) && !dirEc && IsEntryKey(name)) {
-                entries.push_back(DescribeEntry(it->path(), name));
+                entries.push_back(DescribeEntry(it->path(), name, now, graceSeconds_));
             }
         }
-        for (const std::string& key :
-             SelectEvictions(std::move(entries), capBytes_, NowEpochSeconds(), graceSeconds_)) {
+        // Orphaned temps first (an evicted entry goes whole, but sweeping it first costs nothing and keeps the
+        // order simple); their size is already outside each entry's total.
+        for (const CacheEntryInfo& entry : entries) {
+            if (entry.StaleFiles.empty()) {
+                continue;
+            }
+            // Deleting a file bumps the directory's mtime, which is the LRU age of an entry without files;
+            // put it back so a sweep never makes an old entry look recently used.
+            const fs::path entryDir = root / entry.Key;
+            std::error_code timeEc;
+            const fs::file_time_type dirTime = fs::last_write_time(entryDir, timeEc);
+            for (const std::string& staleName : entry.StaleFiles) {
+                std::error_code rmEc;
+                fs::remove(entryDir / staleName, rmEc);
+                if (rmEc) {
+                    LOG_WARN("AttachmentDiskCache::Prune: could not delete stale temp %s/%s: %s", entry.Key.c_str(),
+                             staleName.c_str(), rmEc.message().c_str());
+                }
+            }
+            if (!timeEc) {
+                fs::last_write_time(entryDir, dirTime, timeEc);
+            }
+        }
+        for (const std::string& key : SelectEvictions(std::move(entries), capBytes_, now, graceSeconds_)) {
             std::error_code rmEc;
             fs::remove_all(root / key, rmEc);
             if (rmEc) {
