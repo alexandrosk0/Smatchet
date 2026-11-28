@@ -17,6 +17,7 @@
 // ConfigManager, TrackerFieldValueUtils/Parser, ProjectResolver) — all already in the TSan list.
 
 #include "../support/FakeEditMetaDeps.h"
+#include "../support/FakeLookupCache.h"
 #include "../support/FakeTrackerClient.h"
 
 #include "CachedTicketTypes.h"
@@ -25,6 +26,9 @@
 #include <doctest/doctest.h>
 
 #include <atomic>
+#include <chrono>
+#include <functional>
+#include <memory>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -85,4 +89,65 @@ TEST_CASE("EditMetaCacheService: concurrent WarmIssueEditMetaAsync worker vs Can
     CHECK(svc.CanEditFieldForIssue(kIssue, "summary"));
     CHECK_FALSE(svc.CanEditFieldForIssue(kIssue, "labels"));
     CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
+}
+
+TEST_CASE("EditMetaCacheService: Refresh, Invalidate, Ensure and readers race without losing the latch") {
+    // Four threads hammer one issue: Refresh (supersedes), Invalidate (retires an in-flight fetch), Ensure and
+    // WarmIssueEditMetaAsync (both refused while a fetch runs) and CanEditFieldForIssue (reads). The scope saves
+    // run on real threads too. TSan watches the containers, the generation map and the save queue.
+    FakeEditMetaDeps deps;
+    deps.RunOnRealThread = true;
+    const auto store = std::make_shared<FakeLookupCache>();
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket(kIssue, "story"));
+    deps.Fake()->SetIssueEditMetaSuccess(kIssue, {{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+
+    constexpr int kRounds = 150;
+    std::atomic<bool> start{false};
+    const auto run = [&](const std::function<void(int)>& body) {
+        return std::thread([&start, &body]() {
+            while (!start.load()) {
+                std::this_thread::yield();
+            }
+            for (int i = 0; i < kRounds; ++i) {
+                body(i);
+            }
+        });
+    };
+    const std::function<void(int)> refresher = [&](int) {
+        (void)svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", kIssue, "story");
+    };
+    const std::function<void(int)> invalidator = [&](int i) {
+        svc.InvalidateIssueEditMeta(kIssue);
+        if (i % 7 == 0) {
+            svc.PruneEditMetaCacheToActiveTickets();
+        }
+    };
+    const std::function<void(int)> ensurer = [&](int) {
+        (void)svc.EnsureIssueEditMetaLoaded(kIssue);
+        (void)svc.CanEditFieldForIssue(kIssue, "labels");
+    };
+    std::thread t1 = run(refresher);
+    std::thread t2 = run(invalidator);
+    std::thread t3 = run(ensurer);
+    std::thread t4 = run([&](int) {
+        svc.WarmIssueEditMetaAsync(kIssue); // launches real worker threads while the others race
+        (void)svc.CanEditFieldForIssue(kIssue, "summary");
+    });
+    start.store(true);
+    t1.join();
+    t2.join();
+    t3.join();
+    t4.join();
+    deps.JoinLaunchedThreads();
+    REQUIRE(svc.FlushScopeSaves(std::chrono::seconds(10)));
+
+    // Settled: nothing is stuck in flight, so a refresh now produces the scripted answer. Its scope save (if one is
+    // due) runs inline, so no thread outlives the service.
+    deps.RunOnRealThread = false;
+    REQUIRE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", kIssue, "story").has_value());
+    CHECK_FALSE(svc.CanEditFieldForIssue(kIssue, "labels"));
+    CHECK(svc.CanEditFieldForIssue(kIssue, "summary"));
+    CHECK(svc.FlushScopeSaves(std::chrono::seconds(10)));
 }
