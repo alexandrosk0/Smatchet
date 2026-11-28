@@ -503,6 +503,17 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/UserTextureDestroyPolicy.test.cpp
         # DX12 SRV heap budget vs the icon cache cap (Persistence/SrvHeapBudgetPure.h) — header-only, ImGui-free.
         Core/SrvHeapBudgetPure.test.cpp
+        # Binary atomic-write primitive + temp-sibling rule + streaming byte compare (FileIo.cpp, linked
+        # above for ScopedFileLock). Real files in a private temp dir; the POSIX cases pin 0600 and the
+        # exclusive no-follow temp.
+        Core/FileIoAtomicWrite.test.cpp
+        # ConfigManager::AtomicWriteTextFile (ConfigManager_PathUtils.cpp, linked above) now delegates to
+        # FileIo; its 0600 / no-follow / no-stray-temp suite runs on the Linux lane too.
+        Core/ConfigAtomicWriteSecurity.test.cpp
+        # FieldCatalogCache persists through AtomicWriteTextFile; its write-failure cases squat on the unique
+        # temp names (FileIo.h), so they run on the Linux lane too.
+        Core/FieldCatalogCacheIndex.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/FieldCatalogCache.cpp"
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -1109,6 +1120,9 @@ add_executable(SmatchetTests
     # (Source/Core/src/FileIo.cpp, linked below) and the BackendAuditTrail append path that is its
     # first non-Config consumer. Both production TUs are already in this target's src list.
     Core/FileIoScopedFileLock.test.cpp
+    # FI-3 — WriteFileAtomically / FileContentEquals / IsTempSiblingOf (FileIo.cpp linked below); also in
+    # the Linux subset.
+    Core/FileIoAtomicWrite.test.cpp
     # security backlog 2026-05-17 — pure CR/LF/NUL strip for header-bound config fields
     # (SanitizeConfigStringValue, defined in ConfigManager_PathUtils.cpp linked below). No extra .cpp.
     Core/ConfigStringSanitize.test.cpp
