@@ -2175,7 +2175,8 @@ class AppController : public IAppThreading,
     void FinishCacheRecreate_(const smatchet::sync::CacheRecreateOutcome& outcome,
                               const std::function<void(const smatchet::sync::CacheRecreateOutcome&)>& onDone);
     /// ~AppController, before `shuttingDown_` is set: every serial queue that writes (catalog snapshot, ticket
-    /// saves, left-view history) flushes under ONE shared budget (`kShutdownPreFlagBudget`), not one budget each.
+    /// saves, left-view history, user roster, edit-permission scopes) flushes under ONE shared budget
+    /// (`kShutdownPreFlagBudget`), not one budget each.
     void FlushQueuesBeforeShutdownFlag_();
     /// ~AppController: a field-catalog snapshot save still queued must reach the file (once the pool is flagged its
     /// drain would be skipped; bounded, a save is one small file write), and the startup restore's std::async read

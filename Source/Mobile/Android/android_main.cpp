@@ -749,8 +749,9 @@ void PersistSavedState(android_app* app, AndroidHostState& s) {
             ImGui::SaveIniSettingsToDisk(io.IniFilename);
         }
     }
-    // Queued cache writes (UpdateTicket's saves, left-view history) would be lost if the system kills the
-    // backgrounded process before their worker runs; wait for them, bounded so the lifecycle callback stays short.
+    // Queued cache writes (UpdateTicket's saves, left-view history, the user roster, edit-permission scopes) would be
+    // lost if the system kills the backgrounded process before their worker runs; wait for them, bounded so the
+    // lifecycle callback stays short.
     if (s.app && !s.app->FlushPendingCacheWrites(std::chrono::seconds(1))) {
         SLOGE("SAVE_STATE: queued cache writes did not finish within 1 s");
     }
