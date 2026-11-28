@@ -18,11 +18,15 @@
 
 #include "CachedTicketTypes.h"
 #include "EditMetaCacheService.h"
+#include "EditMetaScopePure.h"
 #include "LookupPayloadsPure.h"
 #include "Tracker/TrackerFieldSchema.h"
 
 #include <doctest/doctest.h>
 
+#include <chrono>
+#include <cstdint>
+#include <ctime>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -343,16 +347,18 @@ TEST_CASE("EditMetaCacheService::WarmIssueEditMetaAsync retries after a warmup t
 }
 
 // ---------------------------------------------------------------------------
-// Quality Pillar 6 (offline-first S11): per-type permissions saved for offline use, keyed by tracker.
+// Quality Pillar 6 (offline-first S11): per-scope permissions saved for offline use, keyed by tracker.
 // ---------------------------------------------------------------------------
 
 namespace {
 
+// The saved permissions of one (project, issue type) scope; empty when nothing is saved for it.
 std::unordered_map<std::string, bool> SavedPermissions(FakeLookupCache& store, const std::string& backendKey,
-                                                       const std::string& issueType) {
+                                                       const std::string& project, const std::string& issueType) {
     LookupCacheRow row;
     std::unordered_map<std::string, bool> permissions;
-    if (store.TryGetLookup(backendKey, smatchet::lookup::kEditMetaTypeKind, issueType, row)) {
+    if (store.TryGetLookup(backendKey, smatchet::lookup::kEditMetaProjectTypeKind,
+                           smatchet::editmeta::BuildScopeStoreKey(project, issueType), row)) {
         smatchet::lookup::ParseEditPermissions(row.PayloadJson, permissions);
     }
     return permissions;
@@ -360,7 +366,7 @@ std::unordered_map<std::string, bool> SavedPermissions(FakeLookupCache& store, c
 
 } // namespace
 
-TEST_CASE("EditMetaCacheService saves each fetched issue type's permissions to the lookup cache") {
+TEST_CASE("EditMetaCacheService saves each representative scope's permissions to the lookup cache") {
     FakeEditMetaDeps deps;
     const auto store = std::make_shared<FakeLookupCache>();
     deps.LookupCacheImpl = store;
@@ -371,7 +377,7 @@ TEST_CASE("EditMetaCacheService saves each fetched issue type's permissions to t
     REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
 
     CHECK(store->UpsertCalls.load() == 1);
-    const std::unordered_map<std::string, bool> saved = SavedPermissions(*store, "Jira", "story");
+    const std::unordered_map<std::string, bool> saved = SavedPermissions(*store, "Jira", "ABC", "story");
     REQUIRE(saved.size() == 2u);
     CHECK(saved.at("summary"));
     CHECK_FALSE(saved.at("labels"));
@@ -385,7 +391,8 @@ TEST_CASE("EditMetaCacheService saves each fetched issue type's permissions to t
 TEST_CASE("EditMetaCacheService: saved permissions answer offline but never stand in for a live fetch") {
     FakeEditMetaDeps deps;
     const auto store = std::make_shared<FakeLookupCache>();
-    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaTypeKind, "story",
+    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaProjectTypeKind,
+                        smatchet::editmeta::BuildScopeStoreKey("ABC", "story"),
                         smatchet::lookup::SerializeEditPermissions({{"summary", true}, {"labels", false}}));
     deps.LookupCacheImpl = store;
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
@@ -406,13 +413,14 @@ TEST_CASE("EditMetaCacheService: saved permissions answer offline but never stan
     REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
     CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
     CHECK(svc.CanEditFieldForIssue("ABC-1", "labels"));
-    CHECK(SavedPermissions(*store, "Jira", "story").at("labels"));
+    CHECK(SavedPermissions(*store, "Jira", "ABC", "story").at("labels"));
 }
 
 TEST_CASE("EditMetaCacheService: a refresh that fails keeps the saved type permissions") {
     FakeEditMetaDeps deps;
     const auto store = std::make_shared<FakeLookupCache>();
-    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaTypeKind, "story",
+    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaProjectTypeKind,
+                        smatchet::editmeta::BuildScopeStoreKey("ABC", "story"),
                         smatchet::lookup::SerializeEditPermissions({{"labels", false}}));
     deps.LookupCacheImpl = store;
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
@@ -441,7 +449,8 @@ TEST_CASE("EditMetaCacheService: the saved copy never overrides permissions fetc
 
     REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value()); // live "story": labels allowed
     // An older saved copy that disagrees, loaded by the next warm.
-    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaTypeKind, "story",
+    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaProjectTypeKind,
+                        smatchet::editmeta::BuildScopeStoreKey("ABC", "story"),
                         smatchet::lookup::SerializeEditPermissions({{"labels", false}}));
     TrackerConfig cfg;
     svc.WarmIssueTypeEditMetaAtStartAsync(cfg);
@@ -469,7 +478,8 @@ TEST_CASE("EditMetaCacheService: two trackers never share an issue's or an issue
 TEST_CASE("EditMetaCacheService::PruneEditMetaCacheToActiveTickets keeps saved (restored) issue types") {
     FakeEditMetaDeps deps;
     const auto store = std::make_shared<FakeLookupCache>();
-    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaTypeKind, "epic",
+    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaProjectTypeKind,
+                        smatchet::editmeta::BuildScopeStoreKey("ABC", "epic"),
                         smatchet::lookup::SerializeEditPermissions({{"labels", false}}));
     deps.LookupCacheImpl = store;
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
@@ -496,4 +506,351 @@ TEST_CASE("EditMetaCacheService::OnConnectivityRecovered lets the per-frame warm
     svc.OnConnectivityRecovered();
     svc.WarmIssueEditMetaAsync("ABC-1");
     CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
+}
+
+// ---------------------------------------------------------------------------
+// EM-2: (project, issue type) scopes, representative-only promotion, capability gate, startup candidates.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Launches nothing: a task is parked until the test runs it, so the order of queued saves is observable.
+class ParkingEditMetaDeps : public FakeEditMetaDeps {
+  public:
+    std::vector<std::function<void()>> Parked;
+    void LaunchBackgroundTask(std::function<void()> task) override {
+        ++LaunchBackgroundTaskCalls;
+        Parked.push_back(std::move(task));
+    }
+};
+
+// Drops every launched task unrun, as LaunchBackgroundTask does once shutdown has begun.
+class DroppingEditMetaDeps : public FakeEditMetaDeps {
+  public:
+    void LaunchBackgroundTask(std::function<void()> /*task*/) override { ++LaunchBackgroundTaskCalls; }
+};
+
+const std::unordered_map<std::string, bool> kEditable = {{"summary", true}, {"labels", true}};
+const std::unordered_map<std::string, bool> kReadOnly = {{"summary", false}, {"labels", false}};
+
+} // namespace
+
+TEST_CASE("EditMetaCacheService: a non-representative result stays with its issue and never narrows the scope") {
+    FakeEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story")); // a Done issue: nothing editable
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "story"));
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-1", kReadOnly);
+    EditMetaCacheService svc(deps);
+
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
+    CHECK_FALSE(svc.CanEditFieldForIssue("ABC-1", "summary")); // its own answer
+    CHECK(svc.CanEditFieldForIssue("ABC-2", "summary"));       // the sibling is untouched (optimistic)
+    CHECK(store->UpsertCalls.load() == 0);                     // nothing saved for the scope
+    CHECK(SavedPermissions(*store, "Jira", "ABC", "story").empty());
+}
+
+TEST_CASE("EditMetaCacheService: a scope is one project and one issue type") {
+    FakeEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "story"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("XYZ-1", "story"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-3", "bug"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
+    CHECK_FALSE(svc.CanEditFieldForIssue("ABC-2", "labels")); // same project, same type: from the scope
+    CHECK(svc.CanEditFieldForIssue("XYZ-1", "labels"));       // another project: optimistic
+    CHECK(svc.CanEditFieldForIssue("ABC-3", "labels"));       // another type: optimistic
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
+}
+
+TEST_CASE("EditMetaCacheService: a local or draft id has no project, so its answer stays its own") {
+    FakeEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("local_draft_7", "story"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("local_draft_8", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("local_draft_7").has_value());
+    CHECK_FALSE(svc.CanEditFieldForIssue("local_draft_7", "labels"));
+    CHECK(svc.CanEditFieldForIssue("local_draft_8", "labels")); // optimistic: no scope was promoted
+    CHECK(store->UpsertCalls.load() == 0);
+}
+
+TEST_CASE("EditMetaCacheService: a backend whose answer ignores the issue gets one fetch per issue type") {
+    FakeEditMetaDeps deps;
+    deps.Fake()->SetEditMetaVariesPerIssue(false);
+    deps.ActiveTicketsImpl.push_back(MakeTicket("11111111-aaaa", "task")); // a UUID-style id: no project
+    deps.ActiveTicketsImpl.push_back(MakeTicket("22222222-bbbb", "task"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("11111111-aaaa").has_value());
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("22222222-bbbb").has_value());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u); // the scope stands in for the second
+    CHECK_FALSE(svc.CanEditFieldForIssue("22222222-bbbb", "labels"));
+}
+
+TEST_CASE("EditMetaCacheService: the capability gate limits focused-row fetches to backends that vary per issue") {
+    for (const bool varies : {false, true}) {
+        FakeEditMetaDeps deps;
+        deps.Fake()->SetEditMetaVariesPerIssue(varies);
+        for (int i = 1; i <= 5; ++i) {
+            deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-" + std::to_string(i), "story"));
+        }
+        deps.Fake()->SetDefaultIssueEditMetaSuccess(kEditable);
+        EditMetaCacheService svc(deps);
+
+        for (int i = 1; i <= 5; ++i) {
+            svc.WarmIssueEditMetaAsync("ABC-" + std::to_string(i));
+        }
+        // Varying: each distinct focused row asks for its own. Not varying: the first fills the scope.
+        CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == (varies ? 5u : 1u));
+    }
+}
+
+TEST_CASE("EditMetaCacheService: a commit-like row (varies per issue, all read-only) never speaks for its scope") {
+    FakeEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "commit"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "commit"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess(kReadOnly);
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueEditMetaAsync("ABC-1");
+    CHECK_FALSE(svc.CanEditFieldForIssue("ABC-1", "summary"));
+    CHECK(svc.CanEditFieldForIssue("ABC-2", "summary")); // optimistic until its own fetch lands
+    svc.WarmIssueEditMetaAsync("ABC-2");
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
+}
+
+TEST_CASE("EditMetaCacheService: the startup warm passes over a non-representative candidate") {
+    FakeEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story")); // Done: nothing editable
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "story")); // Done too
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-3", "story")); // open: representative
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-4", "story")); // never needed
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-1", kReadOnly);
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-2", kReadOnly);
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-3", {{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
+
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 3u);  // stops at the first representative one
+    CHECK_FALSE(svc.CanEditFieldForIssue("ABC-4", "labels")); // the scope answers for a ticket nobody fetched
+}
+
+TEST_CASE("EditMetaCacheService: a scope with no representative candidate is not retried for 30 minutes") {
+    FakeEditMetaDeps deps;
+    for (int i = 1; i <= 5; ++i) {
+        deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-" + std::to_string(i), "story"));
+    }
+    deps.Fake()->SetDefaultIssueEditMetaSuccess(kReadOnly);
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == smatchet::editmeta::kMaxCandidatesPerScope);
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig()); // backing off: no new fetches
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == smatchet::editmeta::kMaxCandidatesPerScope);
+}
+
+TEST_CASE("EditMetaCacheService: a warm spends at most 8 extra candidate fetches and 64 scopes") {
+    FakeEditMetaDeps deps;
+    // 70 projects, each with three Done candidates: only the first 64 scopes are covered, and past the first
+    // candidate of each only 8 extra fetches are made in total.
+    for (int p = 0; p < 70; ++p) {
+        const std::string project = "P" + std::to_string(p);
+        for (int i = 1; i <= 3; ++i) {
+            deps.ActiveTicketsImpl.push_back(MakeTicket(project + "-" + std::to_string(i), "story"));
+        }
+    }
+    deps.Fake()->SetDefaultIssueEditMetaSuccess(kReadOnly);
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
+
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() ==
+          smatchet::editmeta::kMaxScopesPerWarm + smatchet::editmeta::kMaxExtraCandidateFetchesPerWarm);
+}
+
+TEST_CASE("EditMetaCacheService: a warm fetch that fails ends only its scope and records no backoff") {
+    FakeEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story")); // a deleted or restricted issue
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "story"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("XYZ-1", "story")); // another scope
+    deps.Fake()->SetIssueEditMetaFailure("ABC-1", "HTTP 404");
+    deps.Fake()->SetIssueEditMetaSuccess("XYZ-1", {{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u); // ABC-1 failed; XYZ's scope was still warmed
+    CHECK_FALSE(svc.CanEditFieldForIssueWithType("Jira", "XYZ-9", "labels", nullptr, "story"));
+
+    // A failure is not "no representative result": the next warm tries ABC's scope again, and only that.
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 3u);
+}
+
+namespace {
+
+// Reachable for the first query (the fetch's own offline gate), down afterwards: the tracker drops mid-warm.
+class DropsAfterFirstGateDeps : public FakeEditMetaDeps {
+  public:
+    TrackerConnectivityState TrackerConnectivity() const override {
+        return ++Queries > 1 ? TrackerConnectivityState::TransportDown
+                             : TrackerConnectivityState::AuthenticatedReachable;
+    }
+    mutable int Queries = 0;
+};
+
+} // namespace
+
+TEST_CASE("EditMetaCacheService: a warm that finds the tracker offline after a failed fetch stops there") {
+    DropsAfterFirstGateDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("XYZ-1", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaFailure("HTTP 503");
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u); // the second scope is left for the next warm
+}
+
+TEST_CASE("EditMetaCacheService: legacy per-type rows are deleted once and never read") {
+    FakeEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaTypeKind, "story",
+                        smatchet::lookup::SerializeEditPermissions({{"labels", false}}));
+    store->UpsertLookup("Jira", smatchet::lookup::kEditMetaProjectTypeKind,
+                        smatchet::editmeta::BuildScopeStoreKey("ABC", "bug"),
+                        smatchet::lookup::SerializeEditPermissions({{"labels", false}}));
+    store->UpsertLookup("Plane", smatchet::lookup::kEditMetaTypeKind, "story",
+                        smatchet::lookup::SerializeEditPermissions({{"labels", false}})); // another backend
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
+
+    LookupCacheRow row;
+    CHECK_FALSE(store->TryGetLookup("Jira", smatchet::lookup::kEditMetaTypeKind, "story", row));
+    CHECK(store->TryGetLookup("Plane", smatchet::lookup::kEditMetaTypeKind, "story", row)); // not this backend's
+    CHECK(svc.CanEditFieldForIssue("ABC-1", "labels"));                                     // legacy row not read
+    // The new kind coexists with the legacy one and is read.
+    CHECK_FALSE(svc.CanEditFieldForIssueWithType("Jira", "ABC-2", "labels", nullptr, "bug"));
+}
+
+TEST_CASE("EditMetaCacheService: a saved scope older than 30 days is not restored") {
+    for (const int ageDays : {29, 31}) {
+        FakeEditMetaDeps deps;
+        const auto store = std::make_shared<FakeLookupCache>();
+        store->StampEpochSec.store(static_cast<std::int64_t>(std::time(nullptr)) -
+                                   static_cast<std::int64_t>(ageDays) * 24 * 60 * 60);
+        store->UpsertLookup("Jira", smatchet::lookup::kEditMetaProjectTypeKind,
+                            smatchet::editmeta::BuildScopeStoreKey("ABC", "story"),
+                            smatchet::lookup::SerializeEditPermissions({{"labels", false}}));
+        store->StampEpochSec.store(0);
+        deps.LookupCacheImpl = store;
+        deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+        deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+        EditMetaCacheService svc(deps);
+
+        svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
+
+        // Within the ceiling the saved answer applies offline; past it the cell is optimistic again.
+        CHECK(svc.CanEditFieldForIssue("ABC-1", "labels") == (ageDays > 30));
+    }
+}
+
+TEST_CASE("EditMetaCacheService: scope saves run in order off the calling thread and a superseded save is skipped") {
+    ParkingEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("XYZ-1", "story"));
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"labels", false}, {"summary", true}});
+    deps.Fake()->SetIssueEditMetaSuccess("XYZ-1", {{"labels", true}});
+    EditMetaCacheService svc(deps);
+
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("XYZ-1").has_value());
+    // A refresh of ABC-1 with a different answer queues a newer save of the same scope.
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"labels", true}, {"summary", true}});
+    REQUIRE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", "ABC-1", "story").has_value());
+
+    CHECK(store->UpsertCalls.load() == 0); // nothing written on the calling thread
+    REQUIRE(deps.Parked.size() == 1u);     // one drain, parked
+    deps.Parked[0]();
+    CHECK(store->UpsertCalls.load() == 2); // ABC's first save was skipped (superseded); XYZ's and ABC's last ran
+    CHECK(SavedPermissions(*store, "Jira", "ABC", "story").at("labels"));
+    CHECK(SavedPermissions(*store, "Jira", "XYZ", "story").at("labels"));
+}
+
+TEST_CASE("EditMetaCacheService::FlushScopeSaves runs a save whose drain was dropped") {
+    DroppingEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"labels", false}, {"summary", true}});
+    EditMetaCacheService svc(deps);
+
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
+    CHECK(store->UpsertCalls.load() == 0); // the launch was dropped: the save is still queued
+    CHECK(svc.FlushScopeSaves(std::chrono::milliseconds(100)));
+    CHECK(store->UpsertCalls.load() == 1);
+    CHECK_FALSE(SavedPermissions(*store, "Jira", "ABC", "story").at("labels"));
+}
+
+TEST_CASE("EditMetaCacheService: a refresh that fails keeps the scope entry") {
+    FakeEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"labels", false}, {"summary", true}});
+    EditMetaCacheService svc(deps);
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
+
+    deps.Fake()->SetIssueEditMetaFailure("ABC-1", "HTTP 503");
+    CHECK_FALSE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", "ABC-1", "story").has_value());
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "story"));
+    CHECK_FALSE(svc.CanEditFieldForIssue("ABC-2", "labels")); // the scope still answers
+}
+
+TEST_CASE("EditMetaCacheService: a prune demotes a scope no pane shows, per project, and keeps its saved answer") {
+    FakeEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("XYZ-1", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("XYZ-1").has_value());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
+
+    // Only ABC's story remains on screen: XYZ's scope goes stale (refetched when next needed online) but
+    // keeps answering. A warm refetches XYZ and leaves ABC (still live) alone.
+    deps.ActiveTicketsImpl = {MakeTicket("ABC-1", "story")};
+    svc.PruneEditMetaCacheToActiveTickets();
+    CHECK_FALSE(svc.CanEditFieldForIssueWithType("Jira", "XYZ-9", "labels", nullptr, "story"));
+    deps.ActiveTicketsImpl = {MakeTicket("ABC-1", "story"), MakeTicket("XYZ-1", "story")};
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 3u);
+}
+
+TEST_CASE("EditMetaCacheService: a refetch that says the same does not queue another save") {
+    FakeEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueEditMetaAsync("ABC-1");
+    svc.WarmIssueEditMetaAsync("ABC-2"); // its own fetch (Jira varies per issue), same answer
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
+    CHECK(store->UpsertCalls.load() == 1);
 }

@@ -1,7 +1,7 @@
 #pragma once
 
-// EditMetaCacheService — owns the per-issue + per-issue-type tracker edit-metadata cache
-// (`editMetaMutex_` + its three containers) and the methods that load, refresh, invalidate,
+// EditMetaCacheService — owns the per-issue + per-scope tracker edit-metadata cache
+// (`editMetaMutex_` + its containers) and the methods that load, refresh, invalidate,
 // prune, and warm it. Extracted verbatim from `AppController` per the AppController god-object
 // decomposition plan (Phase 1), mirroring the OfflineQueueService / TicketSyncService template:
 // the service holds an `IEditMetaDeps&` (typically backed by `GridContextDepsAdapter`) and reaches
@@ -11,12 +11,18 @@
 // `std::unique_ptr` and outlives it; background warm workers launched via
 // `deps_.LaunchBackgroundTask` are joined in `~AppController` before the deps adapter dies.
 // Quality Pillar 6 (offline-first): both caches are keyed by the backend namespace (two trackers
-// never share an issue id's or an issue type's permissions), and every per-type result a fetch
-// produces is saved to the lookup cache (kind `editmeta_type`). The saved rows are loaded once per
-// backend by the warm, so edit permissions still apply while the tracker is unreachable. A restored
-// entry answers CanEdit* but never stands in for a live fetch when the tracker is reachable.
+// never share an issue id's or a scope's permissions). A *scope* is one (project, issue type) pair; a
+// fetched result stands for its scope only when it is *representative* (at least one editable field,
+// EditMetaScopePure.h), so one uneditable issue (a Done one) never narrows its siblings. A representative
+// result is saved to the lookup cache (kind `editmeta_project_type`; the legacy `editmeta_type` rows are
+// deleted once per backend and never read). The saved rows are loaded once per backend by the warm, so
+// edit permissions still apply while the tracker is unreachable, for at most 30 days. A restored entry
+// answers CanEdit* but never stands in for a live fetch when the tracker is reachable.
+// Per-row fetches are limited to backends whose answer varies per issue
+// (ITrackerFieldCatalog::IssueEditMetaVariesPerIssue); the scope entry serves the others.
 
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -26,6 +32,7 @@
 #include <vector>
 
 #include "Config/ConfigManager.h" // for TrackerConfig (by-value parameters + ConfigManager::Load)
+#include "SerialTaskQueue.h"      // scopeSaveIo_: ordered, off-thread scope saves
 #include "SmatchetResult.h"       // VoidResult (editmeta load/refresh — #21 outError → Result flip)
 #include "StoreLoadLatch.h"
 
@@ -96,6 +103,9 @@ class EditMetaCacheService {
     void WarmIssueEditMetaAsync(const std::string& issueId);
     /// Connectivity came back: clear every failure backoff so the next warm retries.
     void OnConnectivityRecovered();
+    /// Blocks until every queued scope save has run, or `timeout` passes (true: nothing left queued). Shutdown
+    /// and tests only; a save a refused launch left queued runs on the caller.
+    bool FlushScopeSaves(std::chrono::milliseconds timeout);
 
   private:
     struct IssueEditMetaCache {
@@ -107,26 +117,63 @@ class EditMetaCacheService {
         /** After a failed fetch: the per-frame warmup waits until this time before trying again. */
         std::chrono::steady_clock::time_point retryAfter{};
     };
-    /// Issue id (or lower-cased issue type) -> editmeta, for one backend namespace.
+    /// Issue id -> editmeta, for one backend namespace.
     using EditMetaById = std::unordered_map<std::string, IssueEditMetaCache>;
     /// Backend namespace -> EditMetaById.
     using EditMetaByBackend = std::unordered_map<std::string, EditMetaById>;
+    /// Lower-cased issue type -> editmeta, for one project.
+    using ScopeByType = std::unordered_map<std::string, IssueEditMetaCache>;
+    /// Project ("" for a backend whose answer does not depend on the issue) -> ScopeByType.
+    using ScopeByProject = std::unordered_map<std::string, ScopeByType>;
+    /// Backend namespace -> ScopeByProject.
+    using ScopeByBackend = std::unordered_map<std::string, ScopeByProject>;
+
+    /// How far a load may lean on the scope entry. ScopeSuffices: a live scope entry answers (the field-edit
+    /// path). IssueOwn: the issue's own editmeta is fetched when the backend's answer varies per issue (the
+    /// focused-row warm). Refresh: always fetch.
+    enum class LoadMode { ScopeSuffices, IssueOwn, Refresh };
+
+    /// One scope the startup warm covers, with the tickets to try (at most kMaxCandidatesPerScope).
+    struct ScopeCandidates {
+        std::string Project;
+        std::string IssueTypeKey;
+        std::vector<std::string> IssueIds;
+    };
 
     /// The loaded entry for (backendKey, id), or null. Caller holds editMetaMutex_.
     static const IssueEditMetaCache* FindLoaded(const EditMetaByBackend& maps, const std::string& backendKey,
                                                 const std::string& id);
+    /// The loaded entry for the scope, or null. Caller holds editMetaMutex_.
+    static const IssueEditMetaCache* FindScopeLoaded(const ScopeByBackend& maps, const std::string& backendKey,
+                                                     const std::string& project, const std::string& issueTypeKey);
+    /// True and `project` set when an issue's result may be kept under a scope: it needs an issue type, and a
+    /// project unless the backend's answer does not vary per issue (then the project is "": one scope per type).
+    static bool ScopeProjectFor(const std::string& issueId, const std::string& issueTypeKey, bool variesPerIssue,
+                                std::string& project);
     static std::string InFlightKey(const std::string& backendKey, const std::string& issueId);
-    /// Background-task body of WarmIssueTypeEditMetaAtStartAsync: load editmeta for the representative
-    /// issues ({issue type, issue id} pairs). Runs off the UI thread.
-    void WarmIssueTypeEditMetaWorker(const std::vector<std::pair<std::string, std::string>>& representatives,
+    /// True when the issue's own entry, or (per `mode`) a live scope entry, already answers: no fetch is needed.
+    /// `project` is null when the issue has no scope.
+    bool AnsweredFromCache(const std::string& backendKey, const std::string& issueId, const std::string* project,
+                           const std::string& issueTypeKey, bool variesPerIssue, LoadMode mode) const;
+    /// Fetch (or accept from the scope) the edit metadata of one issue; see LoadMode. A representative result
+    /// is promoted to its scope and saved. Runs on a worker or a caller that may block on the network.
+    VoidResult LoadIssueEditMeta(const std::shared_ptr<ITrackerBackend>& backend, const std::string& backendKey,
+                                 const std::string& issueId, const std::string& issueTypeKey,
+                                 const TrackerConfig* configSnapshot, LoadMode mode);
+    /// Background-task body of WarmIssueTypeEditMetaAtStartAsync: try each scope's candidate tickets until one
+    /// gives a representative result. Runs off the UI thread.
+    void WarmIssueTypeEditMetaWorker(const std::vector<ScopeCandidates>& scopes,
                                      const std::shared_ptr<ITrackerBackend>& backend, const std::string& backendKey,
                                      const TrackerConfig& trackerCfgForWorker);
-    /// Seed issueTypeEditMeta_ from the lookup cache once per backend, on a worker; never overrides an
-    /// entry fetched meanwhile.
+    /// Seed scopeEditMeta_ from the lookup cache once per backend, on a worker; never overrides an entry
+    /// fetched meanwhile. Also deletes the backend's legacy `editmeta_type` rows once.
     void EnsureSavedTypesLoaded(const std::string& backendKey);
-    /// Save one issue type's permissions to the lookup cache. Worker threads only (disk write).
-    void SaveTypeEditMeta(const std::string& backendKey, const std::string& issueTypeKey,
-                          const std::unordered_map<std::string, bool>& fieldCanEdit);
+    /// Worker only: delete the backend's legacy per-type rows (once per backend per session).
+    void PurgeLegacyTypeRows(const std::string& backendKey);
+    /// Queue the save of one scope's permissions (a representative result). Never blocks on SQLite: the write
+    /// runs on `scopeSaveIo_`, in order, and a save superseded by a newer one for the same scope is skipped.
+    void PostScopeSave(const std::string& backendKey, const std::string& project, const std::string& issueTypeKey,
+                       const std::unordered_map<std::string, bool>& fieldCanEdit);
     std::string ResolveIssueTypeKeyForIssue(const std::string& issueId) const;
     void InvalidateIssueEditMetaFor(const std::string& backendKey, const std::string& issueId);
     /// CanEditFieldForIssue body. `explicitTypeKey` null → the issue type is resolved from the focused pane.
@@ -135,13 +182,25 @@ class EditMetaCacheService {
 
     IEditMetaDeps& deps_;
 
-    // editMetaMutex_ guards exactly the three containers below; the four move together as a unit.
-    // mutable because CanEditFieldForIssue is const and only reads the maps.
+    // editMetaMutex_ guards every container below up to (not including) `savedTypesLoad_` and
+    // `scopeSaveIo_`, which synchronize themselves. mutable because CanEditFieldForIssue is const and only
+    // reads the maps.
     mutable std::mutex editMetaMutex_;
     EditMetaByBackend issueEditMeta_;
-    EditMetaByBackend issueTypeEditMeta_;
+    ScopeByBackend scopeEditMeta_;
     /// InFlightKey(backend, issue) of every running per-issue warmup.
     std::unordered_set<std::string> issueEditMetaWarmupInFlight_;
-    /// Backends whose saved per-type rows were loaded (or are loading).
+    /// InFlightKey(backend, scope store key) -> when a scope whose candidates gave no representative result
+    /// may be tried again.
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> scopeNoRepresentativeUntil_;
+    /// Backends whose legacy `editmeta_type` rows were deleted.
+    std::unordered_set<std::string> legacyPurged_;
+    /// InFlightKey(backend, scope store key) -> the newest queued save's sequence number. A queued save whose
+    /// number is no longer the newest is skipped: the newer one writes the same scope.
+    std::unordered_map<std::string, std::uint64_t> latestScopeSeq_;
+    std::uint64_t nextScopeSeq_ = 0;
+    /// Backends whose saved scope rows were loaded (or are loading).
     smatchet::offline::StoreLoadLatch savedTypesLoad_;
+    /// Scope saves, in order, off the calling thread. Declared last so it is destroyed first.
+    smatchet::SerialTaskQueue scopeSaveIo_;
 };

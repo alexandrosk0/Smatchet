@@ -29,6 +29,11 @@ TrackerReachabilityProbeKind ProbeWithStatus(int status) {
 
 } // namespace
 
+TEST_CASE("JiraClient::IssueEditMetaVariesPerIssue — a Jira issue's editmeta follows its own workflow status") {
+    JiraClient client;
+    CHECK(client.IssueEditMetaVariesPerIssue("ABC-1"));
+}
+
 TEST_CASE("JiraClient::ProbeReachability — 200 is AuthenticatedReachable") {
     CHECK(ProbeWithStatus(200) == TrackerReachabilityProbeKind::AuthenticatedReachable);
 }

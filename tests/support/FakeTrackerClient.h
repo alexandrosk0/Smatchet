@@ -612,6 +612,9 @@ class FakeTrackerClient : public ITrackerBackend,
     }
 
     bool SupportsIssueTransitions() const override { return supportsIssueTransitions_; }
+    bool IssueEditMetaVariesPerIssue(const std::string& /*issueKeyOrId*/) const override {
+        return editMetaVariesPerIssue_;
+    }
 
     Result<std::vector<TrackerIssueComment>, TrackerError> FetchIssueComments(const std::string& issueKey) override {
         if (NetworkDown()) {
@@ -1054,6 +1057,9 @@ class FakeTrackerClient : public ITrackerBackend,
     void SetIssueTransitionsError(TrackerError error) { issueTransitionsError_ = std::move(error); }
     void SetIssueTransitionsThrows(bool throws) { issueTransitionsThrows_ = throws; }
     void SetSupportsIssueTransitions(bool on) { supportsIssueTransitions_ = on; }
+    /// Default true (Jira's shape): a per-row fetch is worth it. False models a backend whose editmeta ignores
+    /// the issue id (Plane, Linear), where one fetch per project and type is enough.
+    void SetEditMetaVariesPerIssue(bool on) { editMetaVariesPerIssue_ = on; }
 
     std::size_t FetchIssueCommentsCalls() const { return fetchIssueCommentsCalls_; }
     void SetIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment> comments) {
@@ -1278,6 +1284,7 @@ class FakeTrackerClient : public ITrackerBackend,
     TrackerError issueTransitionsError_;
     bool issueTransitionsThrows_ = false;
     bool supportsIssueTransitions_ = false;
+    bool editMetaVariesPerIssue_ = true;
     std::size_t fetchIssueTransitionsCalls_ = 0;
 
     // FetchIssueComments (Pillar 6)
