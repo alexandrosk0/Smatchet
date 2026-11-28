@@ -524,6 +524,17 @@ class ParkingEditMetaDeps : public FakeEditMetaDeps {
     }
 };
 
+// A parked task that never ran still owns a LaunchClaim whose release touches the service. Production joins its workers
+// before the service goes (the closures die first); a test gets the same order by declaring this guard AFTER the
+// service, so it destroys the parked tasks while the service is alive.
+struct ParkedTaskGuard {
+    explicit ParkedTaskGuard(ParkingEditMetaDeps& deps) : deps_(deps) {}
+    ~ParkedTaskGuard() { deps_.Parked.clear(); }
+    ParkedTaskGuard(const ParkedTaskGuard&) = delete;
+    ParkedTaskGuard& operator=(const ParkedTaskGuard&) = delete;
+    ParkingEditMetaDeps& deps_;
+};
+
 const std::unordered_map<std::string, bool> kEditable = {{"summary", true}, {"labels", true}};
 const std::unordered_map<std::string, bool> kReadOnly = {{"summary", false}, {"labels", false}};
 
@@ -786,6 +797,7 @@ TEST_CASE("EditMetaCacheService: scope saves run in order off the calling thread
     deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"labels", false}, {"summary", true}});
     deps.Fake()->SetIssueEditMetaSuccess("XYZ-1", {{"labels", true}});
     EditMetaCacheService svc(deps);
+    ParkedTaskGuard parkedGuard(deps);
 
     REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
     REQUIRE(svc.EnsureIssueEditMetaLoaded("XYZ-1").has_value());
@@ -920,6 +932,7 @@ TEST_CASE("EditMetaCacheService: an Ensure that finds the issue already being fe
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
     deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
     EditMetaCacheService svc(deps);
+    ParkedTaskGuard parkedGuard(deps);
 
     svc.WarmIssueEditMetaAsync("ABC-1"); // launched, parked: the fetch is registered
     REQUIRE(deps.Parked.size() == 1u);
@@ -937,6 +950,7 @@ TEST_CASE("EditMetaCacheService: a Refresh supersedes a parked warm, which then 
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
     deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
     EditMetaCacheService svc(deps);
+    ParkedTaskGuard parkedGuard(deps);
 
     svc.WarmIssueEditMetaAsync("ABC-1");
     REQUIRE(deps.Parked.size() == 1u);
@@ -984,6 +998,7 @@ TEST_CASE("EditMetaCacheService: another issue's fetch in flight never blocks a 
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "story"));
     deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}});
     EditMetaCacheService svc(deps);
+    ParkedTaskGuard parkedGuard(deps);
 
     svc.WarmIssueEditMetaAsync("ABC-1"); // parked
     REQUIRE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", "ABC-2", "story").has_value());
@@ -1011,6 +1026,7 @@ TEST_CASE("EditMetaCacheService: a candidate another fetch is already running fo
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
     deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
     EditMetaCacheService svc(deps);
+    ParkedTaskGuard parkedGuard(deps);
 
     svc.WarmIssueEditMetaAsync("ABC-1");                    // parked: ABC-1 is in flight
     svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig()); // its only candidate is refused, no request is made
@@ -1030,6 +1046,7 @@ TEST_CASE("EditMetaCacheService: a warm a Refresh retired makes no request when 
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
     deps.Fake()->SetIssueEditMetaFailure("ABC-1", "HTTP 503");
     EditMetaCacheService svc(deps);
+    ParkedTaskGuard parkedGuard(deps);
 
     svc.WarmIssueEditMetaAsync("ABC-1");                                                              // parked
     CHECK_FALSE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", "ABC-1", "story").has_value()); // fails, no entry
