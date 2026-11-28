@@ -319,6 +319,29 @@ void DrawGeneralStorageSection(const IAppMeta& meta, UiDrawSession& d) {
 
 // Local database: intro blurb, resolved cache path, the "Recreate database..."
 // button and its confirm modal (modal stays whole with its opener).
+// Where the cache came from: copied from an older location, or an older file borrowed for this session; plus the
+// other older caches that were left alone. Nothing here changes a file.
+void DrawLocalCacheLocationLines(const smatchet::persistence::LocalCacheStatus& status) {
+    if (status.UsingLegacyPath) {
+        ImGui::TextWrapped("%s", SmatchetLocalization::Format(
+                                     "prefs.local_db.using_legacy",
+                                     "This session is using the cache file left at %s because it could not be copied "
+                                     "to the current location just now. Restart Smatchet to move it.",
+                                     status.LegacyPath.c_str()));
+    } else if (!status.ImportedFrom.empty()) {
+        ImGui::TextWrapped(
+            "%s", SmatchetLocalization::Format("prefs.local_db.imported_from",
+                                               "Copied from the cache file left at %s. That file was not changed.",
+                                               status.ImportedFrom.c_str()));
+    }
+    for (std::size_t i = 0; i < status.OtherLegacyCaches.size(); ++i) {
+        ImGui::TextWrapped("%s", SmatchetLocalization::Format(
+                                     "prefs.local_db.other_caches",
+                                     "Another older cache file was found at %s and was not used. It was not changed.",
+                                     status.OtherLegacyCaches[i].c_str()));
+    }
+}
+
 void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
     if (!d.prefsFilter.ShowSetting("general.local_database.recreate")) {
         return;
@@ -330,15 +353,17 @@ void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
                                "local SQLite file. Recreating it clears that data only; tracker credentials "
                                "and views are not removed. A full issue refresh runs afterward.");
     ImGui::Spacing();
-    const std::string resolved = sync.GetResolvedLocalCacheDbPath();
+    const smatchet::persistence::LocalCacheStatus cacheStatus = sync.GetLocalCacheStatus();
+    // While an older file is borrowed, that file (not the planned location) is the one in use.
+    const std::string resolved = cacheStatus.UsingLegacyPath ? cacheStatus.Path : sync.GetResolvedLocalCacheDbPath();
     if (!resolved.empty()) {
         ImGui::TextDisabled("Cache file:");
         ImGui::SameLine();
         ::ImGui::TextWrapped("%s", resolved.c_str());
     }
+    DrawLocalCacheLocationLines(cacheStatus);
     // A failed open leaves a memory-only cache for the session: say so here, because the toast is gone after a few
     // seconds, and keep Recreate off (the app refuses it too; there is no file to recreate).
-    const smatchet::persistence::LocalCacheStatus cacheStatus = sync.GetLocalCacheStatus();
     const bool sessionOnly = cacheStatus.State == smatchet::persistence::LocalCacheState::SessionOnly;
     if (sessionOnly) {
         ImGui::TextWrapped("%s",
@@ -366,16 +391,20 @@ void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
     // The recreate runs on a worker behind a gate (IAppSync::StartRecreateLocalCacheDatabase); a second one cannot
     // start while it runs, and the cue says why the button is off.
     const bool recreating = sync.IsLocalCacheRecreating();
-    ImGui::BeginDisabled(recreating || sessionOnly);
+    const bool borrowed = cacheStatus.UsingLegacyPath;
+    ImGui::BeginDisabled(recreating || sessionOnly || borrowed);
     if (ImGui::Button("Recreate database...")) {
         ImGui::OpenPopup("Delete local database?###RecreateSqliteDbConfirm");
     }
     ImGui::EndDisabled();
-    ImGui::SetItemTooltip("%s", sessionOnly ? SmatchetLocalization::T("prefs.local_db.recreate_unavailable",
-                                                                      "Unavailable while the database cannot be "
-                                                                      "opened: there is no file to recreate.")
-                                            : "Permanently delete the local cache file and start with an empty "
-                                              "database.");
+    ImGui::SetItemTooltip(
+        "%s", sessionOnly ? SmatchetLocalization::T("prefs.local_db.recreate_unavailable",
+                                                    "Unavailable while the database cannot be "
+                                                    "opened: there is no file to recreate.")
+              : borrowed  ? SmatchetLocalization::T("prefs.local_db.recreate_legacy",
+                                                    "Unavailable while this session uses a cache file from an older "
+                                                     "location. Restart Smatchet to move it first.")
+                          : "Permanently delete the local cache file and start with an empty database.");
     if (recreating) {
         ImGui::SameLine();
         ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.local_db.recreating", "Recreating the database..."));

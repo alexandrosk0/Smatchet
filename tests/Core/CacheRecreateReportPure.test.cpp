@@ -13,6 +13,8 @@ TEST_CASE("CacheRecreateStartRefusal: names why a recreate cannot start, and is 
     CHECK(CacheRecreateStartRefusal(false, false, true) == "The local cache is already being recreated.");
     CHECK(CacheRecreateStartRefusal(false, false, false, true).find("not open on its database file") !=
           std::string::npos);
+    CHECK(CacheRecreateStartRefusal(false, false, false, false, false, true).find("older location") !=
+          std::string::npos);
     // A missing path is reported before the others: it can never be fixed by waiting.
     CHECK(CacheRecreateStartRefusal(true, true, true) == "Local cache database path is not set.");
 }

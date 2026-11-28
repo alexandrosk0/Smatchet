@@ -246,6 +246,8 @@ class AppController : public IAppThreading,
     /// ticket-sync + Lua host, drain buffered log sinks, and run the one-time
     /// legacy-pending offline cleanup.
     void InitConfig(const std::string& dbPath, const std::string& backendType);
+    /// Resolves `dbPath` to the cache's absolute location (`localCacheDbPath_`) and the older locations to import from.
+    void PlanLocalCacheLocation_(const std::string& dbPath);
     /// Eagerly construct the deps adapter + the owned single-responsibility services
     /// (connectivity / editmeta / offline-queue / field-edit / per-context ticket-sync) so every
     /// delegator + adapter override has a live target from the first frame tick. Called once from
@@ -393,7 +395,15 @@ class AppController : public IAppThreading,
     /// TEST SEAM (headless AppController tests): the startup open for `dbPath` and cache key `cacheKey`, as
     /// `InitBackends` launches it, without a full `Initialize`. Raises the gate and sets the state to Opening. No
     /// production caller.
-    void StartStartupCacheOpenForTest(const std::string& dbPath, const std::string& cacheKey);
+    void StartStartupCacheOpenForTest(const std::string& dbPath, const std::string& cacheKey,
+                                      const std::vector<std::string>& legacyCandidates = std::vector<std::string>());
+    /// TEST SEAM (headless AppController tests): publishes `status` as the cache's status. No production caller.
+    void SetLocalCacheStatusForTest(const smatchet::persistence::LocalCacheStatus& status) {
+        SetLocalCacheStatus_(status, false);
+    }
+    /// Before `Initialize`: false stops the one-time copy of a cache file left at an older location (an explicit
+    /// `SMATCHET_USER_DATA` directory is a sandbox, not a place to adopt the user's real cache from).
+    void SetLegacyCacheImportEnabled(bool enabled) { legacyCacheImportEnabled_ = enabled; }
     /// Why a durable offline enqueue is refused right now (`None` = allowed). Any thread; lock-free.
     smatchet::persistence::CacheEnqueueBlock LocalCacheEnqueueBlock() const;
     smatchet::persistence::LocalCacheStatus GetLocalCacheStatus() const override;
@@ -2185,6 +2195,8 @@ class AppController : public IAppThreading,
     std::thread cacheRecreateWorker_;                        ///< joined by the next Start and by ~AppController
 
     std::string localCacheDbPath_;
+    bool legacyCacheImportEnabled_ = true;           ///< set before Initialize; UI thread
+    std::vector<std::string> legacyCacheCandidates_; ///< the planner's older locations; written once in InitConfig
 
     /// The cache's state, set at open and by the recreate. `localCacheState_` mirrors `localCacheStatus_.State` so the
     /// enqueue paths read it without the lock; the rest of the status and the one-shot notice flag are guarded by
@@ -2200,6 +2212,8 @@ class AppController : public IAppThreading,
     struct StartupCacheOpenRequest {
         bool IsReopen = false;
         std::string TargetPath;
+        /// Older locations to copy a cache from when `TargetPath` does not exist yet (empty = no import).
+        std::vector<std::string> LegacyCandidates;
         std::string FocusedCacheKey;
         std::vector<std::pair<std::string, std::string>> Rekeys;
         std::string ActiveTrackerType;
@@ -2209,8 +2223,14 @@ class AppController : public IAppThreading,
         std::shared_ptr<LocalCacheManager> OpenedCache; ///< null when even the memory-only cache failed
         bool Opened = false;                            ///< the durable file is open
         bool SessionOnly = false;                       ///< the file failed and OpenedCache is memory-only
-        std::string OpenedPath;
+        std::string OpenedPath; ///< the file that is open: the target, or an older file used for this session
         std::string Error;
+        /// The import of an older cache file: `UsingLegacyPath` when the copy could not be made and the older file
+        /// itself is open; `ImportedFrom` when it was copied to the target; `OtherLegacyCaches` for readable ones left.
+        bool UsingLegacyPath = false;
+        std::string LegacyPath;
+        std::string ImportedFrom;
+        std::vector<std::string> OtherLegacyCaches;
         bool Aborted = false; ///< shutdown began: nothing is published
         std::size_t LegacyDropped = 0;
         bool QueueChangedBySweep = false;
@@ -2221,6 +2241,10 @@ class AppController : public IAppThreading,
     /// completion is posted to the UI thread (FinishStartupCacheOpen_). A worker that cannot start degrades to a
     /// memory-only cache at once.
     void LaunchStartupCacheOpen_(StartupCacheOpenRequest request);
+    /// Worker: copies the best older cache file to `target` when it does not exist yet, recording the result on
+    /// `outcome`; returns the path to open (the older file itself when it could not be copied just now).
+    static std::string ImportLegacyCacheForOpen_(const std::string& target, const std::vector<std::string>& candidates,
+                                                 const std::atomic<bool>& abort, StartupCacheOpenOutcome& outcome);
     /// Worker: opens the file (interruptible), runs the one-time migrations and sweeps, falls back to a memory-only
     /// cache when the file will not open. Never throws.
     StartupCacheOpenOutcome OpenStartupCacheOnWorker_(const StartupCacheOpenRequest& request) noexcept;

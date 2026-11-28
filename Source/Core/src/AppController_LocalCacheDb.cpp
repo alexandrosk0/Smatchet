@@ -14,6 +14,7 @@
 #include "Config/CacheBackendKeyPure.h" // LegacyCacheKeyRekeys
 #include "ConfigManager.h"
 #include "LocalCacheManager.h"
+#include "Persistence/LocalCacheLocationMigration.h"
 #include "Logger.h"
 #include "SmatchetLocalization.h"
 #include "Ui/SmatchetToast.h" // the completion toast (the recreate has no other UI)
@@ -35,6 +36,7 @@
 #include <future>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -243,15 +245,61 @@ void AppController::RunOneTimeCacheMigrations_(LocalCacheManager& cache, const s
     }
 }
 
+// Worker: copies the best older cache file to `target` when `target` does not exist yet (never touching the older
+// file) and records the result on `outcome`. Returns the path to open: `target`, or the older file itself when it
+// could not be copied just now (this session then borrows it).
+std::string AppController::ImportLegacyCacheForOpen_(const std::string& target,
+                                                     const std::vector<std::string>& candidates,
+                                                     const std::atomic<bool>& abort, StartupCacheOpenOutcome& outcome) {
+    if (candidates.empty()) {
+        return target;
+    }
+    smatchet::persistence::LegacyCacheImportOptions importOptions;
+    importOptions.Abort = &abort;
+    const smatchet::persistence::LegacyCacheImportResult imported =
+        smatchet::persistence::ImportLegacyLocalCacheIfNeeded(target, candidates, importOptions);
+    outcome.OtherLegacyCaches = imported.OtherCandidates;
+    if (!imported.Detail.empty()) {
+        LOG_INFO("AppController: local cache location: %s", imported.Detail.c_str());
+    }
+    switch (imported.Kind) {
+    case smatchet::persistence::LegacyCacheImportKind::Imported:
+        outcome.ImportedFrom = imported.LegacyPath;
+        break;
+    case smatchet::persistence::LegacyCacheImportKind::UseLegacyThisSession:
+        outcome.UsingLegacyPath = true;
+        outcome.LegacyPath = imported.LegacyPath;
+        outcome.OpenedPath = imported.OpenPath;
+        return imported.OpenPath;
+    case smatchet::persistence::LegacyCacheImportKind::Deferred:
+        // Nothing could be copied and the target must not be created outside the import lock: this session runs on a
+        // memory-only cache (the next start tries again), with the reason shown.
+        throw std::runtime_error("the cache could not be moved from its older location yet: " + imported.Detail);
+    case smatchet::persistence::LegacyCacheImportKind::NotNeeded:
+    case smatchet::persistence::LegacyCacheImportKind::CreatedEmpty:
+    case smatchet::persistence::LegacyCacheImportKind::LegacyUnreadable:
+        break;
+    }
+    return target;
+}
+
 AppController::StartupCacheOpenOutcome
 AppController::OpenStartupCacheOnWorker_(const StartupCacheOpenRequest& request) noexcept {
     /* PILLAR2_WORKER_ONLY */ // est-latency: 50-25000 ms (open, busy wait, migrations, legacy sweeps)
     StartupCacheOpenOutcome outcome;
     outcome.OpenedPath = request.TargetPath;
     try {
+        const std::string openPath =
+            ImportLegacyCacheForOpen_(request.TargetPath, request.LegacyCandidates, cacheRecreateAbort_, outcome);
+        if (cacheRecreateAbort_.load()) {
+            outcome.Aborted = true;
+            return outcome;
+        }
         LocalCacheManager::OpenOptions options;
         options.Abort = &cacheRecreateAbort_;
-        std::shared_ptr<LocalCacheManager> cache = std::make_shared<LocalCacheManager>(request.TargetPath, options);
+        // An older location's file borrowed for this session is not ours to repair: a corrupt one is never moved aside.
+        options.RebuildCorruptFile = !outcome.UsingLegacyPath;
+        std::shared_ptr<LocalCacheManager> cache = std::make_shared<LocalCacheManager>(openPath, options);
         if (cacheRecreateAbort_.load()) {
             outcome.Aborted = true;
             return outcome;
@@ -306,6 +354,10 @@ AppController::OpenStartupCacheOnWorker_(const StartupCacheOpenRequest& request)
     // missing directory, a locked file, or too old an SQLite. Reads and sync still work against a memory-only cache.
     // Durable enqueues are refused with the reason (CacheEnqueueBlock::SessionOnly) instead of being lost at exit.
     outcome.SessionOnly = true;
+    outcome.ImportedFrom.clear();
+    outcome.UsingLegacyPath = false;
+    outcome.LegacyPath.clear();
+    outcome.OpenedPath = request.TargetPath;
     try {
         outcome.OpenedCache = std::make_shared<LocalCacheManager>(":memory:");
     } catch (const std::exception& ex) {
@@ -402,6 +454,10 @@ void AppController::FinishStartupCacheOpen_(StartupCacheOpenOutcome outcome, boo
     status.State = outcome.SessionOnly ? smatchet::persistence::LocalCacheState::SessionOnly
                                        : smatchet::persistence::LocalCacheState::Ready;
     status.LastError = outcome.SessionOnly ? outcome.Error : std::string();
+    status.UsingLegacyPath = outcome.UsingLegacyPath;
+    status.LegacyPath = outcome.LegacyPath;
+    status.ImportedFrom = outcome.ImportedFrom;
+    status.OtherLegacyCaches = outcome.OtherLegacyCaches;
     SetLocalCacheStatus_(status, outcome.SessionOnly);
 
     if (outcome.LegacyDropped > 0 && offlineQueue_) {
@@ -464,6 +520,7 @@ VoidResult AppController::StartReopenLocalCache() {
     StartupCacheOpenRequest request;
     request.IsReopen = true;
     request.TargetPath = localCacheDbPath_;
+    request.LegacyCandidates = legacyCacheCandidates_;
     request.FocusedCacheKey = focusedContext().CacheBackendKeyCopy();
     request.Rekeys = smatchet::cache_keys::LegacyCacheKeyRekeys(ConfigManager::Load());
     ITrackerBackend* const backend = focusedContext().Backend.get();
@@ -473,11 +530,14 @@ VoidResult AppController::StartReopenLocalCache() {
     return VoidOk();
 }
 
-void AppController::StartStartupCacheOpenForTest(const std::string& dbPath, const std::string& cacheKey) {
+void AppController::StartStartupCacheOpenForTest(const std::string& dbPath, const std::string& cacheKey,
+                                                 const std::vector<std::string>& legacyCandidates) {
     localCacheDbPath_ = dbPath;
+    legacyCacheCandidates_ = legacyCandidates;
     WireCoreServices();
     StartupCacheOpenRequest request;
     request.TargetPath = dbPath;
+    request.LegacyCandidates = legacyCandidates;
     request.FocusedCacheKey = cacheKey;
     LaunchStartupCacheOpen_(std::move(request));
 }
@@ -497,7 +557,7 @@ VoidResult AppController::StartRecreateLocalCacheDatabase(
         localCacheDbPath_.empty(), shuttingDown_.load(), false,
         localCacheState_.load(std::memory_order_acquire) !=
             static_cast<std::uint8_t>(smatchet::persistence::LocalCacheState::Ready),
-        IsLocalCacheOpening());
+        IsLocalCacheOpening(), GetLocalCacheStatus().UsingLegacyPath);
     if (!refusal.empty()) {
         cacheRecreating_.store(false);
         return VoidResult::Err(refusal);

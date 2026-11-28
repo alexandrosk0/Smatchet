@@ -15,6 +15,7 @@
 // clang-format on
 #include "AppControllerImpl.h"
 #include "GridContextDepsAdapter.h"
+#include "Persistence/LocalCacheDbPathPure.h"
 #include "LocalCacheManager.h" // direct: AppController.h fwd-decls LocalCacheManager (fan-in Phase 1); this TU calls Cache-> methods.
 
 #include <nlohmann/json.hpp> // direct: AppController.h dropped json.hpp for json_fwd (fan-in Phase 1); this TU constructs nlohmann::json.
@@ -33,6 +34,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <unordered_set>
 #include <utility>
@@ -253,6 +255,35 @@ void AppController::WireCoreServices() {
     }
 }
 
+void AppController::PlanLocalCacheLocation_(const std::string& dbPath) {
+    // Where the cache lives: a relative or empty path resolves against the user-data directory instead of whatever the
+    // process working directory happens to be, and the older locations feed the one-time import. A path the planner
+    // must not touch (the in-memory database, a URI) stays as given.
+    if (dbPath == ":memory:" || dbPath.compare(0, 5, "file:") == 0) {
+        localCacheDbPath_ = dbPath;
+        return;
+    }
+    smatchet::persistence::LocalCacheDbPathInputs inputs;
+    inputs.Configured = dbPath;
+    inputs.UserDataDir = ConfigManager::GetUserDataDirectory();
+    std::error_code cwdError;
+    const ghc::filesystem::path cwd = ghc::filesystem::current_path(cwdError);
+    if (!cwdError) {
+        inputs.Cwd = cwd.string();
+    }
+    inputs.RuntimeAssetDir = ConfigManager::GetRuntimeAssetDirectory();
+    inputs.SharedUserDataDir = ConfigManager::GetPlatformSharedUserDataDirectory();
+    inputs.AllowLegacyImport = legacyCacheImportEnabled_;
+    const smatchet::persistence::LocalCacheDbPathPlan plan = smatchet::persistence::PlanLocalCacheDbPath(inputs);
+    localCacheDbPath_ = plan.Target;
+    legacyCacheCandidates_ = plan.LegacyCandidates;
+    if (plan.BaseFellBackToCwd) {
+        LOG_WARN("AppController: no user-data directory is set; the local cache '%s' resolves against the working "
+                 "directory",
+                 plan.Target.c_str());
+    }
+}
+
 void AppController::InitConfig(const std::string& dbPath, const std::string& backendType) {
     // Record the UI thread identity first. Initialize() is invoked from main() before any
     // background thread is spawned, so this happens-before any worker that could call
@@ -268,7 +299,7 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     // dispatcher/LCM); Stop()+join runs early in ~AppController. Not AI-gated.
     smatchet::config_save::Start();
 
-    localCacheDbPath_ = dbPath;
+    PlanLocalCacheLocation_(dbPath);
 
     // The cache opens on a worker (LaunchStartupCacheOpen_, from InitBackends, once the resolved cache key is known).
     // Until it is published `Cache` is null, the gate is up and the state is Opening: nothing syncs, enqueues are
@@ -276,7 +307,7 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     {
         smatchet::persistence::LocalCacheStatus opening;
         opening.State = smatchet::persistence::LocalCacheState::Opening;
-        opening.Path = dbPath;
+        opening.Path = localCacheDbPath_;
         SetLocalCacheStatus_(opening, false);
         cacheRecreating_.store(true);
     }
@@ -420,6 +451,7 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     // stamped keys).
     StartupCacheOpenRequest openRequest;
     openRequest.TargetPath = localCacheDbPath_;
+    openRequest.LegacyCandidates = legacyCacheCandidates_;
     openRequest.FocusedCacheKey = ctx.CacheBackendKeyCopy();
     openRequest.Rekeys = smatchet::cache_keys::LegacyCacheKeyRekeys(cfg);
     openRequest.ActiveTrackerType = activeTrackerType;

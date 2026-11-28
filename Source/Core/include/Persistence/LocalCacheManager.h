@@ -73,6 +73,9 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
         /// While the open waits for a lock another process holds, this is checked every 10 ms; once it is true the open
         /// gives up at once (the constructor throws) instead of waiting out the busy timeout. Must outlive the call.
         const std::atomic<bool>* Abort = nullptr;
+        /// False for a file that is not ours to repair (an older location's cache opened for one session): a corrupt
+        /// file then makes the constructor throw instead of being moved aside and replaced by an empty one.
+        bool RebuildCorruptFile = true;
     };
 
     explicit LocalCacheManager(const std::string& dbPath);

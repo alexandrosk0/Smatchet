@@ -762,6 +762,20 @@ const TranslationEntry kEntries[] = {
      "be saved offline. Fix the cause and restart Smatchet.",
      u8"La base de données n'a pas pu être ouverte (%s). Smatchet utilise un cache temporaire pour cette session : "
      u8"les modifications ne peuvent pas être enregistrées hors ligne. Corrigez la cause et redémarrez Smatchet."},
+    {"prefs.local_db.recreate_legacy",
+     "Unavailable while this session uses a cache file from an older location. Restart Smatchet to move it first.",
+     u8"Indisponible tant que cette session utilise un fichier de cache d'un ancien emplacement. Redémarrez "
+     u8"Smatchet pour le déplacer d'abord."},
+    {"prefs.local_db.using_legacy",
+     "This session is using the cache file left at %s because it could not be copied to the current location just "
+     "now. Restart Smatchet to move it.",
+     u8"Cette session utilise le fichier de cache laissé à l'emplacement %s, car il n'a pas pu être copié vers "
+     u8"l'emplacement actuel pour l'instant. Redémarrez Smatchet pour le déplacer."},
+    {"prefs.local_db.imported_from", "Copied from the cache file left at %s. That file was not changed.",
+     u8"Copié depuis le fichier de cache laissé à l'emplacement %s. Ce fichier n'a pas été modifié."},
+    {"prefs.local_db.other_caches", "Another older cache file was found at %s and was not used. It was not changed.",
+     u8"Un autre ancien fichier de cache a été trouvé à l'emplacement %s et n'a pas été utilisé. Il n'a pas été "
+     u8"modifié."},
     {"prefs.local_db.recreate_unavailable",
      "Unavailable while the database cannot be opened: there is no file to recreate.",
      u8"Indisponible tant que la base de données ne peut pas être ouverte : il n'y a aucun fichier à recréer."},

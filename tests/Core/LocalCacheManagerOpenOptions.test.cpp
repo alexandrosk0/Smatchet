@@ -6,10 +6,13 @@
 #include "TempDbFile.h"
 
 #include <doctest/doctest.h>
+#include <ghc/filesystem.hpp>
 
 #include <atomic>
 #include <chrono>
 #include <exception>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <thread>
@@ -64,4 +67,30 @@ TEST_CASE("LocalCacheManager open: the one-argument constructor keeps its behavi
     smatchet_tests::TempDbFile file("smatchet_open_plain_");
     LocalCacheManager mgr(file.Path());
     CHECK(LocalCacheManagerTestAccess::QueryInt(mgr, "PRAGMA busy_timeout") == 5000);
+}
+
+TEST_CASE("LocalCacheManager open: RebuildCorruptFile=false leaves a corrupt file exactly where and as it was") {
+    smatchet_tests::TempDbFile file("smatchet_open_norebuild_");
+    const std::string garbage(8192, 'x'); // not a database: SQLite reports NOTADB on the first read
+    {
+        std::ofstream out(file.Path(), std::ios::binary);
+        out << garbage;
+    }
+    LocalCacheManager::OpenOptions options;
+    options.RebuildCorruptFile = false;
+    CHECK_THROWS(LocalCacheManager(file.Path(), options));
+
+    std::ifstream in(file.Path(), std::ios::binary);
+    const std::string after((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(after == garbage); // not moved aside, not rewritten
+    const ghc::filesystem::path dir = ghc::filesystem::path(file.Path()).parent_path();
+    const std::string stem = ghc::filesystem::path(file.Path()).filename().string();
+    for (ghc::filesystem::directory_iterator it(dir); it != ghc::filesystem::directory_iterator(); ++it) {
+        const std::string name = it->path().filename().string();
+        CHECK_FALSE((name.compare(0, stem.size(), stem) == 0 && name.find(".corrupt-") != std::string::npos));
+    }
+
+    // The default still rebuilds.
+    LocalCacheManager rebuilt(file.Path());
+    CHECK(rebuilt.EnqueuePendingCreate("Jira@test#1", "{}") > 0);
 }

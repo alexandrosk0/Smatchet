@@ -292,7 +292,7 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath, const OpenOption
             break;
         } catch (const SQLite::Exception& ex) {
             const int code = ex.getErrorCode();
-            if (smatchet::IsRebuildableCorruptCode(code)) {
+            if (smatchet::IsRebuildableCorruptCode(code) && options.RebuildCorruptFile) {
                 const ConnGuard guard(*this, "RebuildFreshAfterCorruption");
                 RebuildFreshAfterCorruption(guard, ex);
                 break;
@@ -348,6 +348,9 @@ void LocalCacheManager::ApplyWalPragmas(const ConnGuard& guard) {
             // Replaces the plain timeout above for the duration of the open, so an abort is seen within 10 ms.
             sqlite3_busy_handler(db.getHandle(), &OpenBusyHandler, openBusy_);
         }
+        // The cache has no trigger, view or generated column, so nothing in its schema needs to run SQL functions: a
+        // file carrying such objects (an adopted older file) must not get to run them.
+        db.exec("PRAGMA trusted_schema=OFF");
         db.exec("PRAGMA journal_mode=WAL");
         db.exec("PRAGMA synchronous=NORMAL");
     } catch (const std::exception& ex) {

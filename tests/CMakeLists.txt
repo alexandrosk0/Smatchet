@@ -215,6 +215,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/LocalCacheManagerConnectionSerialization.test.cpp
         # Interruptible open: OpenOptions::Abort ends a wait on a locked file promptly.
         Core/LocalCacheManagerOpenOptions.test.cpp
+        # One-time import of a legacy cache into its planned location (read-only source, init-lock, no-replace publish).
+        Core/LocalCacheLocationMigration.test.cpp
         # lookup_cache (Pillar 6 offline lookups), in-memory cases — LocalCacheManager_Lookup.cpp
         # linked below.
         Core/LocalCacheManagerLookup.test.cpp
@@ -227,6 +229,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_LeftViewHistory.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingActions.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingQueues.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheLocationMigration.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_CacheIdentity.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueDraft.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
@@ -884,6 +887,8 @@ add_executable(SmatchetTests
     Core/LocalCacheManagerConnectionSerialization.test.cpp
     # Interruptible open: OpenOptions::Abort ends a wait on a locked file promptly.
     Core/LocalCacheManagerOpenOptions.test.cpp
+    # One-time import of a legacy cache into its planned location (read-only source, init-lock, no-replace publish).
+    Core/LocalCacheLocationMigration.test.cpp
     # Multi-grid Slice 1b (ADR-0018) — tickets_v2 backend-key namespacing: one-time copy
     # migration round-trip on a pre-migration fixture DB, idempotence via cache_meta flag,
     # and two-backend disjointness on a colliding numeric id. Links the production LCM TU
@@ -1602,6 +1607,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_LeftViewHistory.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingActions.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingQueues.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheLocationMigration.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_CacheIdentity.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"

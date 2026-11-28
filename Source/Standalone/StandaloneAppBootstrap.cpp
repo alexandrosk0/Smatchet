@@ -246,8 +246,8 @@ static void SmatchetApplyPendingWindowResize(GLFWwindow* window) {
     LOG_INFO("debug.window.resize: %dx%d", w, h);
 }
 
-// Honour SMATCHET_USER_DATA: normalize + ensure the dir exists + point ConfigManager at it.
-void ApplyUserDataEnvOverride() {
+// The SMATCHET_USER_DATA override, or null when it is unset or empty.
+const char* UserDataEnvOverride() {
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
@@ -256,7 +256,13 @@ void ApplyUserDataEnvOverride() {
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-    if (envUserData && envUserData[0] != '\0') {
+    return (envUserData != nullptr && envUserData[0] != '\0') ? envUserData : nullptr;
+}
+
+// Honour SMATCHET_USER_DATA: normalize + ensure the dir exists + point ConfigManager at it.
+void ApplyUserDataEnvOverride() {
+    const char* envUserData = UserDataEnvOverride();
+    if (envUserData != nullptr) {
         const std::string userDataDir = NormalizeDirectory(std::string(envUserData));
         EnsureDirectoryExists(userDataDir);
         ConfigManager::SetUserDataDirectory(userDataDir);
@@ -423,6 +429,8 @@ bool InitAppAndPlugins(BootstrapContext& ctx, const TrackerConfig& cfg, const bo
             }
         }
 #endif
+        // An explicit user-data directory is a sandbox: it never adopts a cache the user left at an older location.
+        ctx.app->SetLegacyCacheImportEnabled(UserDataEnvOverride() == nullptr);
         ctx.app->Initialize(cfg.DbPath, cfg.TrackerType);
         ctx.pluginHost->OnStart(*ctx.app);
         return true;
