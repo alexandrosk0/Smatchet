@@ -56,7 +56,10 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     bool UseFakeNow = false;
     std::chrono::steady_clock::time_point NowImpl{};
     void AdvanceNow(std::chrono::seconds by) {
-        UseFakeNow = true;
+        if (!UseFakeNow) {
+            UseFakeNow = true;
+            NowImpl = std::chrono::steady_clock::now(); // continue from the real clock, never step back in time
+        }
         NowImpl += by;
     }
 

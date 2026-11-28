@@ -1,6 +1,7 @@
 #include "ProjectComponentsCacheService.h"
 
 #include "CachedTicketTypes.h"
+#include "Config/TunableLimits.h"
 #include "FieldOptionsJsonPure.h"
 #include "IEditMetaDeps.h"
 #include "ILookupCache.h"
@@ -32,6 +33,16 @@ std::string EntryKey(const std::string& backendKey, const std::string& projectKe
     return smatchet::workflow::BuildScopedKey(backendKey, projectKey);
 }
 
+// How the revalidating paths (a user's Refresh, the post-sync warm) treat a live list: one older than
+// lookup_live_max_age_sec may be asked for again, and `revalidate` asks for it whatever its age. The lazy Ensure
+// path never uses this: it keeps the default admission, so a status the editor draws every frame cannot fetch.
+smatchet::offline::FetchAdmission MaxAgeAdmission(bool revalidate) {
+    smatchet::offline::FetchAdmission admit;
+    admit.LiveMaxAge = std::chrono::seconds(smatchet::limits::Get().LookupLiveMaxAgeSec);
+    admit.Revalidate = revalidate;
+    return admit;
+}
+
 } // namespace
 
 ProjectComponentsCacheService::ProjectComponentsCacheService(IEditMetaDeps& deps) : deps_(deps) {}
@@ -59,7 +70,7 @@ ProjectComponentsLookup ProjectComponentsCacheService::GetComponentOptions(const
 }
 
 bool ProjectComponentsCacheService::EnsureComponentsLoaded(const std::string& projectKey) {
-    return BeginFetch(projectKey, /*bypassSaved=*/false);
+    return BeginFetch(projectKey, /*bypassSaved=*/false, smatchet::offline::FetchAdmission());
 }
 
 bool ProjectComponentsCacheService::RefreshComponents(const std::string& projectKey) {
@@ -67,10 +78,11 @@ bool ProjectComponentsCacheService::RefreshComponents(const std::string& project
         return false;
     }
     cache_.ClearBackoff(EntryKey(deps_.CacheBackendKey(), projectKey));
-    return BeginFetch(projectKey, /*bypassSaved=*/true);
+    return BeginFetch(projectKey, /*bypassSaved=*/true, MaxAgeAdmission(/*revalidate=*/true));
 }
 
-bool ProjectComponentsCacheService::BeginFetch(const std::string& projectKey, bool bypassSaved) {
+bool ProjectComponentsCacheService::BeginFetch(const std::string& projectKey, bool bypassSaved,
+                                               const smatchet::offline::FetchAdmission& admit) {
     if (projectKey.empty()) {
         return false;
     }
@@ -82,9 +94,9 @@ bool ProjectComponentsCacheService::BeginFetch(const std::string& projectKey, bo
     EnsureSavedLoaded(backendKey);
 
     OptionsCache::Ticket ticket;
-    if (!cache_.TryBeginFetch(EntryKey(backendKey, projectKey), deps_.TrackerConnectivity(), deps_.SteadyNow(),
-                              ticket)) {
-        return false; // live, in flight, offline, inside the failure backoff, or a saved list still in its lifetime
+    if (!cache_.TryBeginFetch(EntryKey(backendKey, projectKey), deps_.TrackerConnectivity(), deps_.SteadyNow(), ticket,
+                              admit)) {
+        return false; // current, in flight, offline, inside the failure backoff, or a saved list still in its lifetime
     }
     const std::shared_ptr<ILookupCache> store = deps_.LookupCacheShared();
     try {
@@ -115,6 +127,7 @@ void ProjectComponentsCacheService::WarmForActiveTicketsAsync(TrackerConfig trac
     }
     // Distinct Jira project keys (issue-key prefixes) across the active tickets, so each row's editor
     // offers its own project's components. Projects already live or in flight need no worker.
+    const smatchet::offline::FetchAdmission admit = MaxAgeAdmission(/*revalidate=*/false);
     const auto ticketsSnap = deps_.GetActiveTicketsSnapshot();
     std::vector<std::string> projectKeys;
     std::unordered_set<std::string> seen;
@@ -123,8 +136,9 @@ void ProjectComponentsCacheService::WarmForActiveTicketsAsync(TrackerConfig trac
         if (projectKey.empty() || !seen.insert(projectKey).second) {
             continue;
         }
-        const OptionsCache::Entry entry = cache_.Get(EntryKey(backendKey, projectKey));
-        if (!entry.InFlight && !(entry.Live && !entry.LastAttemptFailed)) {
+        const std::string entryKey = EntryKey(backendKey, projectKey);
+        // A list that is current, or being fetched now, needs no worker; one past its max age does.
+        if (!cache_.Get(entryKey).InFlight && !cache_.IsCurrent(entryKey, deps_.SteadyNow(), admit)) {
             projectKeys.push_back(projectKey);
         }
     }
@@ -134,7 +148,7 @@ void ProjectComponentsCacheService::WarmForActiveTicketsAsync(TrackerConfig trac
     const std::shared_ptr<ILookupCache> store = deps_.LookupCacheShared();
     try {
         deps_.LaunchBackgroundTask(
-            [this, backend, projectKeys, backendKey, store, cfg = std::move(trackerCfgForWorker)]() {
+            [this, backend, projectKeys, backendKey, store, admit, cfg = std::move(trackerCfgForWorker)]() {
                 for (const std::string& projectKey : projectKeys) {
                     if (deps_.IsShuttingDown()) {
                         break;
@@ -143,7 +157,7 @@ void ProjectComponentsCacheService::WarmForActiveTicketsAsync(TrackerConfig trac
                     // held behind this warm (and vice versa: a project already in flight is skipped).
                     OptionsCache::Ticket ticket;
                     if (cache_.TryBeginFetch(EntryKey(backendKey, projectKey), deps_.TrackerConnectivity(),
-                                             deps_.SteadyNow(), ticket)) {
+                                             deps_.SteadyNow(), ticket, admit)) {
                         FetchOne(backend, ticket, backendKey, projectKey, &cfg, store);
                     }
                 }
@@ -179,8 +193,9 @@ void ProjectComponentsCacheService::FetchOne(const std::shared_ptr<ITrackerBacke
         // A saved list younger than its lifetime stands in for the live fetch (and keeps its save time, so it
         // does expire). It stays a SAVED copy: shown under the "saved" cue, not refetched before it expires, and
         // replaced at once by a user's Refresh. An empty saved list never stands in: "no components" must come
-        // from the tracker, not from a copy.
-        if (store && cfg.LookupCacheTtlSec > 0 && !bypassSaved) {
+        // from the tracker, not from a copy. A revalidation of a live list (ticket.WasLive) never takes it either:
+        // a saved copy would swap the live list for an older one.
+        if (store && cfg.LookupCacheTtlSec > 0 && !bypassSaved && !ticket.WasLive) {
             try {
                 LookupCacheRow row;
                 std::vector<TrackerFieldOption> saved;

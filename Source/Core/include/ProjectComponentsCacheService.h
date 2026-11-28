@@ -36,19 +36,23 @@ class ProjectComponentsCacheService {
     /// safe every frame.
     ProjectComponentsLookup GetComponentOptions(const std::string& projectKey) const;
 
-    /// A user's Refresh: like EnsureComponentsLoaded, but it also clears the failure backoff and ignores a saved
-    /// list that is still inside its lifetime, so the tracker is asked now. Not while offline, in flight or live.
-    /// True when a fetch started. Non-blocking.
+    /// A user's Refresh: like EnsureComponentsLoaded, but it also clears the failure backoff, ignores a saved
+    /// list that is still inside its lifetime, and revalidates a live list, so the tracker is asked now. The list
+    /// on screen stays while it runs and after a failure. Not while offline or in flight. True when a fetch
+    /// started. Non-blocking.
     bool RefreshComponents(const std::string& projectKey);
 
     /// Start a background fetch for `projectKey` when one is allowed (not live, not in flight, not
-    /// offline, not inside the failure backoff) and load the saved rows once per backend. Non-blocking.
+    /// offline, not inside the failure backoff) and load the saved rows once per backend. A live list is never
+    /// refetched here, however old: the editor calls this every frame, so only Refresh and the warm revalidate.
+    /// Non-blocking.
     /// True when this call changed the entry: a fetch started, or failed to start and was recorded as
     /// a failure. The caller then re-reads it (GetComponentOptions) to show the new state this frame.
     bool EnsureComponentsLoaded(const std::string& projectKey);
 
     /// Fetch, one after another on a single worker, every project seen in the active tickets (the
-    /// post-sync warm). A project that is live, in flight or backing off when its turn comes is skipped.
+    /// post-sync warm). A project that is current, in flight or backing off when its turn comes is skipped; a
+    /// live list older than `lookup_live_max_age_sec` (0 = never) is current no longer and is fetched again.
     void WarmForActiveTicketsAsync(TrackerConfig trackerCfgForWorker);
 
     /// Connectivity came back: clear every failure backoff so the next use retries.
@@ -65,7 +69,7 @@ class ProjectComponentsCacheService {
     void FetchOne(const std::shared_ptr<ITrackerBackend>& backend, const OptionsCache::Ticket& ticket,
                   const std::string& backendKey, const std::string& projectKey, const TrackerConfig* cfgSnapshot,
                   const std::shared_ptr<ILookupCache>& store, bool bypassSaved = false);
-    bool BeginFetch(const std::string& projectKey, bool bypassSaved);
+    bool BeginFetch(const std::string& projectKey, bool bypassSaved, const smatchet::offline::FetchAdmission& admit);
 
     IEditMetaDeps& deps_;
     OptionsCache cache_;
