@@ -82,8 +82,8 @@ bool ProjectComponentsCacheService::BeginFetch(const std::string& projectKey, bo
     EnsureSavedLoaded(backendKey);
 
     OptionsCache::Ticket ticket;
-    if (!cache_.TryBeginFetch(EntryKey(backendKey, projectKey), deps_.TrackerConnectivity(),
-                              smatchet::offline::Clock::now(), ticket)) {
+    if (!cache_.TryBeginFetch(EntryKey(backendKey, projectKey), deps_.TrackerConnectivity(), deps_.SteadyNow(),
+                              ticket)) {
         return false; // live, in flight, offline, inside the failure backoff, or a saved list still in its lifetime
     }
     const std::shared_ptr<ILookupCache> store = deps_.LookupCacheShared();
@@ -97,8 +97,7 @@ bool ProjectComponentsCacheService::BeginFetch(const std::string& projectKey, bo
         // backs off and retries instead of staying in flight.
         LOG_WARN("ProjectComponentsCacheService: component fetch for %s did not complete: %s", projectKey.c_str(),
                  ex.what());
-        cache_.CompleteFailure(ticket, TrackerErrorUnknown("component fetch did not complete"),
-                               smatchet::offline::Clock::now());
+        cache_.CompleteFailure(ticket, TrackerErrorUnknown("component fetch did not complete"), deps_.SteadyNow());
     }
     return true;
 }
@@ -144,7 +143,7 @@ void ProjectComponentsCacheService::WarmForActiveTicketsAsync(TrackerConfig trac
                     // held behind this warm (and vice versa: a project already in flight is skipped).
                     OptionsCache::Ticket ticket;
                     if (cache_.TryBeginFetch(EntryKey(backendKey, projectKey), deps_.TrackerConnectivity(),
-                                             smatchet::offline::Clock::now(), ticket)) {
+                                             deps_.SteadyNow(), ticket)) {
                         FetchOne(backend, ticket, backendKey, projectKey, &cfg, store);
                     }
                 }
@@ -168,7 +167,7 @@ void ProjectComponentsCacheService::FetchOne(const std::shared_ptr<ITrackerBacke
     bool servedFromSaved = false;
     // Everything that can throw, the config load included, runs inside RunKeyedFetch: its guard records
     // a failure on every exit, so a throw can never leave the ticket in flight.
-    smatchet::offline::RunKeyedFetch(cache_, ticket, [&]() {
+    const auto fetchBody = [&]() {
         if (deps_.IsShuttingDown()) {
             return FetchResult::Err(TrackerErrorCancelled("shutting down"));
         }
@@ -196,7 +195,7 @@ void ProjectComponentsCacheService::FetchOne(const std::shared_ptr<ITrackerBacke
                     servedFromSaved = true;
                     const auto untilStale = std::chrono::seconds(
                         smatchet::sync::SecondsUntilLookupStale(row.UpdatedAtEpochSec, nowSec, cfg.LookupCacheTtlSec));
-                    cache_.CompleteFromSaved(ticket, fetched, smatchet::offline::Clock::now() + untilStale);
+                    cache_.CompleteFromSaved(ticket, fetched, deps_.SteadyNow() + untilStale);
                     return FetchResult::Ok(fetched); // the spent ticket makes RunKeyedFetch's success a no-op
                 }
             } catch (const std::exception& ex) {
@@ -213,7 +212,8 @@ void ProjectComponentsCacheService::FetchOne(const std::shared_ptr<ITrackerBacke
         // Presence means loaded: a project with no components settles to an empty list, not "Loading".
         fetched = std::make_shared<const OptionsList>(std::move(result.value().Options));
         return FetchResult::Ok(fetched);
-    });
+    };
+    smatchet::offline::RunKeyedFetch(cache_, ticket, fetchBody, [this]() { return deps_.SteadyNow(); });
     if (!fetched || !store || servedFromSaved) {
         return;
     }

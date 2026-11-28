@@ -13,6 +13,7 @@
 // Test fixtures implement this interface directly (see tests/support/FakeEditMetaDeps.h) so unit
 // tests can exercise EditMetaCacheService without constructing an AppController.
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -75,4 +76,8 @@ class IEditMetaDeps {
 
     /// Backend namespace key for cache operations (multi-grid ADR-0018).
     virtual std::string CacheBackendKey() const = 0;
+
+    /// The steady clock the lookup caches stamp live values with and compare ages against (`KeyedLookupCache`
+    /// admission). Defaulted so production adapters need no override; test fakes substitute a controllable one.
+    virtual std::chrono::steady_clock::time_point SteadyNow() const { return std::chrono::steady_clock::now(); }
 };

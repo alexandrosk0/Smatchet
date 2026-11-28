@@ -88,8 +88,7 @@ void IssueTransitionsCacheService::EnsureIssueTransitionsLoaded(const Transition
 
     using TransitionsCache = smatchet::offline::KeyedLookupCache<std::vector<TrackerFieldOption>>;
     TransitionsCache::Ticket ticket;
-    if (!live_.TryBeginFetch(LiveKey(backendKey, q.IssueId), deps_.TrackerConnectivity(),
-                             smatchet::offline::Clock::now(), ticket)) {
+    if (!live_.TryBeginFetch(LiveKey(backendKey, q.IssueId), deps_.TrackerConnectivity(), deps_.SteadyNow(), ticket)) {
         return; // in flight, already live, offline, or inside the failure backoff
     }
     const std::shared_ptr<ILookupCache> store = deps_.LookupCacheShared();
@@ -100,7 +99,7 @@ void IssueTransitionsCacheService::EnsureIssueTransitionsLoaded(const Transition
         deps_.LaunchBackgroundTask([this, backend, catalog, ticket, q, backendKey, store, haveCfg, cfg]() {
             // Everything that can throw, the config load included, runs inside RunKeyedFetch: its guard
             // records a failure on every exit, so a throw can never leave the ticket in flight.
-            smatchet::offline::RunKeyedFetch(live_, ticket, [&]() {
+            const auto fetchBody = [&]() {
                 const TrackerConfig useCfg = haveCfg ? cfg : ConfigManager::Load();
                 auto r = catalog->FetchIssueTransitions(useCfg, q.IssueId);
                 if (r.has_value()) {
@@ -110,15 +109,15 @@ void IssueTransitionsCacheService::EnsureIssueTransitionsLoaded(const Transition
                               q.IssueId.c_str(), ToString(r.error().Kind));
                 }
                 return r;
-            });
+            };
+            smatchet::offline::RunKeyedFetch(live_, ticket, fetchBody, [this]() { return deps_.SteadyNow(); });
         });
     } catch (const std::exception& ex) {
         // The launch itself failed (or, with an inline runner, the fetch threw): record a failure so
         // the entry backs off and retries instead of staying in flight forever.
         LOG_WARN("IssueTransitionsCacheService: transitions fetch for %s did not complete: %s", q.IssueId.c_str(),
                  ex.what());
-        live_.CompleteFailure(ticket, TrackerErrorUnknown("transitions fetch did not complete"),
-                              smatchet::offline::Clock::now());
+        live_.CompleteFailure(ticket, TrackerErrorUnknown("transitions fetch did not complete"), deps_.SteadyNow());
     }
 }
 
