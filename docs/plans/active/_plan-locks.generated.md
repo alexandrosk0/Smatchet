@@ -8,77 +8,69 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## In-flight locks (2 active)
+## In-flight locks (3 active)
 
-### `catalog-field-handle-2501`
+### `batch28-grid-drafts`
 
 - **Owner**: `orchestrator`
-- **Branch**: `claude/catalog-field-handle-2501`
-- **Started**: 2026-11-27T03:21:39Z
-- **Updated**: 2026-11-27T03:37:30Z
-- **Write set** (22 paths):
-  - `Source/Core/include/GridLiveContext.h`
-  - `Source/Core/src/AppController_CatalogAndFieldEdit.cpp`
-  - `Source/Core/include/Interfaces/IAppFields.h`
-  - `Source/Core/include/IEditMetaDeps.h`
-  - `Source/Core/include/GridContextDepsAdapter.h`
-  - `Source/Core/src/GridContextDepsAdapter.cpp`
-  - `Source/Core/src/EditMetaCacheService.cpp`
-  - `Source/Core/src/Commands/Builtin/BuiltinCommands_Fields.cpp`
-  - `Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp`
-  - `Source/Core/src/Commands/Builtin/BuiltinCommands_Perf.cpp`
-  - `Source/Core/src/Ui/AnnotateAnalysisUi_Preferences.cpp`
-  - `Source/Core/src/Ui/AnnotateAnalysisUi_Window.cpp`
-  - `tests/support/FakeEditMetaDeps.h`
-  - `tests/Core/EditMetaCacheService.test.cpp`
-  - `tests/Core/AppControllerFieldCatalogLock.test.cpp`
-  - `tests/Core/AppControllerFieldCatalog.posix.test.cpp`
-  - `Source/Core/include/Interfaces/IAppTicketMutations.h`
+- **Branch**: `claude/batch28-grid-drafts`
+- **Started**: 2026-11-27T19:50:26Z
+- **Write set** (19 paths):
   - `Source/Core/include/AppController.h`
-  - `tests/Commands/BuiltinFacetCommands.test.cpp`
-  - `tests/ui/duration_inline_edit_commit.test.cpp`
-  - `docs/plans/active/bulk-edit-rows.md`
+  - `Source/Core/include/SpreadsheetState.h`
+  - `Source/Core/include/TicketFieldEditorLongTextPure.h`
+  - `Source/Core/src/AppController_CatalogAndFieldEdit.cpp`
+  - `Source/Core/src/TicketFieldEditor.cpp`
+  - `Source/Core/src/TicketFieldEditorLongTextPure.cpp`
+  - `Source/Core/src/TicketFieldEditor_Modal.cpp`
+  - `Source/Core/src/TicketFieldEditor_detail.h`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridKeys.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`
+  - `Source/Core/src/Ui/SmatchetGridUiSupport.cpp`
   - `docs/self-improvement/categories/debt/2026-11-26-legacy-find-field-by-id-pinned-accessor.md`
+  - `tests/Core/AppControllerFieldCatalog.posix.test.cpp`
+  - `tests/Core/GridCursorPure.test.cpp`
+  - `tests/Core/TicketFieldEditorLongTextPure.test.cpp`
+  - `tests/ui/bulk_field_edit.test.cpp`
+  - `tests/ui/field_viewer_modal.test.cpp`
+  - `tests/ui/grid_spreadsheet_keys.test.cpp`
+  - `tests/ui/offline_first.test.cpp`
+- **Notes**: Batch 28 Issues #2514 (grid key-edit seed) and #2504 (long-text draft site scope), plus removing the legacy AppController::FindFieldById accessor
 
-### `input-ux-w3-grid-s4`
+### `grid-undo-wrong-target`
 
 - **Owner**: `orchestrator`
-- **Branch**: `claude/w3-grid-spreadsheet-s4-91e0b7`
-- **Started**: 2026-11-25T21:05:33Z
-- **Updated**: 2026-11-27T06:37:04Z
-- **Write set** (34 paths):
-  - `Source/Core/include/SpreadsheetState.h`
-  - `Source/Core/include/Ui/BulkFieldEditPure.h`
-  - `Source/Core/include/Ui/GridCursorPure.h`
-  - `Source/Core/include/Ui/GridPastePure.h`
+- **Branch**: `claude/grid-undo-wrong-target`
+- **Started**: 2026-11-28T05:44:17Z
+- **Write set** (10 paths):
+  - `Source/Core/src/SmatchetGridFieldEditPipeline.cpp`
   - `Source/Core/include/Ui/GridUndoPure.h`
   - `Source/Core/include/Ui/SmatchetGridUiSupport.h`
-  - `Source/Core/include/Ui/SmatchetUiSession.h`
-  - `Source/Core/src/SmatchetGridFieldEditPipeline.cpp`
-  - `Source/Core/src/SmatchetLocalization.cpp`
-  - `Source/Core/src/TicketFieldEditor.cpp`
   - `Source/Core/src/Ui/AGENTS.md`
-  - `Source/Core/src/Ui/BulkFieldEditPure.cpp`
-  - `Source/Core/src/Ui/GridPastePure.cpp`
-  - `Source/Core/src/Ui/SmatchetActiveProjectGridKeys.cpp`
-  - `Source/Core/src/Ui/SmatchetActiveProjectGridPaste.cpp`
-  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`
-  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi_Internal.h`
-  - `Source/Core/src/Ui/SmatchetGridBulkRequest.cpp`
-  - `Source/Core/src/Ui/SmatchetGridUiSupport.cpp`
-  - `docs/audits/INPUT_UX_AUDIT.md`
-  - `docs/guides/keyboard-shortcuts.md`
-  - `docs/plans/INDEX.md`
-  - `docs/plans/active/input-ux-w3-grid-spreadsheet.md`
-  - `docs/plans/shipped/input-ux-w3-grid-spreadsheet.md`
-  - `docs/self-improvement/categories/debt/2026-11-25-grid-key-edit-review-mediums.md`
-  - `docs/self-improvement/categories/debt/2026-11-25-grid-undo-review-leftovers.md`
-  - `docs/self-improvement/categories/debt/2026-11-27-grid-paste-review-leftovers.md`
-  - `docs/self-improvement/historical-review-findings.md`
+  - `tests/Core/GridUndoPure.test.cpp`
+  - `tests/ui/grid_undo_wrong_target.test.cpp`
+  - `tests/ui/ui_tests_registry.cpp`
+  - `tests/ui/CMakeLists.txt`
   - `scripts/dev/test-ui-grid-spreadsheet.sh`
-  - `tests/CMakeLists.txt`
-  - `tests/Core/BulkFieldEditPure.test.cpp`
-  - `tests/Core/GridCursorPure.test.cpp`
-  - `tests/Core/GridPastePure.test.cpp`
-  - `tests/ui/grid_spreadsheet_keys.test.cpp`
+  - `docs/self-improvement/categories/debt/2026-11-25-grid-undo-review-leftovers.md`
+- **Notes**: grid undo wrong-target fix: backend switch
+
+### `input-ux-w3-filter-s4`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/w3-filter-without-jql-s4-eb8d04`
+- **Originating plan**: [`docs/plans/active/input-ux-w3-filter-without-jql.md`](../../../docs/plans/active/input-ux-w3-filter-without-jql.md)
+- **Started**: 2026-11-28T06:21:24Z
+- **Write set** (11 paths):
+  - `Source/Core/include/Ui/SmatchetInput.h`
+  - `Source/Core/src/Ui/SmatchetInput.cpp`
+  - `Source/Core/include/QuerySuggestTypes.h`
+  - `Source/Core/include/Ui/SmatchetAutocompleteUi.h`
+  - `Source/Core/src/Ui/SmatchetAutocompleteUi.cpp`
+  - `Source/Core/src/Ui/SmatchetAutocompleteUi_detail.h`
+  - `Source/Core/src/Ui/SmatchetAutocompleteUi_detail.cpp`
+  - `Source/Core/include/Ui/SmatchetUiSession.h`
+  - `Source/Core/src/Ui/SmatchetViewsDashboardUi_widgets.cpp`
+  - `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp`
+  - `tests/Core/AutocompleteListNav.test.cpp`
 
