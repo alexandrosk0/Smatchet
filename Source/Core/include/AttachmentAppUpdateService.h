@@ -83,17 +83,26 @@ class AttachmentAppUpdateService {
     VoidResult DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
                                                 std::shared_ptr<std::atomic<bool>> cancelFlag = {}) const;
 
+    /// The attachment disk cache for the CURRENT user data directory. Created on first use, and rebuilt when
+    /// ConfigManager::GetUserDataDirectory() has moved since (a storage-mode switch), so a copy is never read
+    /// from or written to the previous location. The returned handle keeps its cache alive for the caller even
+    /// if a later call rebinds. Safe from any thread; the cache's own methods do file I/O (worker only).
+    std::shared_ptr<smatchet::attachments::AttachmentDiskCache> AttachmentCache();
+
+    /// Deletes every downloaded attachment copy (best effort, per entry; a file a viewer holds open is
+    /// skipped). Returns how many entries were removed. Worker only: it does file I/O.
+    std::size_t PurgeLocalAttachmentCache();
+
   private:
     /// A local copy of the attachment: the cached one when it was downloaded before (so it opens
     /// offline), else a fresh download, saved to the cache. The host allowlist, the size cap and the
     /// redirect check apply before anything is read or written. Blocking; call it from a worker.
     Result<smatchet::attachments::LocalAttachment>
     ResolveLocalAttachment(const std::string& url, const std::string& filename, const std::string& mimeType);
-    smatchet::attachments::AttachmentDiskCache& AttachmentCache();
 
     IAttachmentAppUpdateDeps& deps_;
-    std::once_flag attachmentCacheOnce_;
-    std::unique_ptr<smatchet::attachments::AttachmentDiskCache> attachmentCache_;
+    std::mutex attachmentCacheMutex_; ///< guards attachmentCache_ (rebound when the user data folder moves)
+    std::shared_ptr<smatchet::attachments::AttachmentDiskCache> attachmentCache_;
 };
 
 namespace smatchet {

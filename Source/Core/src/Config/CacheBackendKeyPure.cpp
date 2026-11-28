@@ -119,6 +119,10 @@ std::string TrackerCacheBackendKey(const TrackerConfig& cfg) {
     return JiraKey(domain, JiraAccountEmail(cfg, domain));
 }
 
+std::string JiraSiteCacheKey(const TrackerConfig& cfg, const std::string& domain) {
+    return JiraKey(domain, JiraAccountEmail(cfg, domain));
+}
+
 std::vector<std::pair<std::string, std::string>> LegacyCacheKeyRekeys(const TrackerConfig& cfg) {
     std::vector<std::pair<std::string, std::string>> out;
     const auto add = [&out](const std::string& from, const std::string& to) {

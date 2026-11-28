@@ -132,19 +132,19 @@ bool AttachmentDiskCache::ResolveEntryPath(const std::string& relativePath, std:
     return true;
 }
 
-bool AttachmentDiskCache::Lookup(const std::string& url, LocalAttachment& out) {
+bool AttachmentDiskCache::Lookup(const std::string& ns, const std::string& url, LocalAttachment& out) {
     if (url.empty() || userDataDir_.empty()) {
         return false;
     }
     try {
-        const std::string key = EntryKeyForUrl(url);
+        const std::string key = EntryKeyFor(ns, url);
         std::lock_guard<std::mutex> lock(mutex_);
         std::string metaPath;
         std::string metaJson;
         EntryMeta meta;
         if (!ResolveEntryPath(key + "/" + kEntryMetaFileName, metaPath) ||
             !ReadSmallFile(metaPath, kMaxEntryMetaBytes, metaJson) || !ParseEntryMeta(metaJson, meta) ||
-            meta.Url != url) {
+            meta.Url != url || meta.Namespace != ns) {
             return false;
         }
         std::string dataPath;
@@ -163,7 +163,8 @@ bool AttachmentDiskCache::Lookup(const std::string& url, LocalAttachment& out) {
     }
 }
 
-Result<LocalAttachment, TrackerError> AttachmentDiskCache::Store(const std::string& url, const std::string& fileName,
+Result<LocalAttachment, TrackerError> AttachmentDiskCache::Store(const std::string& ns, const std::string& url,
+                                                                 const std::string& fileName,
                                                                  const FetchedAttachment& fetched) {
     using StoreResult = Result<LocalAttachment, TrackerError>;
     if (url.empty() || userDataDir_.empty()) {
@@ -173,10 +174,11 @@ Result<LocalAttachment, TrackerError> AttachmentDiskCache::Store(const std::stri
         const std::string mime = fetched.Mime.empty() ? std::string(kDefaultMime) : fetched.Mime;
         EntryMeta meta;
         meta.Url = url;
+        meta.Namespace = ns;
         meta.Mime = mime;
         meta.FileName = StoredFileName(fileName, ExtensionFromMime(mime));
         const std::string metaJson = SerializeEntryMeta(meta);
-        const std::string key = EntryKeyForUrl(url);
+        const std::string key = EntryKeyFor(ns, url);
         std::string dataPath;
         std::string metaPath;
         if (metaJson.empty() || !ResolveEntryPath(key + "/" + meta.FileName, dataPath) ||
@@ -201,6 +203,43 @@ Result<LocalAttachment, TrackerError> AttachmentDiskCache::Store(const std::stri
         return StoreResult::Err(
             TrackerErrorUnknown(std::string("The attachment could not be saved to the cache: ") + ex.what()));
     }
+}
+
+std::size_t AttachmentDiskCache::PurgeAll() {
+    if (userDataDir_.empty()) {
+        return 0;
+    }
+    std::size_t removed = 0;
+    try {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const fs::path root = fs::path(userDataDir_) / kCacheSubdir;
+        std::error_code ec;
+        if (!fs::is_directory(root, ec)) {
+            return 0;
+        }
+        std::vector<std::string> keys;
+        for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+            std::error_code dirEc;
+            const std::string name = it->path().filename().string();
+            // Only entry directories are ever deleted, as in Prune; anything else in the folder is not ours.
+            if (it->is_directory(dirEc) && !dirEc && IsEntryKey(name)) {
+                keys.push_back(name);
+            }
+        }
+        for (const std::string& key : keys) {
+            std::error_code rmEc;
+            fs::remove_all(root / key, rmEc);
+            if (rmEc) {
+                LOG_WARN("AttachmentDiskCache::PurgeAll: could not delete entry %s: %s", key.c_str(),
+                         rmEc.message().c_str());
+            } else {
+                ++removed;
+            }
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("AttachmentDiskCache::PurgeAll failed: %s", ex.what());
+    }
+    return removed;
 }
 
 void AttachmentDiskCache::Prune() {
@@ -265,7 +304,7 @@ Result<LocalAttachment, TrackerError> ResolveAttachment(AttachmentDiskCache& cac
                                                         const UncachedWriteFn& writeUncached) {
     using ResolveResult = Result<LocalAttachment, TrackerError>;
     LocalAttachment hit;
-    if (cache.Lookup(request.Url, hit)) {
+    if (cache.Lookup(request.Namespace, request.Url, hit)) {
         return ResolveResult::Ok(std::move(hit));
     }
     if (request.Offline) {
@@ -288,7 +327,7 @@ Result<LocalAttachment, TrackerError> ResolveAttachment(AttachmentDiskCache& cac
         }
         return ResolveResult::Err(fetched.error());
     }
-    ResolveResult stored = cache.Store(request.Url, request.FileName, fetched.value());
+    ResolveResult stored = cache.Store(request.Namespace, request.Url, request.FileName, fetched.value());
     if (stored.has_value()) {
         cache.Prune();
         return stored;

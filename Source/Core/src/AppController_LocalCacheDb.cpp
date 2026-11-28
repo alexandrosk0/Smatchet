@@ -8,12 +8,14 @@
 // clang-format off
 // SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=behavior-preserving TU split of AppController.cpp, a companion TU defining the AppController local-cache database methods needs the full class definition and adds no new coupling; owner=orchestrator; revisit=when AppController.h is narrowed per ADR-0020 / debt.md)
 #include "AppController.h"
+#include "AttachmentAppUpdateService.h"
 #include "LeftViewHistoryService.h"
 // clang-format on
 
 #include "ConfigManager.h"
 #include "LocalCacheManager.h"
 #include "Logger.h"
+#include "SmatchetFieldIconRender.h"
 #include "SmatchetLocalization.h"
 #include "Ui/SmatchetToast.h" // the completion toast (the recreate has no other UI)
 // The cache recreate drives per-context streaming-sync teardown through
@@ -326,6 +328,22 @@ bool AppController::ReleaseWithdrawnCache_(std::shared_ptr<LocalCacheManager> ol
     return false;
 }
 
+namespace {
+
+// Clears the downloaded attachment copies and field-icon files (worker only; best effort, never throws).
+void PurgeDownloadedFileCaches(AttachmentAppUpdateService* attachments) {
+    try {
+        const std::size_t attachmentCopies = attachments != nullptr ? attachments->PurgeLocalAttachmentCache() : 0;
+        const std::size_t iconFiles = SmatchetFieldIconRender::PurgeDiskCache();
+        LOG_INFO("AppController: recreate cleared %zu attachment copies and %zu icon files", attachmentCopies,
+                 iconFiles);
+    } catch (const std::exception& ex) {
+        LOG_WARN("AppController: clearing the downloaded file caches failed: %s", ex.what());
+    }
+}
+
+} // namespace
+
 smatchet::sync::CacheRecreateOutcome AppController::RecreateCacheFilesOnWorker_(const std::string& focusedCacheKey) {
     smatchet::sync::CacheRecreateOutcome outcome;
     std::shared_ptr<LocalCacheManager> oldCache;
@@ -354,6 +372,11 @@ smatchet::sync::CacheRecreateOutcome AppController::RecreateCacheFilesOnWorker_(
     }
 
     outcome.Wiped = true; // the database is gone from here on, whatever happens to the new one
+    // Downloaded attachment copies and field icons are cache of the same kind: re-fetched on demand, and keyed to
+    // the site and account the database described. "Recreate" clears them too (best effort, per file; a file a
+    // viewer holds open is skipped). Runs only after the database files went, so a recreate that is refused or
+    // fails earlier deletes nothing.
+    PurgeDownloadedFileCaches(attachmentAppUpdate_.get());
     // The database went but a sidecar would not: the new database still gets its one-time stamps below (an
     // unstamped fresh file would run those migrations against rows written later), and the leftover is reported.
     const std::string leftover = removeResult.has_value() ? std::string() : removeResult.error();

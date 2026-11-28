@@ -11,6 +11,7 @@
 
 using smatchet::attachments::CacheEntryInfo;
 using smatchet::attachments::EntryFileInfo;
+using smatchet::attachments::EntryKeyFor;
 using smatchet::attachments::EntryKeyForUrl;
 using smatchet::attachments::EntryMeta;
 using smatchet::attachments::IsEntryKey;
@@ -228,5 +229,42 @@ TEST_SUITE("AttachmentCachePure") {
         // entry.json itself is protected too (an attachment named so that it is its own temp's base).
         const std::vector<EntryFileInfo> onlyMeta = {{"entry.json", 0}};
         CHECK(SelectStaleEntryFiles(onlyMeta, "entry.json", 10000, 600).empty());
+    }
+
+    TEST_CASE("EntryKeyFor: empty namespace is the legacy key, a namespace gives a different 64-hex key") {
+        const std::string url = "https://site.atlassian.net/rest/api/3/attachment/content/1";
+        CHECK(EntryKeyFor("", url) == EntryKeyForUrl(url));
+        const std::string a = EntryKeyFor("Jira@site.atlassian.net#aaaaaaaaaaaa", url);
+        const std::string b = EntryKeyFor("Jira@site.atlassian.net#bbbbbbbbbbbb", url);
+        CHECK(IsEntryKey(a));
+        CHECK(a != b);                   // two accounts on one site never share an entry
+        CHECK(a != EntryKeyForUrl(url)); // an older build's entry is never a namespaced hit
+        CHECK(a == EntryKeyFor("Jira@site.atlassian.net#aaaaaaaaaaaa", url)); // stable
+        CHECK(a != EntryKeyFor("Jira@site.atlassian.net#aaaaaaaaaaaa", url + "2"));
+    }
+
+    TEST_CASE("EntryKeyFor: the separator keeps (ns, url) pairs distinct") {
+        // Without a separator "ab"+"c" and "a"+"bc" would hash alike.
+        CHECK(EntryKeyFor("ab", "c") != EntryKeyFor("a", "bc"));
+    }
+
+    TEST_CASE("entry.json carries the namespace, and omits it when empty") {
+        EntryMeta meta;
+        meta.Url = "https://x/1";
+        meta.Mime = "image/png";
+        meta.FileName = "a.png";
+        const std::string plain = SerializeEntryMeta(meta);
+        CHECK(plain.find("\"ns\"") == std::string::npos); // byte-identical to what older builds wrote
+        meta.Namespace = "Jira@x#abc";
+        const std::string namespaced = SerializeEntryMeta(meta);
+        CHECK(namespaced.find("\"ns\"") != std::string::npos);
+        EntryMeta back;
+        REQUIRE(ParseEntryMeta(namespaced, back));
+        CHECK(back.Namespace == "Jira@x#abc");
+        REQUIRE(ParseEntryMeta(plain, back));
+        CHECK(back.Namespace.empty());
+        // A non-string "ns" is ignored (read as no namespace), never a crash.
+        REQUIRE(ParseEntryMeta(R"({"url":"https://x/1","file":"a.png","ns":42})", back));
+        CHECK(back.Namespace.empty());
     }
 }

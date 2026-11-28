@@ -15,6 +15,7 @@
 using smatchet::cache_keys::CacheBackendKeyKind;
 using smatchet::cache_keys::DescribeCacheBackendKey;
 using smatchet::cache_keys::IsHeldCacheKey;
+using smatchet::cache_keys::JiraSiteCacheKey;
 using smatchet::cache_keys::LegacyCacheKeyRekeys;
 using smatchet::cache_keys::TrackerCacheBackendKey;
 using smatchet::jira_backends::AddExtra;
@@ -175,4 +176,37 @@ TEST_CASE("IsHeldCacheKey holds a row whose site no live pane uses") {
     CHECK(IsHeldCacheKey("Jira", live));
     CHECK(IsHeldCacheKey("", live));
     CHECK(IsHeldCacheKey("Jira@a.atlassian.net#08168cd80dfd", std::vector<std::string>()));
+}
+
+TEST_CASE("JiraSiteCacheKey keys the Jira site and account whatever tracker is active") {
+    TrackerConfig cfg = JiraConfig("first.atlassian.net", "a@example.com");
+    const std::string jiraKey = TrackerCacheBackendKey(cfg);
+    // The same key the Jira context uses, spelled however the URL arrives.
+    CHECK(JiraSiteCacheKey(cfg, "first.atlassian.net") == jiraKey);
+    CHECK(JiraSiteCacheKey(cfg, "https://First.Atlassian.Net/") == jiraKey);
+
+    // With another tracker showing, the active key changes but the Jira site key does not.
+    cfg.TrackerType = "Plane";
+    CHECK(TrackerCacheBackendKey(cfg) != jiraKey);
+    CHECK(JiraSiteCacheKey(cfg, "first.atlassian.net") == jiraKey);
+    cfg.TrackerType = "GitHub";
+    CHECK(JiraSiteCacheKey(cfg, "first.atlassian.net") == jiraKey);
+}
+
+TEST_CASE("JiraSiteCacheKey separates accounts on one site and inherits the account for an extra site") {
+    TrackerConfig a = JiraConfig("first.atlassian.net", "a@example.com");
+    TrackerConfig b = JiraConfig("first.atlassian.net", "b@example.com");
+    CHECK(JiraSiteCacheKey(a, "first.atlassian.net") == std::string("Jira@first.atlassian.net#") + kHashA);
+    CHECK(JiraSiteCacheKey(b, "first.atlassian.net") == std::string("Jira@first.atlassian.net#") + kHashB);
+
+    JiraBackendInstance extra;
+    extra.Domain = "second.atlassian.net";
+    REQUIRE(AddExtra(a, extra));
+    CHECK(JiraSiteCacheKey(a, "second.atlassian.net") == std::string("Jira@second.atlassian.net#") + kHashA);
+
+    // No account configured: the bare site, no hash.
+    TrackerConfig noAccount = JiraConfig("first.atlassian.net", "");
+    CHECK(JiraSiteCacheKey(noAccount, "first.atlassian.net") == "Jira@first.atlassian.net");
+    // No site: the bare kind.
+    CHECK(JiraSiteCacheKey(a, "") == "Jira");
 }

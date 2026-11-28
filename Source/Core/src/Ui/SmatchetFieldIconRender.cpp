@@ -571,6 +571,16 @@ void SetIconFetchFnForTest(SmatchetFieldIconDiskCache::FetchFn fn) {
     IconFetchFnSlot() = fn ? std::move(fn) : ProductionFetch();
 }
 
+std::size_t PurgeDiskCache() {
+    /* PILLAR2_WORKER_ONLY */ // est-latency: ~50ms — lists and deletes a few hundred small files.
+    const std::string userData = ConfigManager::GetUserDataDirectory();
+    if (userData.empty()) {
+        return 0;
+    }
+    // The directory is not created here: a purge of a cache that was never written has nothing to do.
+    return SmatchetFieldIconDiskCache::PurgeCacheDir(userData + "cache/field_icons/");
+}
+
 bool DrawImagePathOrUrl(AppController& app, const std::string& pathOrUrl, float width, float height) {
     const std::string resolved = app.ResolveFieldIconAssetPath(pathOrUrl);
     if (resolved.empty()) {

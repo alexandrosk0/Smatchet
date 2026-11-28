@@ -26,6 +26,7 @@ namespace fs = ghc::filesystem;
 
 using smatchet::attachments::AttachmentDiskCache;
 using smatchet::attachments::AttachmentRequest;
+using smatchet::attachments::EntryKeyFor;
 using smatchet::attachments::EntryKeyForUrl;
 using smatchet::attachments::FetchedAttachment;
 using smatchet::attachments::LocalAttachment;
@@ -445,4 +446,93 @@ TEST_SUITE("AttachmentDiskCache") {
         }
     }
 #endif
+
+    TEST_CASE("a namespaced entry is served only to its own namespace") {
+        ScopedTempDir dir;
+        AttachmentDiskCache cache(dir.Path());
+        const std::string nsA = "Jira@site.atlassian.net#aaaaaaaaaaaa";
+        const std::string nsB = "Jira@site.atlassian.net#bbbbbbbbbbbb";
+        REQUIRE(cache.Store(nsA, kUrl, "diagram", Bytes("account-a")).has_value());
+
+        LocalAttachment hit;
+        CHECK(cache.Lookup(nsA, kUrl, hit));
+        CHECK(ReadAll(hit.FilePath) == "account-a");
+        CHECK_FALSE(cache.Lookup(nsB, kUrl, hit)); // another account on the same site
+        CHECK_FALSE(cache.Lookup(kUrl, hit));      // the un-namespaced (legacy) view
+
+        // An entry an older build saved without a namespace is not served to a namespaced lookup.
+        REQUIRE(cache.Store(kUrl, "diagram", Bytes("legacy")).has_value());
+        CHECK(cache.Lookup(kUrl, hit));
+        CHECK(ReadAll(hit.FilePath) == "legacy");
+        CHECK(cache.Lookup(nsA, kUrl, hit));
+        CHECK(ReadAll(hit.FilePath) == "account-a");
+        CHECK(fs::exists(fs::path(dir.Path()) / "attachment_cache" / EntryKeyFor(nsA, kUrl)));
+    }
+
+    TEST_CASE("a tampered namespace in entry.json is a miss") {
+        ScopedTempDir dir;
+        AttachmentDiskCache cache(dir.Path());
+        const std::string nsA = "Jira@site.atlassian.net#aaaaaaaaaaaa";
+        REQUIRE(cache.Store(nsA, kUrl, "diagram", Bytes("pixels")).has_value());
+        const fs::path meta = fs::path(dir.Path()) / "attachment_cache" / EntryKeyFor(nsA, kUrl) / "entry.json";
+        std::ofstream(meta.string(), std::ios::trunc)
+            << R"({"url":")" << kUrl << R"(","file":"diagram.png","ns":"Jira@other#zzzzzzzzzzzz"})";
+        LocalAttachment hit;
+        CHECK_FALSE(cache.Lookup(nsA, kUrl, hit));
+    }
+
+    TEST_CASE("ResolveAttachment downloads once per namespace") {
+        ScopedTempDir dir;
+        AttachmentDiskCache cache(dir.Path());
+        int fetches = 0;
+        const auto fetch = [&fetches]() {
+            ++fetches;
+            return FetchResult::Ok(Bytes("pixels"));
+        };
+        AttachmentRequest a = Request();
+        a.Namespace = "Jira@site.atlassian.net#aaaaaaaaaaaa";
+        AttachmentRequest b = Request();
+        b.Namespace = "Jira@site.atlassian.net#bbbbbbbbbbbb";
+        REQUIRE(ResolveAttachment(cache, a, fetch, NoUncachedWrite).has_value());
+        REQUIRE(ResolveAttachment(cache, a, fetch, NoUncachedWrite).has_value());
+        CHECK(fetches == 1);
+        REQUIRE(ResolveAttachment(cache, b, fetch, NoUncachedWrite).has_value());
+        CHECK(fetches == 2);
+        // Offline, another account's copy is not available.
+        AttachmentRequest c = Request(/*offline=*/true);
+        c.Namespace = "Jira@site.atlassian.net#cccccccccccc";
+        const LocalResult miss = ResolveAttachment(cache, c, fetch, NoUncachedWrite);
+        REQUIRE_FALSE(miss.has_value());
+        CHECK(miss.error().Detail == kOfflineText);
+    }
+
+    TEST_CASE("PurgeAll removes every entry and nothing else") {
+        ScopedTempDir dir;
+        AttachmentDiskCache cache(dir.Path());
+        CHECK(cache.PurgeAll() == 0); // nothing to purge yet, no cache folder
+        REQUIRE(cache.Store(kUrl, "a", Bytes("1")).has_value());
+        REQUIRE(cache.Store("ns", kUrl, "a", Bytes("2")).has_value());
+        REQUIRE(cache.Store("https://site.atlassian.net/a/9", "b", Bytes("3")).has_value());
+        const fs::path root = fs::path(dir.Path()) / "attachment_cache";
+        fs::create_directories(root / "not-an-entry");
+        WriteText(root / "stray.txt", "keep");
+        fs::create_directories(fs::path(dir.Path()) / "other_folder");
+
+        CHECK(cache.PurgeAll() == 3);
+        LocalAttachment hit;
+        CHECK_FALSE(cache.Lookup(kUrl, hit));
+        CHECK_FALSE(cache.Lookup("ns", kUrl, hit));
+        CHECK(fs::exists(root / "not-an-entry"));
+        CHECK(fs::exists(root / "stray.txt"));
+        CHECK(fs::exists(fs::path(dir.Path()) / "other_folder"));
+        // The cache works again after a purge.
+        REQUIRE(cache.Store(kUrl, "a", Bytes("4")).has_value());
+        CHECK(cache.Lookup(kUrl, hit));
+    }
+
+    TEST_CASE("UserDataDir reports the folder the cache was built for") {
+        ScopedTempDir dir;
+        AttachmentDiskCache cache(dir.Path());
+        CHECK(cache.UserDataDir() == dir.Path());
+    }
 }

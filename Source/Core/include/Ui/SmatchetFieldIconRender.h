@@ -3,6 +3,7 @@
 #include "SmatchetFieldIconDiskCache.h"
 #include "SmatchetImageTextureCache.h"
 
+#include <cstddef>
 #include <string>
 
 class AppController;
@@ -45,6 +46,13 @@ bool TryGetInlineFieldIconTexture(const AppController& app, const TrackerField& 
  * GET). Pass an empty function to restore the production fetch. Thread-safe.
  */
 void SetIconFetchFnForTest(SmatchetFieldIconDiskCache::FetchFn fn);
+
+/**
+ * Deletes every downloaded field-icon file under `<user data>/cache/field_icons/` (best effort, other files
+ * stay) and returns how many went. Does file I/O: worker only. Textures already resident stay until evicted;
+ * a later request downloads again.
+ */
+std::size_t PurgeDiskCache();
 
 /** Lua / scripting: draw image from URL or resolved local path (see `ResolveFieldIconAssetPath`). */
 bool DrawImagePathOrUrl(AppController& app, const std::string& pathOrUrl, float width, float height);

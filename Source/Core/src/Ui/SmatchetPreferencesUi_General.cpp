@@ -356,8 +356,8 @@ void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
     if (smatchet::ui::BeginDialog(s_recreateDialog, "Delete local database?###RecreateSqliteDbConfirm", nullptr,
                                   ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextWrapped(
-            "This removes cached issues and any queued offline writes stored on this machine. It does not "
-            "delete anything on the tracker. Continue?");
+            "This removes cached issues, downloaded attachment copies and icons, and any queued offline writes "
+            "stored on this machine. It does not delete anything on the tracker. Continue?");
         ImGui::Separator();
         // P2-M16: action-first order + the shared destructive styling, now drawn by the shared footer.
         const bool deleteClicked =

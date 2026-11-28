@@ -23,6 +23,13 @@ namespace cache_keys {
 /// The cache key for the tracker `cfg` currently points at (its TrackerType and live site fields).
 std::string TrackerCacheBackendKey(const TrackerConfig& cfg);
 
+/// The key of the Jira site `domain` (any spelling; an empty or unparsable domain gives the bare "Jira") as
+/// `cfg` uses it: "Jira@<host>#<acct>", whatever tracker is active. The account is the live email, else that
+/// site's instance email, else the first instance's (the same rule TrackerCacheBackendKey applies to the active
+/// site). For data that belongs to a Jira site even while another tracker is showing, such as a downloaded
+/// attachment: it is keyed by site and account, so another account on the same site never reuses the file.
+std::string JiraSiteCacheKey(const TrackerConfig& cfg, const std::string& domain);
+
 /// The one-time move from the legacy kind keys ("Jira", "Jira:<host>", "Plane", "GitHub", "Linear") to the
 /// site keys `cfg` gives them, as (legacy key, site key) pairs. Covers every configured tracker, not only the
 /// active one. A legacy key whose tracker has no configured identity maps to itself and is left out.

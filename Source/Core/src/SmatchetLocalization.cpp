@@ -244,10 +244,10 @@ const TranslationEntry kEntries[] = {
      u8"Supprime définitivement le fichier de cache local et repart d'une base vide."},
     {"prefs.local_data.confirm_title", "Delete local database?", u8"Supprimer la base locale ?"},
     {"prefs.local_data.confirm_body",
-     "This removes cached issues and any queued offline writes stored on this machine. It does not "
-     "delete anything on the tracker. Continue?",
-     u8"Cela supprime les tickets mis en cache et les écritures hors ligne en file sur cet ordinateur. "
-     u8"Rien n'est supprimé sur le suivi. Continuer ?"},
+     "This removes cached issues, downloaded attachment copies and icons, and any queued offline writes "
+     "stored on this machine. It does not delete anything on the tracker. Continue?",
+     u8"Cela supprime les tickets mis en cache, les pièces jointes et icônes téléchargées, et les écritures "
+     u8"hors ligne en file sur cet ordinateur. Rien n'est supprimé sur le suivi. Continuer ?"},
     {"prefs.local_data.confirm_go", "Delete and recreate", u8"Supprimer et recréer"},
     {"toast.local_db_recreated", "Local database recreated; refreshing issues.",
      u8"Base locale recréée ; actualisation des tickets."},

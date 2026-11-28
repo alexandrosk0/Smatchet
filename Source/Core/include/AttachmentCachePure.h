@@ -4,8 +4,9 @@
 // attachment is stored, which entries to evict, and the entry metadata codec. Pure (no I/O, no Logger.h)
 // so every rule is unit-tested bare; AttachmentDiskCache does the file work.
 //
-// Layout: <user data>/attachment_cache/<sha-256 of the URL>/<sanitized file name> plus entry.json. One
-// directory per attachment URL; the URL names the tracker host, so two sites never share an entry.
+// Layout: <user data>/attachment_cache/<entry key>/<sanitized file name> plus entry.json. One directory per
+// attachment URL within a namespace (the Jira site and account the file was downloaded for, see EntryKeyFor):
+// two sites never share an entry, and neither do two accounts on one site.
 
 #include <cstddef>
 #include <cstdint>
@@ -24,8 +25,14 @@ constexpr std::int64_t kEvictionGraceSeconds = 10 * 60;
 /// Longest stored file name, in bytes (the extension is kept when a longer name is shortened).
 constexpr std::size_t kMaxFileNameBytes = 120;
 
-/// Lowercase-hex SHA-256 of `url`: the entry directory name.
+/// Lowercase-hex SHA-256 of `url`: the entry directory name of an un-namespaced entry (the only kind older
+/// builds wrote).
 std::string EntryKeyForUrl(const std::string& url);
+
+/// The entry directory name for `url` within `ns`: SHA-256 of `ns + '\n' + url`, or exactly EntryKeyForUrl when
+/// `ns` is empty. A namespaced key never equals a legacy one, so an entry written by an older build is never
+/// served to a namespaced lookup (the attachment is downloaded once more) and needs no migration.
+std::string EntryKeyFor(const std::string& ns, const std::string& url);
 
 /// True when `name` has the shape EntryKeyForUrl produces (64 lowercase hex digits). Pruning only ever
 /// deletes directories with this shape.
@@ -74,12 +81,14 @@ std::vector<std::string> SelectStaleEntryFiles(const std::vector<EntryFileInfo>&
 std::vector<std::string> SelectEvictions(std::vector<CacheEntryInfo> entries, std::uint64_t capBytes,
                                          std::int64_t nowEpochSec, std::int64_t graceSeconds);
 
-/// What entry.json records: the URL the file came from (a lookup must match it exactly), its MIME type,
-/// and the stored file name.
+/// What entry.json records: the URL the file came from and the namespace it was downloaded for (a lookup must
+/// match both exactly), its MIME type, and the stored file name. `Namespace` is omitted from the JSON when
+/// empty, so an un-namespaced entry is byte-identical to what older builds wrote.
 struct EntryMeta {
     std::string Url;
     std::string Mime;
     std::string FileName;
+    std::string Namespace;
 };
 
 /// "" when the metadata cannot be serialized.

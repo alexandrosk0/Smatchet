@@ -10,6 +10,7 @@
 #include "SmatchetResult.h"
 #include "TrackerError.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -37,13 +38,31 @@ class AttachmentDiskCache {
     explicit AttachmentDiskCache(std::string userDataDir, std::uint64_t capBytes = kCacheCapBytes,
                                  std::int64_t graceSeconds = kEvictionGraceSeconds);
 
-    /// The saved copy of `url`, if there is one, marked as just used. Never touches the network.
-    bool Lookup(const std::string& url, LocalAttachment& out);
+    /// The saved copy of `url` downloaded for namespace `ns`, if there is one, marked as just used. Never
+    /// touches the network. `ns` is the Jira site and account key (JiraSiteCacheKey): a copy saved for one
+    /// account is never served to another, and an entry an older build saved without a namespace is never
+    /// served to a namespaced lookup (it is downloaded again and the old one ages out).
+    bool Lookup(const std::string& ns, const std::string& url, LocalAttachment& out);
+    /// Un-namespaced lookup (`ns` empty).
+    bool Lookup(const std::string& url, LocalAttachment& out) { return Lookup(std::string(), url, out); }
 
-    /// Saves `fetched` for `url` under a sanitized `fileName` (its extension derived from the MIME type
-    /// when the name has none) and returns where it landed.
+    /// Saves `fetched` for `url` in namespace `ns` under a sanitized `fileName` (its extension derived from the
+    /// MIME type when the name has none) and returns where it landed.
+    Result<LocalAttachment, TrackerError> Store(const std::string& ns, const std::string& url,
+                                                const std::string& fileName, const FetchedAttachment& fetched);
+    /// Un-namespaced store (`ns` empty).
     Result<LocalAttachment, TrackerError> Store(const std::string& url, const std::string& fileName,
-                                                const FetchedAttachment& fetched);
+                                                const FetchedAttachment& fetched) {
+        return Store(std::string(), url, fileName, fetched);
+    }
+
+    /// Deletes every cache entry (each `attachment_cache/<64-hex>` directory, whole), whatever its age or
+    /// namespace; anything else in the folder is left alone. Best-effort: an entry a viewer holds open (Windows)
+    /// is logged and skipped. Returns how many entries were removed. Worker only, like every method here.
+    std::size_t PurgeAll();
+
+    /// The directory this cache confines itself under, as passed to the constructor.
+    const std::string& UserDataDir() const { return userDataDir_; }
 
     /// Deletes entries, least recently used first, until the cache fits its cap (SelectEvictions), and first
     /// removes orphaned temp files an interrupted write left inside an entry (SelectStaleEntryFiles).
@@ -60,6 +79,7 @@ class AttachmentDiskCache {
 
 struct AttachmentRequest {
     std::string Url;
+    std::string Namespace; ///< the Jira site + account the download is for; empty for an un-namespaced entry
     std::string FileName;
     bool Offline = false;           ///< the connectivity probe says the tracker is unreachable
     std::string OfflineMissMessage; ///< the error for an attachment never downloaded, when offline

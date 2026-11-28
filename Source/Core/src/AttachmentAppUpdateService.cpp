@@ -14,12 +14,15 @@
 #include <cstdlib>
 #include <fstream>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
 #include <nlohmann/json.hpp>
 
 #include "AttachmentMimeUtils.h"
+#include "CacheBackendKeyPure.h"
 #include "CappedBodyAccumulator.h"
 #include "ConfigManager.h"
 #include "EnvUtil.h"
@@ -300,13 +303,20 @@ bool IsUpdateUnsignedOverrideSet() {
 
 AttachmentAppUpdateService::AttachmentAppUpdateService(IAttachmentAppUpdateDeps& deps) : deps_(deps) {}
 
-smatchet::attachments::AttachmentDiskCache& AttachmentAppUpdateService::AttachmentCache() {
-    // Created on first use: the host may still be setting the user data folder when the service is built.
-    std::call_once(attachmentCacheOnce_, [this]() {
-        attachmentCache_ =
-            std::make_unique<smatchet::attachments::AttachmentDiskCache>(ConfigManager::GetUserDataDirectory());
-    });
-    return *attachmentCache_;
+std::shared_ptr<smatchet::attachments::AttachmentDiskCache> AttachmentAppUpdateService::AttachmentCache() {
+    // Created on first use (the host may still be setting the user data folder when the service is built) and
+    // rebound when the folder moves, so a copy is never read from or written to a stale location.
+    const std::string userDataDir = ConfigManager::GetUserDataDirectory();
+    std::lock_guard<std::mutex> lock(attachmentCacheMutex_);
+    if (!attachmentCache_ || attachmentCache_->UserDataDir() != userDataDir) {
+        attachmentCache_ = std::make_shared<smatchet::attachments::AttachmentDiskCache>(userDataDir);
+    }
+    return attachmentCache_;
+}
+
+std::size_t AttachmentAppUpdateService::PurgeLocalAttachmentCache() {
+    const std::shared_ptr<smatchet::attachments::AttachmentDiskCache> cache = AttachmentCache();
+    return cache->PurgeAll();
 }
 
 Result<smatchet::attachments::LocalAttachment>
@@ -330,12 +340,16 @@ AttachmentAppUpdateService::ResolveLocalAttachment(const std::string& url, const
     }
     smatchet::attachments::AttachmentRequest request;
     request.Url = url;
+    // A saved copy is served only for the Jira site and account it was downloaded for: another account on the
+    // same site must not open this account's file offline.
+    request.Namespace = smatchet::cache_keys::JiraSiteCacheKey(cfg, jiraDomain);
     request.FileName = filename;
     request.Offline = deps_.IsTrackerOffline();
     request.OfflineMissMessage = SmatchetLocalization::T("attachment.unavailable_offline",
                                                          "Not downloaded yet \xE2\x80\x94 available once online");
+    const std::shared_ptr<smatchet::attachments::AttachmentDiskCache> cache = AttachmentCache();
     Result<smatchet::attachments::LocalAttachment, TrackerError> local = smatchet::attachments::ResolveAttachment(
-        AttachmentCache(), request,
+        *cache, request,
         [&cfg, &url, &jiraDomain, &mimeType]() { return FetchAllowlistedAttachment(cfg, url, jiraDomain, mimeType); },
         [&filename](const smatchet::attachments::FetchedAttachment& fetched) {
             return WriteUncachedAttachment(filename, fetched);
