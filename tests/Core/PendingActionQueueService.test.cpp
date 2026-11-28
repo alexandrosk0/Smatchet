@@ -701,3 +701,26 @@ TEST_CASE("PendingActionQueueService replay takes over a foreign claim once its 
     CHECK(rig.Tracker().AddCommentCalls().size() == 1);  // and not found on the tracker, so sent exactly once
     CHECK(rig.Cache().LoadPendingActions().empty());
 }
+
+TEST_CASE("PendingActionQueueService replay: of two passes that read the same expired claim, only the winner checks or "
+          "sends") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    const std::int64_t id = rig.QueueComment("raced", PendingActionState::kPending);
+    rig.Cache().InjectForeignClaim(id, 100000); // expired
+    const std::int64_t staleClaim = rig.Cache().LoadPendingActions()[0].ClaimedAtEpochSec;
+    rig.Tracker().SetIssueComments("ABC-1", {ServerComment("something else", kQueuedAt + 2)});
+    // The other process wins the take-over between this pass's load and its own take-over.
+    // (The first load after the hook is armed is the snapshot refresh; the replay pass's own load is the second.)
+    rig.Cache().RunAfterNextLoadPendingActions([&]() {
+        rig.Cache().RunAfterNextLoadPendingActions(
+            [&]() { REQUIRE(rig.Cache().TakeOverPendingActionClaim(id, staleClaim, 1, "winner")); });
+    });
+    rig.ReplayNow();
+    CHECK(rig.Tracker().FetchIssueCommentsCalls() == 0); // this pass lost: no tracker check, no write
+    CHECK(rig.Tracker().AddCommentCalls().empty());
+    const std::vector<PendingActionRecord> rows = rig.Cache().LoadPendingActions();
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].State == PendingActionState::kSending); // the winner's live claim stands, untouched
+    CHECK(rows[0].LastError == "winner");
+}
