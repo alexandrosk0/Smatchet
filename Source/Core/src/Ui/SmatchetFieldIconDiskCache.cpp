@@ -1,7 +1,7 @@
 #include "SmatchetFieldIconDiskCache.h"
 
 #include "FileIo.h"
-#include "FileTimeSeconds.h"
+#include "ListRegularFiles.h"
 #include "Logger.h"
 #include "SmatchetFieldIconRender_detail.h"
 
@@ -232,20 +232,12 @@ std::size_t PruneCacheDir(const std::string& cacheDir, std::uint64_t capBytes, s
     }
     std::size_t removed = 0;
     try {
-        std::error_code ec;
         std::vector<IconCacheFile> files;
-        for (fs::directory_iterator it(fs::path(cacheDir), ec), end; !ec && it != end; it.increment(ec)) {
-            std::error_code fileEc;
-            if (!it->is_regular_file(fileEc) || fileEc) {
-                continue;
-            }
+        for (const smatchet::filetime::ListedFile& listed : smatchet::filetime::ListRegularFiles(cacheDir)) {
             IconCacheFile f;
-            f.Name = it->path().filename().string();
-            const std::uintmax_t size = it->file_size(fileEc);
-            f.SizeBytes = fileEc ? 0u : static_cast<std::uint64_t>(size);
-            const fs::file_time_type modified = it->last_write_time(fileEc);
-            // An unreadable time counts as "now": a file of unknown age is never aged out by the temp rule.
-            f.ModifiedEpochSec = fileEc ? NowFileClockSeconds() : ToEpochSeconds(modified);
+            f.Name = listed.Name;
+            f.SizeBytes = listed.SizeBytes;
+            f.ModifiedEpochSec = listed.ModifiedEpochSec;
             files.push_back(std::move(f));
         }
         const std::vector<std::string> victims =

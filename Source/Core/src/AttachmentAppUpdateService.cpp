@@ -21,6 +21,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "AttachmentUncachedStore.h"
 #include "AttachmentMimeUtils.h"
 #include "CacheBackendKeyPure.h"
 #include "CappedBodyAccumulator.h"
@@ -50,8 +51,6 @@
 // and AppController.cpp (semantic-version + url helpers). All were used only by the eight methods
 // relocated into this service.
 namespace {
-std::string MakeUniqueTempFilePath(const std::string& filename, const std::string& extension);
-
 std::string NormalizeDomain(const std::string& rawDomain) {
     std::string value = TrimCopyAsciiWhitespace(rawDomain);
     const size_t schemeSep = value.find("://");
@@ -175,74 +174,6 @@ Result<smatchet::attachments::FetchedAttachment, TrackerError> FetchAllowlistedA
     return FetchResult::Ok(std::move(fetched));
 }
 
-// The pre-cache behaviour, kept for when the cache cannot be written (disk full, no user data folder):
-// the attachment still opens from a uniquely named temp file.
-Result<smatchet::attachments::LocalAttachment, TrackerError>
-WriteUncachedAttachment(const std::string& filename, const smatchet::attachments::FetchedAttachment& fetched) {
-    using WriteResult = Result<smatchet::attachments::LocalAttachment, TrackerError>;
-    const std::string filePath = MakeUniqueTempFilePath(filename, ExtensionFromMime(fetched.Mime));
-    std::ofstream ofs(filePath, std::ios::binary);
-    if (!ofs.is_open()) {
-        return WriteResult::Err(TrackerErrorUnknown("Failed to open local temp file."));
-    }
-    ofs.write(fetched.Bytes.data(), static_cast<std::streamsize>(fetched.Bytes.size()));
-    if (!ofs.good()) {
-        ofs.close();
-        std::remove(filePath.c_str()); // don't leak the partially-written temp file on write failure
-        return WriteResult::Err(TrackerErrorUnknown("Failed to write downloaded attachment bytes."));
-    }
-    ofs.close();
-    smatchet::attachments::LocalAttachment local;
-    local.FilePath = filePath;
-    local.Mime = fetched.Mime;
-    return WriteResult::Ok(std::move(local));
-}
-
-std::string GetTempDir() {
-    std::string t = smatchet::env::ReadVar("TEMP");
-    if (!t.empty()) {
-        return t;
-    }
-    t = smatchet::env::ReadVar("TMP");
-    if (!t.empty()) {
-        return t;
-    }
-    return ".";
-}
-
-std::string MakeUniqueTempFilePath(const std::string& filename, const std::string& extension) {
-    // Mix time + thread-id + monotonic counter so concurrent downloads from different threads
-    // cannot collide even when time resolution is coarser than the download rate.
-    static std::atomic<std::uint64_t> s_counter{0};
-    const auto now = std::chrono::system_clock::now().time_since_epoch().count();
-    const std::size_t tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
-    const std::uint64_t unique = static_cast<std::uint64_t>(now) ^ (static_cast<std::uint64_t>(tid) << 16) ^
-                                 s_counter.fetch_add(1, std::memory_order_relaxed);
-    // Sanitized, with our derived extension appended when the caller's name has none.
-    const std::string base = smatchet::attachments::StoredFileName(filename, extension);
-
-    const std::string tempDir = GetTempDir();
-    if (tempDir.empty())
-        return base;
-
-    // Ensure tempDir ends with a path separator.
-    if (tempDir.back() != '/' && tempDir.back() != '\\') {
-        return tempDir + "/" + std::to_string(unique) + "_" + base;
-    }
-    return tempDir + std::to_string(unique) + "_" + base;
-}
-
-std::string TrimAppUpdateText(std::string text) {
-    while (!text.empty() && (text.back() == '\r' || text.back() == '\n' || text.back() == ' ' || text.back() == '\t')) {
-        text.pop_back();
-    }
-    while (!text.empty() &&
-           (text.front() == '\r' || text.front() == '\n' || text.front() == ' ' || text.front() == '\t')) {
-        text.erase(text.begin());
-    }
-    return text;
-}
-
 // SemanticVersion + ParseSemanticVersion/CompareSemanticVersion moved to the cpr-free pure seam
 // SemanticVersionPure.{h,cpp} so the untrusted release-tag parse (CPP_CODE_AUDIT.md #17) can be
 // fuzzed without this service's heavy deps. Aliased in so the call sites below stay unchanged.
@@ -352,7 +283,8 @@ AttachmentAppUpdateService::ResolveLocalAttachment(const std::string& url, const
         *cache, request,
         [&cfg, &url, &jiraDomain, &mimeType]() { return FetchAllowlistedAttachment(cfg, url, jiraDomain, mimeType); },
         [&filename](const smatchet::attachments::FetchedAttachment& fetched) {
-            return WriteUncachedAttachment(filename, fetched);
+            return smatchet::attachments::WriteUncachedAttachment(ConfigManager::GetUserDataDirectory(), filename,
+                                                                  fetched);
         });
     if (!local.has_value()) {
         return LocalResult::Err(local.error().Detail);
@@ -590,7 +522,7 @@ AppUpdateInfo AttachmentAppUpdateService::CheckForAppUpdate(bool includePrerelea
         out.ReleaseTag = tag;
         out.LatestVersion = !tag.empty() && tag.front() == 'v' ? tag.substr(1) : tag;
         out.ReleaseUrl = release.value("html_url", std::string());
-        out.ReleaseNotes = TrimAppUpdateText(release.value("body", std::string()));
+        out.ReleaseNotes = TrimCopyAsciiWhitespace(release.value("body", std::string()));
 
         if (release.contains("assets") && release["assets"].is_array()) {
             for (const auto& asset : release["assets"]) {

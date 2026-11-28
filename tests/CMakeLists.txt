@@ -295,6 +295,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # The attachment disk cache (offline-first S13): its pure rules and the file store.
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentCachePure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentDiskCache.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentUncachedStore.cpp"
         # --- ConnectivityMonitorService (AppController god-object decomposition Phase 3): the
         #     tracker connectivity-probe FSM. UI-thread-only by contract (no mutex) but it owns the
         #     ONE cross-thread handle in the service — the std::async reachability probe future.
@@ -523,6 +524,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # Pure prune / revalidation rules of the icon cache directory.
         Core/SmatchetFieldIconPrunePure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconPrunePure.cpp"
+        # Uncached attachment copies: <user data>/cache/attachment_tmp, owner-only, swept after a day.
+        Core/AttachmentUncachedStore.test.cpp
+        # Pure cache-eviction policy (CacheOverCap, SweepDue, EraseUnusedSince) — header-only.
+        Core/CacheEvictionPolicy.test.cpp
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -1432,6 +1437,7 @@ add_executable(SmatchetTests
     Core/ProjectComponentsCacheService.test.cpp
     Core/ProjectListLookup.test.cpp
     Core/AttachmentCachePure.test.cpp
+    Core/AttachmentUncachedStore.test.cpp
     Core/AttachmentDiskCache.test.cpp
     Core/CappedBodyAccumulator.test.cpp
     Core/TrackerIssueReaderDefaults.test.cpp
@@ -1685,6 +1691,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentAppUpdateService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentCachePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentDiskCache.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentUncachedStore.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
     # Slice D of docs/plans/http-fault-injection.md — the retry+classify engine
