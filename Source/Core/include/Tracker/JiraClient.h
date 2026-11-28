@@ -98,6 +98,8 @@ class JiraClient : public ITrackerBackend,
     FetchIssueTransitions(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
     bool SupportsIssueTransitions() const override { return true; }
+    /// Jira's editmeta follows the issue's workflow status and the caller's permissions on that issue.
+    bool IssueEditMetaVariesPerIssue(const std::string& /*issueKeyOrId*/) const override { return true; }
 
     /** GET /rest/api/3/issue/{issueKey}/watchers — Ok = watcher display names / account ids. */
     Result<std::vector<TrackerUser>, TrackerError> FetchIssueWatchers(const TrackerConfig& cfg,

@@ -21,8 +21,12 @@ constexpr const char* kProjectComponentsKind = "project_components";
 constexpr const char* kUsersKind = "users";
 constexpr const char* kUsersKey = "all";
 /// Edit permissions learned per issue type; key = the lower-cased issue type, payload =
-/// SerializeEditPermissions.
+/// SerializeEditPermissions. Legacy: the type was shared across projects, so one issue's answer narrowed the
+/// whole type. Rows of this kind are only deleted (once per backend), never read or written.
 constexpr const char* kEditMetaTypeKind = "editmeta_type";
+/// Edit permissions learned per (project, issue type); key = EditMetaScopePure's BuildScopeStoreKey, payload =
+/// SerializeEditPermissions. Written only from a representative result (at least one editable field).
+constexpr const char* kEditMetaProjectTypeKind = "editmeta_project_type";
 /// The projects visible to the credentials (the project picker's "All projects"); one row per backend
 /// under kProjectsKey, payload = SerializeProjects.
 constexpr const char* kProjectsKind = "projects";

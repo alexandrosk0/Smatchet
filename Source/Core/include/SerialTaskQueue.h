@@ -6,7 +6,12 @@
 // idle queue starts one. Tasks are expected to handle their own errors: one that throws ends its drain,
 // and the rest run on the next post. Thread-safe. Lifetime: the owner must outlive every drain it started.
 // `Flush` blocks until every posted task has run (tests, shutdown); never call it from a render path.
+//
+// The "a drain is running" latch is owned by a LaunchClaim, so it is released exactly once however the
+// launch ends: the drain ran, the launch threw, or the launcher dropped the closure unrun (shutdown). A
+// dropped drain leaves its tasks queued; the next Post relaunches, and `Flush` runs them on the caller.
 
+#include "LaunchClaim.h"
 #include "ScopeExit.h"
 
 #include <chrono>
@@ -14,6 +19,7 @@
 #include <deque>
 #include <exception>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -29,7 +35,7 @@ class SerialTaskQueue {
     SerialTaskQueue& operator=(const SerialTaskQueue&) = delete;
 
     /// Any thread. Returns the launch failure message, or "". On a failed launch the task stays queued and
-    /// runs after the next successful post.
+    /// runs after the next successful post (or on `Flush`).
     std::string Post(std::function<void()> task) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -39,15 +45,21 @@ class SerialTaskQueue {
             }
             draining_ = true;
         }
+        std::shared_ptr<LaunchClaim> claim;
         try {
-            launch_([this]() { Drain(); });
+            claim = std::make_shared<LaunchClaim>([this]() { ReleaseDrain_(); });
+            launch_([this, claim]() {
+                if (claim->TakeForRun()) {
+                    Drain();
+                }
+            });
         } catch (const std::exception& ex) {
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                draining_ = false;
-            }
-            idle_.notify_all();
+            ReleaseUnlaunchedDrain_(claim);
             return std::string(ex.what());
+        } catch (...) {
+            // Core logic tier: the latch must not stick; the unknown exception is the caller's to handle.
+            ReleaseUnlaunchedDrain_(claim);
+            throw;
         }
         return std::string();
     }
@@ -73,16 +85,30 @@ class SerialTaskQueue {
     }
 
   private:
+    void ReleaseDrain_() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            draining_ = false;
+        }
+        idle_.notify_all();
+    }
+
+    // The launch ended without a drain running: release through the claim, or directly when the claim
+    // itself could not be built.
+    void ReleaseUnlaunchedDrain_(const std::shared_ptr<LaunchClaim>& claim) {
+        if (claim) {
+            claim->ReleaseIfUntaken();
+        } else {
+            ReleaseDrain_();
+        }
+    }
+
     void Drain() {
         // Released here only when a task throws; the normal exit releases it under the lock.
         bool released = false;
         ScopeExit release([this, &released]() {
             if (!released) {
-                {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    draining_ = false;
-                }
-                idle_.notify_all();
+                ReleaseDrain_();
             }
         });
         for (;;) {

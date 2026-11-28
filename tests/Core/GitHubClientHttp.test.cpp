@@ -53,6 +53,13 @@ nlohmann::json SinglePageSearch() {
 
 } // namespace
 
+TEST_CASE("GitHubClient::IssueEditMetaVariesPerIssue — only a commit row differs from its siblings") {
+    GitHubClient client("http://bogus.invalid", "pat");
+    CHECK(client.IssueEditMetaVariesPerIssue("o/r@a1b2c3d4"));
+    CHECK_FALSE(client.IssueEditMetaVariesPerIssue("o/r#7"));
+    CHECK_FALSE(client.IssueEditMetaVariesPerIssue(""));
+}
+
 TEST_CASE("GitHub probe — /rate_limit status → reachability-kind classification matrix") {
     JiraCatalogHttpFixture fx;
     GitHubClient client("http://bogus.invalid", "ctor-pat");

@@ -47,4 +47,10 @@ class ITrackerFieldCatalog {
 
     /// True when FetchIssueTransitions is implemented; callers skip the request (and its log) otherwise.
     virtual bool SupportsIssueTransitions() const { return false; }
+
+    /// True when FetchIssueEditMeta's answer for `issueKeyOrId` can differ from another issue of the same
+    /// project and issue type (a Done issue lists nothing editable; a commit row is read-only). Callers then
+    /// fetch that issue's own edit metadata; when false one fetch per project and type stands for every
+    /// issue, so a per-row fetch is skipped. Default false: only a client whose answer varies overrides it.
+    virtual bool IssueEditMetaVariesPerIssue(const std::string& /*issueKeyOrId*/) const { return false; }
 };

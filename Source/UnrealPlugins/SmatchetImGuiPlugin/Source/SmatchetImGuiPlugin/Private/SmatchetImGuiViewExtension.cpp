@@ -5,6 +5,7 @@
 #include "RHICommandList.h"
 #include "DynamicRHI.h"
 #include "RenderGraphBuilder.h"
+#include "SceneView.h"
 #include "Misc/EngineVersionComparison.h"
 #include "SmatchetImGuiHostC.h"
 #include "HAL/PlatformTime.h"

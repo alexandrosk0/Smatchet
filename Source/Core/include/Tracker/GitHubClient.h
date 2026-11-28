@@ -103,6 +103,8 @@ class GitHubClient : public ITrackerBackend,
     // caches a positive result and stops re-fetching per UI frame.
     Result<std::unordered_map<std::string, bool>, TrackerError>
     FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
+    /// Only a commit row differs (read-only history); every other GitHub issue answers the same.
+    bool IssueEditMetaVariesPerIssue(const std::string& issueKeyOrId) const override;
 
     // === ITrackerCollaboration overrides (issue-comments PR-A) ===
     // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend clients; owner=tracker-backend; revisit=never)
