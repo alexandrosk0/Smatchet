@@ -165,6 +165,9 @@ void IssueTransitionsCacheService::EnsureLearnedLoaded(const std::string& backen
             }
             std::lock_guard<std::mutex> lock(learnedMutex_);
             for (auto& kv : parsed) {
+                if (learnedErased_.count(kv.first) != 0) {
+                    continue; // erased after this load read its row: the stored copy is obsolete
+                }
                 learned_.emplace(std::move(kv.first), std::move(kv.second)); // never overwrite a newer edge
             }
         });
@@ -204,8 +207,10 @@ IssueTransitionsCacheService::RememberLearned(const std::string& backendKey, con
         // Every option was a global or looped self-target, so this status has no other move now. An
         // edge learned from an earlier fetch is obsolete and must not be offered offline.
         {
+            const std::string memoryKey = LearnedMemoryKey(backendKey, learnedKey);
             std::lock_guard<std::mutex> lock(learnedMutex_);
-            learned_.erase(LearnedMemoryKey(backendKey, learnedKey));
+            learned_.erase(memoryKey);
+            learnedErased_.insert(memoryKey);
         }
         if (store) {
             store->DeleteLookup(backendKey, smatchet::workflow::kLearnedTransitionsKind, learnedKey);
@@ -213,8 +218,10 @@ IssueTransitionsCacheService::RememberLearned(const std::string& backendKey, con
         return LearnOutcome::Erased;
     }
     {
+        const std::string memoryKey = LearnedMemoryKey(backendKey, learnedKey);
         std::lock_guard<std::mutex> lock(learnedMutex_);
-        learned_[LearnedMemoryKey(backendKey, learnedKey)] = remembered;
+        learned_[memoryKey] = remembered;
+        learnedErased_.erase(memoryKey);
     }
     if (store) {
         store->UpsertLookup(backendKey, smatchet::workflow::kLearnedTransitionsKind, learnedKey,

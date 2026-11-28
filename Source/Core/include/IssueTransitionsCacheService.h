@@ -17,6 +17,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Config/ConfigManager.h"
@@ -84,6 +85,10 @@ class IssueTransitionsCacheService {
     mutable std::mutex learnedMutex_;
     /// LearnedMemoryKey(backend, "project|type|from") -> target statuses. Guarded by learnedMutex_.
     std::unordered_map<std::string, std::vector<TrackerFieldOption>> learned_;
+    /// Memory keys of edges erased this session because a fetch showed their from-status has no other move.
+    /// The saved-workflow load may still be holding the row it read before the erase; it must not bring the edge
+    /// back. Cleared per key when the edge is learned again. Guarded by learnedMutex_.
+    std::unordered_set<std::string> learnedErased_;
     /// Backends whose stored rows were loaded (or are loading).
     smatchet::offline::StoreLoadLatch learnedLoad_;
 };

@@ -88,6 +88,22 @@ class ThrowOnceLookupCache : public FakeLookupCache {
     bool thrown_ = false;
 };
 
+// A store whose first LoadLookups runs a hook after it has read its rows and before it returns them: the window in
+// which the saved-workflow load holds a row that another thread then makes obsolete.
+class HookedLoadLookupCache : public FakeLookupCache {
+  public:
+    std::function<void()> AfterRead;
+    std::vector<LookupCacheRow> LoadLookups(const std::string& backendKey, const std::string& kind) override {
+        std::vector<LookupCacheRow> rows = FakeLookupCache::LoadLookups(backendKey, kind);
+        if (AfterRead) {
+            const std::function<void()> hook = std::move(AfterRead);
+            AfterRead = nullptr;
+            hook();
+        }
+        return rows;
+    }
+};
+
 } // namespace
 
 TEST_SUITE("IssueTransitionsCacheService") {
@@ -674,5 +690,83 @@ TEST_SUITE("IssueTransitionsCacheService from-status and max age") {
         }
         CHECK(deps.Fake()->FetchIssueTransitionsCalls() == 1);
         CHECK(svc.GetAvailableTransitions(q).fromLive);
+    }
+}
+
+TEST_SUITE("IssueTransitionsCacheService learned-edge tombstones") {
+
+    TrackerFieldOption GlobalSelf() {
+        TrackerFieldOption self = Option("1", "To Do");
+        self.ReachableFromAnyStatus = true;
+        return self;
+    }
+
+    TEST_CASE("an edge erased while the saved-workflow load holds its row is not brought back by the load") {
+        FakeEditMetaDeps deps;
+        deps.Fake()->SetSupportsIssueTransitions(true);
+        // The only option from "1" is the global self-target: the edge learned earlier ("1 -> 3") is obsolete.
+        deps.Fake()->SetIssueTransitions("PROJ-1", {GlobalSelf()});
+        const auto store = std::make_shared<HookedLoadLookupCache>();
+        store->UpsertLookup("Jira", smatchet::workflow::kLearnedTransitionsKind, "PROJ|bug|1",
+                            smatchet::workflow::SerializeTransitionTargets({Option("3", "Done")}));
+        deps.LookupCacheImpl = store;
+        IssueTransitionsCacheService svc(deps);
+        // The load has read the row; before it applies it, a fetch for another issue in the same status erases the
+        // edge.
+        store->AfterRead = [&svc]() { svc.EnsureIssueTransitionsLoaded(Query("PROJ-1")); };
+
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-2"));
+
+        LookupCacheRow row;
+        CHECK_FALSE(store->TryGetLookup("Jira", smatchet::workflow::kLearnedTransitionsKind, "PROJ|bug|1", row));
+        deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+        const TransitionsLookup offline = svc.GetAvailableTransitions(Query("PROJ-3"));
+        CHECK_FALSE(offline.fromLearned);
+        CHECK(offline.options.empty());
+    }
+
+    TEST_CASE("an edge learned again after an erase is offered again") {
+        FakeEditMetaDeps deps;
+        deps.Fake()->SetSupportsIssueTransitions(true);
+        const auto store = std::make_shared<FakeLookupCache>();
+        deps.LookupCacheImpl = store;
+        IssueTransitionsCacheService svc(deps);
+
+        deps.Fake()->SetIssueTransitions("PROJ-1", {Option("3", "Done")});
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1"));
+        deps.Fake()->SetIssueTransitions("PROJ-1", {GlobalSelf()});
+        svc.InvalidateIssueTransitions("PROJ-1");
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1")); // erases "1 -> 3"
+        deps.Fake()->SetIssueTransitions("PROJ-1", {Option("5", "Closed")});
+        svc.InvalidateIssueTransitions("PROJ-1");
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1")); // learns "1 -> 5"
+
+        deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+        const TransitionsLookup offline = svc.GetAvailableTransitions(Query("PROJ-2"));
+        CHECK(offline.fromLearned);
+        REQUIRE(offline.options.size() == 1u);
+        CHECK(offline.options[0].Id == "5");
+    }
+
+    TEST_CASE("an erase does not touch another status's edge or another backend's") {
+        FakeEditMetaDeps deps;
+        deps.Fake()->SetSupportsIssueTransitions(true);
+        const auto store = std::make_shared<HookedLoadLookupCache>();
+        store->UpsertLookup("Jira", smatchet::workflow::kLearnedTransitionsKind, "PROJ|bug|2",
+                            smatchet::workflow::SerializeTransitionTargets({Option("4", "Review")}));
+        store->UpsertLookup("Jira", smatchet::workflow::kLearnedTransitionsKind, "PROJ|bug|1",
+                            smatchet::workflow::SerializeTransitionTargets({Option("3", "Done")}));
+        deps.LookupCacheImpl = store;
+        deps.Fake()->SetIssueTransitions("PROJ-1", {GlobalSelf()});
+        IssueTransitionsCacheService svc(deps);
+        store->AfterRead = [&svc]() { svc.EnsureIssueTransitionsLoaded(Query("PROJ-1")); };
+
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-2"));
+
+        deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+        const TransitionsLookup other = svc.GetAvailableTransitions(Query("PROJ-3", "2"));
+        CHECK(other.fromLearned);
+        REQUIRE(other.options.size() == 1u);
+        CHECK(other.options[0].Id == "4");
     }
 }
