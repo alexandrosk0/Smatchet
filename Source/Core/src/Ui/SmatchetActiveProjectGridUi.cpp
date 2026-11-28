@@ -104,8 +104,12 @@ void LogCatalogCueChange(GridPane& pane, GridCatalogCue cue, const GridCatalogCo
     switch (cue) {
     case GridCatalogCue::None:
         pane.catalogCueLoggedError.clear();
-        LOG_INFO("Grid pane='%s' field catalog resolves %zu of %zu field column(s); cells are editable again.", id,
-                 coverage.ResolvedFieldColumns, coverage.FieldColumns);
+        if (coverage.FieldColumns == 0) {
+            LOG_INFO("Grid pane='%s' view shows no field columns; the catalog read-only cue is cleared.", id);
+        } else {
+            LOG_INFO("Grid pane='%s' field catalog resolves %zu of %zu field column(s); cells are editable again.", id,
+                     coverage.ResolvedFieldColumns, coverage.FieldColumns);
+        }
         break;
     case GridCatalogCue::Loading:
         LOG_INFO("Grid pane='%s' cells are read-only for a catalog reason: waiting for its field catalog fetch "
@@ -124,7 +128,7 @@ void LogCatalogCueChange(GridPane& pane, GridCatalogCue cue, const GridCatalogCo
         break;
     case GridCatalogCue::Unavailable:
         // Offline, every sync retry flips Loading -> Unavailable with the same error: WARN once per distinct error.
-        if (status.LastError == pane.catalogCueLoggedError) {
+        if (!status.LastError.empty() && status.LastError == pane.catalogCueLoggedError) {
             LOG_INFO("Grid pane='%s' field catalog still not available (%s).", id, status.LastError.c_str());
         } else {
             pane.catalogCueLoggedError = status.LastError;
