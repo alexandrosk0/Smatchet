@@ -8,7 +8,7 @@
 # ui-test-home: opt-out — launches no exe itself; the exec'd jira driver runs the shared preamble and isolates the profile.
 set -euo pipefail
 export UI_TEST_FILTER="${UI_TEST_FILTER:-OfflineConflictModalPanes}"
-export SMATCHET_TEST_JIRA_BACKEND_FIXTURE="${SMATCHET_TEST_JIRA_BACKEND_FIXTURE:-tests/fixtures/jira_backend/basic-grid.json}"
+export SMATCHET_TEST_JIRA_BACKEND_FIXTURE="${SMATCHET_OFFLINE_CONFLICT_FIXTURE:-tests/fixtures/jira_backend/basic-grid.json}"
 export SMATCHET_UITEST_WITH_LOCAL_CACHE=1
 # The wrapped driver passes no --timeout, so --spawn would default to 40 s for a 600-frame run; the
 # group's ~20 cases can run past that under software GL in CI.
