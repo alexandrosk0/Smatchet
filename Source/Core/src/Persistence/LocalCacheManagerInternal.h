@@ -8,6 +8,7 @@
 #include "Persistence/SqliteOpenRecoveryPure.h"
 
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <sqlite3.h>
 
 #include <chrono>
 #include <cstdint>
@@ -18,14 +19,12 @@
 #include <type_traits>
 #include <utility>
 
-// `INSERT ... RETURNING` (StepReturningId below) needs SQLite 3.35. The bundled amalgamation is far newer; this stops a
-// build pointed at an older system SQLite. The constructor also checks the version the process actually loaded.
-static_assert(SQLITE_VERSION_NUMBER >= 3035000, "LocalCacheManager needs SQLite 3.35 or newer (INSERT ... RETURNING)");
-
 namespace lcm_detail {
 
-/// Oldest SQLite the cache runs on (`INSERT ... RETURNING`). Checked against the loaded library at open.
+/// Oldest SQLite the cache runs on (`INSERT ... RETURNING`, see StepReturningId). Checked against the library the
+/// process loaded when a file is opened, and against the one we build with right here.
 constexpr int kMinSqliteVersionNumber = 3035000;
+static_assert(SQLITE_VERSION_NUMBER >= kMinSqliteVersionNumber, "LocalCacheManager needs SQLite 3.35 or newer");
 
 /// Total wall-clock budget for retrying one write transaction on a transient BUSY/LOCKED (issue #2045). The attempt
 /// count alone bounds nothing a user can feel: each attempt may sit for the whole armed busy_timeout (5 s) before
