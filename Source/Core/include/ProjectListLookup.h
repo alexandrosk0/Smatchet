@@ -33,12 +33,14 @@ struct ProjectListOutcome {
 /// because it was still inside its lifetime (ServedFresh).
 inline bool IsSavedProjectCopy(const ProjectListOutcome& outcome) { return outcome.FromSaved || outcome.ServedFresh; }
 
-/// Offline: the saved list, with no request. Online: the live list, saved on success; on a failure the
+/// Offline: the saved list, with no request. Online: the live list, saved on success (a list over
+/// `lookup_max_stored_projects` is returned but not saved: the saved row would be a prefix); on a failure the
 /// saved list (when there is one) plus the error. A null `store` or an empty `backendKey` saves and
 /// restores nothing. Never throws.
 /// Online with `ttlSec` > 0: a saved list younger than `ttlSec` (at `nowEpochSec`, 0 = the real clock) is
 /// returned as is, without a request (`ServedFresh`; not `FromSaved`, not `Failed`; still a saved copy, see
-/// IsSavedProjectCopy). An empty saved list is never served that way. `ttlSec` 0 always asks the tracker.
+/// IsSavedProjectCopy). An empty saved list, or one at the stored cap (it may be a prefix),
+/// is never served that way. `ttlSec` 0 always asks the tracker.
 ProjectListOutcome LoadProjectList(ITrackerConnectivity& connectivity, const std::shared_ptr<ILookupCache>& store,
                                    const std::string& backendKey, bool offline, std::int64_t ttlSec = 0,
                                    std::int64_t nowEpochSec = 0);
