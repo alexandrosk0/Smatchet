@@ -79,10 +79,6 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     bool TryGetTicket(const std::string& backendKey, const std::string& ticketId, CachedTicket& out) override;
     void DeleteTicket(const std::string& backendKey, const std::string& ticketId) override;
     std::vector<CachedTicket> GetAllTickets(const std::string& backendKey) override;
-    /** Streaming overload — calls `fn` once per fully-populated ticket instead of materialising the
-     *  entire result set. Avoids the O(N) in-memory join for bulk-sync paths (§4.3). Off-interface
-     *  (not on ISyncCache — no seam consumer uses it). */
-    void ForEachTicket(const std::string& backendKey, const std::function<void(CachedTicket&&)>& fn);
     std::vector<std::string> GetAllTicketIds(const std::string& backendKey) override;
     // Delta-sync metadata (ISyncCache): the `ticket_sync_meta` table, one row per (backend_key, ticket).
     std::unordered_map<std::string, TicketSyncMeta> GetTicketSyncMeta(const std::string& backendKey) override;
@@ -90,7 +86,7 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
                                  const std::vector<TicketSyncMeta>& metas, bool overwriteOlder = false) override;
     /** Rewrites a row WITHOUT touching its sync meta. For a save that does not change which tracker version the
      *  row stands for (a local field edit or enrichment of the same remote copy); `SaveTicket` would drop the
-     *  meta and force the next delta sync to refetch the ticket. Off-interface, like ForEachTicket. */
+     *  meta and force the next delta sync to refetch the ticket. Off-interface (not on ISyncCache). */
     void SaveTicketKeepingSyncMeta(const std::string& backendKey, const CachedTicket& ticket);
     std::vector<CachedTicket> GetTicketsByIds(const std::string& backendKey,
                                               const std::vector<std::string>& ids) override;

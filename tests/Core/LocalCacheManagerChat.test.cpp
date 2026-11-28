@@ -154,13 +154,10 @@ TEST_CASE("LocalCacheManager AI chat: ClearChatMessages removes EVERY row includ
 
 TEST_CASE("LocalCacheManager AI chat: hydration latency microbench (Phase 3.10 Pillar 2 evidence)") {
     // Phase 3.10 of ai-chat-claude-desktop-parity. Drives the dominant cost of
-    // the first-frame hydration path (`LocalCacheManager::LoadChatMessages` against
-    // 200 pre-existing rows — the inline-vs-async cutoff in
-    // `HydrateFromConfigOnce`). Time per iteration is printed via MESSAGE so it
-    // shows up in `ctest --output-on-failure` even when the case passes; the
-    // measured number is recorded next to the production call site in
-    // `SmatchetAiAssistantUi.cpp::HydrateFromConfigOnce` as the Pillar 2 budget
-    // annotation. NOT a CI regression gate — the SmatchetTests rig has no
+    // the hydration read (`LocalCacheManager::LoadChatMessages` against 200
+    // pre-existing rows). `HydrateFromConfigOnce` runs it on a worker. Time per
+    // iteration is printed via MESSAGE so it shows up in `ctest --output-on-failure`
+    // even when the case passes. NOT a CI regression gate — the SmatchetTests rig has no
     // wall-clock budget. Run on the dev box to refresh the annotation when the
     // hydration path changes.
     SqliteMemFixture fix;
@@ -192,7 +189,7 @@ TEST_CASE("LocalCacheManager AI chat: hydration latency microbench (Phase 3.10 P
     // needs lowering. In-memory SQLite measures sub-millisecond on modern dev
     // boxes; on-disk WAL is typically 2-5x slower but still well under budget.
 #if defined(__SANITIZE_ADDRESS__) || defined(SMATCHET_ASAN)
-    CHECK(perIterUs < 69400.0);  // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
+    CHECK(perIterUs < 69400.0); // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
 #else
     CHECK(perIterUs < 6940.0);
 #endif
