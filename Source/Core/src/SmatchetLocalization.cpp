@@ -766,6 +766,9 @@ const TranslationEntry kEntries[] = {
      "Unavailable while this session uses a cache file from an older location. Restart Smatchet to move it first.",
      u8"Indisponible tant que cette session utilise un fichier de cache d'un ancien emplacement. Redémarrez "
      u8"Smatchet pour le déplacer d'abord."},
+    {"prefs.local_db.last_rebuilt", "The database was damaged and has been rebuilt. The damaged copy is kept at %s.",
+     u8"La base de données était endommagée et a été reconstruite. La copie endommagée est conservée à "
+     u8"l'emplacement %s."},
     {"prefs.local_db.using_legacy",
      "This session is using the cache file left at %s because it could not be copied to the current location just "
      "now. Restart Smatchet to move it.",

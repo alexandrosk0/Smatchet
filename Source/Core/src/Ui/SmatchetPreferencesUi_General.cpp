@@ -334,6 +334,13 @@ void DrawLocalCacheLocationLines(const smatchet::persistence::LocalCacheStatus& 
                                                "Copied from the cache file left at %s. That file was not changed.",
                                                status.ImportedFrom.c_str()));
     }
+    if (status.LastRecovery.Rebuilt) {
+        // Kept after the one-time notice is gone: the damaged copy still holds whatever could not be carried over.
+        ImGui::TextWrapped("%s", SmatchetLocalization::Format(
+                                     "prefs.local_db.last_rebuilt",
+                                     "The database was damaged and has been rebuilt. The damaged copy is kept at %s.",
+                                     status.LastRecovery.QuarantinedPath.c_str()));
+    }
     for (std::size_t i = 0; i < status.OtherLegacyCaches.size(); ++i) {
         ImGui::TextWrapped("%s", SmatchetLocalization::Format(
                                      "prefs.local_db.other_caches",

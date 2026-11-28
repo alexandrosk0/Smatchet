@@ -2231,6 +2231,8 @@ class AppController : public IAppThreading,
         std::string LegacyPath;
         std::string ImportedFrom;
         std::vector<std::string> OtherLegacyCaches;
+        smatchet::persistence::LocalCacheRecoveryReport
+            Recovery;         ///< a rebuild of this launch, else the last one recorded
         bool Aborted = false; ///< shutdown began: nothing is published
         std::size_t LegacyDropped = 0;
         bool QueueChangedBySweep = false;

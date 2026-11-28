@@ -336,6 +336,14 @@ AppController::OpenStartupCacheOnWorker_(const StartupCacheOpenRequest& request)
             outcome.Aborted = true;
             return outcome;
         }
+        outcome.Recovery = cache->RecoveryReport();
+        if (!outcome.Recovery.Rebuilt) {
+            try {
+                (void)cache->ReadLastRecoveryReport(outcome.Recovery); // an earlier launch's rebuild, for Preferences
+            } catch (const std::exception& ex) {
+                LOG_WARN("AppController: the last recovery record could not be read: %s", ex.what());
+            }
+        }
         outcome.OpenedCache = std::move(cache);
         outcome.Opened = true;
         return outcome;
@@ -458,7 +466,10 @@ void AppController::FinishStartupCacheOpen_(StartupCacheOpenOutcome outcome, boo
     status.LegacyPath = outcome.LegacyPath;
     status.ImportedFrom = outcome.ImportedFrom;
     status.OtherLegacyCaches = outcome.OtherLegacyCaches;
-    SetLocalCacheStatus_(status, outcome.SessionOnly);
+    status.LastRecovery = outcome.Recovery;
+    // A session-only start and a rebuild of this launch are told to the user once; a recovery from an earlier launch is
+    // only shown in Preferences.
+    SetLocalCacheStatus_(status, outcome.SessionOnly || (outcome.Recovery.Rebuilt && outcome.Recovery.FromThisLaunch));
 
     if (outcome.LegacyDropped > 0 && offlineQueue_) {
         char buf[384];

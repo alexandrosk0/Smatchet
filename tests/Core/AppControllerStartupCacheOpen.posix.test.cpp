@@ -242,3 +242,27 @@ TEST_CASE("startup cache open: a recreate is refused while an older location's f
     CHECK(recreate.error().find("older location") != std::string::npos);
     CHECK_FALSE(app.IsLocalCacheRecreating()); // the refusal lowered the gate again
 }
+
+TEST_CASE("startup cache open: a damaged file is rebuilt, and the user is told once where the damaged copy is") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TempDb db("startup_damaged.sqlite");
+    {
+        std::ofstream out(db.Path, std::ios::binary);
+        out << std::string(8192, 'x'); // not a database
+    }
+    AppController app;
+    app.StartStartupCacheOpenForTest(db.Path, kKey);
+    REQUIRE(app.WaitForLocalCacheOpen(std::chrono::seconds(20)));
+
+    const smatchet::persistence::LocalCacheStatus status = app.GetLocalCacheStatus();
+    CHECK(status.State == LocalCacheState::Ready);
+    REQUIRE(status.LastRecovery.Rebuilt);
+    CHECK(status.LastRecovery.FromThisLaunch);
+    const std::string quarantined = status.LastRecovery.QuarantinedPath;
+    CHECK(ghc::filesystem::exists(quarantined));
+    const std::string notice = app.TakeLocalCacheStartupNotice();
+    CHECK(notice.find(quarantined) != std::string::npos);
+    CHECK(app.TakeLocalCacheStartupNotice().empty()); // once
+    CHECK(app.LocalCacheEnqueueBlock() == CacheEnqueueBlock::None);
+    std::remove(quarantined.c_str());
+}

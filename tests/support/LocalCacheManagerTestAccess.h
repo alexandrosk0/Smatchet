@@ -24,4 +24,11 @@ struct LocalCacheManagerTestAccess {
         });
         return value;
     }
+    /// Runs the post-rebuild salvage from `quarantinedMain` (and its -wal, which may not exist) into `mgr`.
+    static void Salvage(LocalCacheManager& mgr, const std::string& quarantinedMain, const std::string& quarantinedWal,
+                        const std::string& reason) {
+        WithGuard(mgr, [&](const LocalCacheManager::ConnGuard& guard) {
+            mgr.SalvageFromQuarantine_(guard, quarantinedMain, quarantinedWal, reason);
+        });
+    }
 };
