@@ -14,6 +14,7 @@
 #include "GridContextDepsAdapter.h"
 #include "LeftViewHistoryService.h"
 #include "LocalCacheManager.h"
+#include "LookupPayloadsPure.h"
 #include "Persistence/LocalCacheStatusPure.h"
 #include "Tracker/IssueDraft.h"
 
@@ -292,4 +293,23 @@ TEST_CASE("startup cache open: the left-view history saved by an earlier run sho
     CHECK(PumpUntil(app, [&]() { return !app.LeftViewHistory()->Rows().empty(); }));
     REQUIRE(app.LeftViewHistory()->Rows().size() == 1);
     CHECK(app.LeftViewHistory()->Rows()[0].issueKey == "ABC-1");
+}
+
+TEST_CASE("startup cache open: the saved user roster is seeded once the cache is published") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TempDb db("startup_users.sqlite");
+    {
+        LocalCacheManager seed(db.Path);
+        std::vector<TrackerUser> users(1);
+        users[0].AccountId = "acc-1";
+        users[0].DisplayName = "Ana";
+        REQUIRE(seed.UpsertLookup(kKey, smatchet::lookup::kUsersKind, smatchet::lookup::kUsersKey,
+                                  smatchet::lookup::SerializeUsers(users)));
+    }
+    AppController app;
+    app.StartStartupCacheOpenForTest(db.Path, kKey); // the UI's first-draw seed would have found no cache yet
+    REQUIRE(app.WaitForLocalCacheOpen(std::chrono::seconds(20)));
+    CHECK(PumpUntil(app, [&]() { return !app.GetAvailableUsers().empty(); }));
+    REQUIRE(app.GetAvailableUsers().size() == 1);
+    CHECK(app.GetAvailableUsers()[0].DisplayName == "Ana");
 }

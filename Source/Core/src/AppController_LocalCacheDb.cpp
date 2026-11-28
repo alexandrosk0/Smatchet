@@ -507,6 +507,10 @@ void AppController::FinishStartupCacheOpen_(StartupCacheOpenOutcome outcome, boo
     }
     RefreshLocalDataAsync();
     RereadOtherPanesFromCache_();
+    // The saved user roster is read once per launch by the UI, on its first draw, which is before this open published
+    // the cache: an offline start would show no roster for the whole session. Seed it now (a live roster is never
+    // overridden).
+    SeedAvailableUsersFromStoreAsync();
 
     const TicketSyncService* const focusedSync = focusedContext().ticketSync_.get();
     for (TicketSyncService* svc : CollectPaneSyncServices_()) {
@@ -553,6 +557,7 @@ void AppController::StartStartupCacheOpenForTest(const std::string& dbPath, cons
     legacyCacheCandidates_ = legacyCandidates;
     WireCoreServices();
     initLeftViewHistory_(); // as InitConfig does: its first load runs while the cache is still opening
+    focusedContext().SetCacheBackendKey(cacheKey);
     StartupCacheOpenRequest request;
     request.TargetPath = dbPath;
     request.LegacyCandidates = legacyCandidates;
