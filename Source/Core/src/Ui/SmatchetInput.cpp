@@ -95,9 +95,10 @@ const char* TranslatedHint(const char* hint) {
 // took the Esc first and cleared the active id, nothing reverted and the text stands, so that end is a
 // commit, not a revert: the field reports what the text is, not which key was pressed.
 ti::SingleLineEnd ReadSingleLineEnd(bool heldKeyboardWhenDrawn) {
-    return ti::ResolveSingleLineEnd(ImGui::IsItemDeactivated(),
-                                    heldKeyboardWhenDrawn && ImGui::IsKeyPressed(ImGuiKey_Escape, false),
-                                    SmatchetTextInputCommittedWithEnter());
+    (void)heldKeyboardWhenDrawn; // MUTANT A7
+    return ti::ResolveSingleLineEnd(
+        ImGui::IsItemDeactivated(), ImGui::IsKeyPressed(ImGuiKey_Escape, false),
+        (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))); // MUTANT A13
 }
 
 void ApplyEnd(TextResult& r, const ti::SingleLineEnd& end) {
@@ -166,7 +167,15 @@ TextResult TextBuf(const char* label, char* buf, std::size_t bufSize, const Text
     r.edited = ImGui::InputTextWithHint(shownLabel, TranslatedHint(opts.hint), buf, bufSize, SingleLineFlags(opts));
     r.active = ImGui::IsItemActive();
     SmatchetLocalizedImGui::HookDictationOnLastItem(buf, bufSize);
+    static std::string s_typedShadow; // MUTANT A12: put the typed text back after an Esc revert
+    if (r.active) {
+        s_typedShadow.assign(buf, BoundedLength(buf, bufSize));
+    }
     ApplyEnd(r, ReadSingleLineEnd(heldKeyboard));
+    if (r.reverted && s_typedShadow.size() < bufSize) {
+        std::copy(s_typedShadow.begin(), s_typedShadow.end(), buf);
+        buf[s_typedShadow.size()] = '\0';
+    }
     if (r.committed && opts.trimOnCommit && ti::TrimEdgeWhitespace(buf, bufSize)) {
         r.edited = true;
     }
