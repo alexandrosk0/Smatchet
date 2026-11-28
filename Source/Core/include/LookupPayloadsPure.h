@@ -57,7 +57,9 @@ std::string SerializeEditPermissions(const std::unordered_map<std::string, bool>
 bool ParseEditPermissions(const std::string& json, std::unordered_map<std::string, bool>& out);
 
 /// A JSON array of {id, key, name}, at most MaxStoredProjects() entries. "" when the result would exceed
-/// kMaxProjectsPayloadBytes (the caller then stores nothing).
+/// kMaxProjectsPayloadBytes (the caller then stores nothing). A longer list is cut to its first
+/// MaxStoredProjects() entries: a caller that stores the result must first refuse a list over that cap
+/// (ProjectListLookup does), or the prefix reads back as the complete list.
 std::string SerializeProjects(const std::vector<RemoteProject>& projects);
 
 /// Inverse of SerializeProjects. False on a parse error or a non-array; never throws. Entries with

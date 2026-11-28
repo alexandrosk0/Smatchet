@@ -7,6 +7,7 @@
 #include "FakeLookupCache.h"
 #include "ITrackerConnectivity.h"
 #include "LookupPayloadsPure.h"
+#include "ScopedLimits.h"
 
 #include <doctest/doctest.h>
 
@@ -231,5 +232,70 @@ TEST_SUITE("ProjectListLookup") {
         CHECK_FALSE(outcome.ServedFresh);
         CHECK_FALSE(IsSavedProjectCopy(outcome));
         REQUIRE(outcome.Projects.size() == 1u);
+    }
+
+    TEST_CASE("a live list over the stored cap is returned whole but never saved; the older complete row stays") {
+        smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.LookupMaxStoredProjects = 100; });
+        auto store = std::make_shared<FakeLookupCache>();
+        SaveList(*store, "Jira", {Project("OLD", "Old")});
+        REQUIRE(store->UpsertCalls.load() == 1);
+
+        ScriptedConnectivity conn;
+        for (int i = 0; i < 101; ++i) {
+            conn.Projects.push_back(Project("P" + std::to_string(i), "Project"));
+        }
+        const ProjectListOutcome live = LoadProjectList(conn, store, "Jira", /*offline=*/false);
+
+        CHECK_FALSE(live.Failed);
+        CHECK(live.Projects.size() == 101u); // the user still sees every project this session
+        CHECK(store->UpsertCalls.load() == 1);
+
+        // The next offline session gets the older complete list, not a 100-project prefix.
+        ScriptedConnectivity offlineSession;
+        const ProjectListOutcome offline = LoadProjectList(offlineSession, store, "Jira", /*offline=*/true);
+        REQUIRE(offline.Projects.size() == 1u);
+        CHECK(offline.Projects[0].key == "OLD");
+    }
+
+    TEST_CASE("a list exactly at the cap is saved, but the lifetime shortcut will not serve it") {
+        smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.LookupMaxStoredProjects = 100; });
+        auto store = std::make_shared<FakeLookupCache>();
+        store->StampEpochSec = 1000;
+        ScriptedConnectivity first;
+        for (int i = 0; i < 100; ++i) {
+            first.Projects.push_back(Project("P" + std::to_string(i), "Project"));
+        }
+        REQUIRE_FALSE(LoadProjectList(first, store, "Jira", false).Failed);
+        REQUIRE(store->UpsertCalls.load() == 1);
+
+        // Inside its lifetime, but at the cap: it may be a truncated copy, so the tracker is asked.
+        ScriptedConnectivity again;
+        again.Projects = first.Projects;
+        const ProjectListOutcome outcome = LoadProjectList(again, store, "Jira", false, /*ttlSec=*/600, /*now=*/1500);
+        CHECK(again.Calls == 1);
+        CHECK_FALSE(outcome.ServedFresh);
+
+        // Offline there is nothing better: the saved copy is shown, as a saved copy.
+        ScriptedConnectivity offlineConn;
+        const ProjectListOutcome offline = LoadProjectList(offlineConn, store, "Jira", true, 600, 1500);
+        CHECK(offlineConn.Calls == 0);
+        CHECK(offline.FromSaved);
+        CHECK(offline.Projects.size() == 100u);
+    }
+
+    TEST_CASE("a saved list one under the cap is still served inside its lifetime") {
+        smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.LookupMaxStoredProjects = 100; });
+        auto store = std::make_shared<FakeLookupCache>();
+        store->StampEpochSec = 1000;
+        std::vector<RemoteProject> ninetyNine;
+        for (int i = 0; i < 99; ++i) {
+            ninetyNine.push_back(Project("P" + std::to_string(i), "Project"));
+        }
+        SaveList(*store, "Jira", ninetyNine);
+        ScriptedConnectivity conn;
+        const ProjectListOutcome outcome = LoadProjectList(conn, store, "Jira", false, 600, 1500);
+        CHECK(conn.Calls == 0);
+        CHECK(outcome.ServedFresh);
+        CHECK(outcome.Projects.size() == 99u);
     }
 }
