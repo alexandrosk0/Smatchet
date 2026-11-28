@@ -1333,7 +1333,13 @@ void AppController::InvalidateIssueEditMeta(const std::string& backendKey, const
     editMeta_->InvalidateIssueEditMeta(backendKey, issueId);
 }
 
-void AppController::PruneEditMetaCacheToActiveTickets() { editMeta_->PruneEditMetaCacheToActiveTickets(); }
+void AppController::PruneEditMetaCacheToActiveTickets() {
+    editMeta_->PruneEditMetaCacheToActiveTickets();
+    // The live transitions map is bounded by the same roster; a no-op under its cap.
+    if (transitions_) {
+        transitions_->PruneLiveToActiveTickets();
+    }
+}
 
 void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker) {
     // The same warm fills the per-project component options, so each row's components editor has them.

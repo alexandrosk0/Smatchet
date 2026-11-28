@@ -4,7 +4,7 @@
 - **Priority**: P3
 - **Date**: 2026-11-25
 - **Observed on**: independent review of the agent-layer bump 75e1728 -> 4334c2b (the-unwilling-agentic-bunch#23, the plan CI-proof gate). Latent: nothing has fired yet.
-- **Status**: open
+- **Status**: in progress — fixed in the-unwilling-agentic-bunch#27 (a failed commit-statuses read prints UNDECIDED and holds the poll); applied once that reaches the host with the next agent-layer bump.
 
 ## What happened
 
