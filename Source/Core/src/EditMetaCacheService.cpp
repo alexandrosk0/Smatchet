@@ -4,6 +4,7 @@
 
 #include "EditMetaScopePure.h"
 #include "IEditMetaDeps.h"
+#include "LaunchClaim.h"
 #include "ILookupCache.h"
 #include "ITrackerBackend.h"
 #include "ITrackerFieldCatalog.h" // full def: FetchIssueEditMeta, IssueEditMetaVariesPerIssue
@@ -180,6 +181,7 @@ void EditMetaCacheService::WarmIssueTypeEditMetaWorker(const std::vector<ScopeCa
     for (const ScopeCandidates& scope : scopes) {
         bool promoted = false;
         bool triedAll = true;
+        bool failedAny = false;
         for (std::size_t i = 0; i < scope.IssueIds.size(); ++i) {
             if (deps_.IsShuttingDown()) {
                 return;
@@ -192,16 +194,16 @@ void EditMetaCacheService::WarmIssueTypeEditMetaWorker(const std::vector<ScopeCa
                 --extraFetches;
             }
             // Fire-and-forget warmup: a failed fetch is not surfaced and the issue stays optimistic. A tracker that
-            // went offline ends the whole warm; any other failure (a deleted or restricted issue) ends only this
-            // scope, so one bad ticket never keeps the scopes after it from being warmed.
+            // went offline ends the whole warm; any other failure (a deleted or restricted issue) only skips that
+            // candidate, so one bad ticket keeps neither its siblings nor the scopes after it from being warmed.
             const VoidResult loaded = LoadIssueEditMeta(backend, backendKey, scope.IssueIds[i], scope.IssueTypeKey,
                                                         &trackerCfgForWorker, LoadMode::ScopeSuffices);
             if (!loaded) {
                 if (smatchet::offline::IsOfflineState(deps_.TrackerConnectivity())) {
                     return;
                 }
-                triedAll = false; // not "no representative result": no backoff, the next warm tries again
-                break;
+                failedAny = true; // not "no representative result": no backoff, the next warm tries again
+                continue;
             }
             std::lock_guard<std::mutex> lock(editMetaMutex_);
             if (FindScopeLoaded(scopeEditMeta_, backendKey, scope.Project, scope.IssueTypeKey) != nullptr) {
@@ -209,7 +211,7 @@ void EditMetaCacheService::WarmIssueTypeEditMetaWorker(const std::vector<ScopeCa
                 break;
             }
         }
-        if (!promoted && triedAll) {
+        if (!promoted && triedAll && !failedAny) {
             // Every candidate answered, none with an editable field: ask again in half an hour, not every warm.
             const std::string scopeKey = smatchet::editmeta::BuildScopeStoreKey(scope.Project, scope.IssueTypeKey);
             std::lock_guard<std::mutex> lock(editMetaMutex_);
@@ -419,27 +421,121 @@ VoidResult EditMetaCacheService::EnsureIssueEditMetaLoadedFor(const std::shared_
 bool EditMetaCacheService::AnsweredFromCache(const std::string& backendKey, const std::string& issueId,
                                              const std::string* project, const std::string& issueTypeKey,
                                              bool variesPerIssue, LoadMode mode) const {
+    if (mode == LoadMode::Refresh) {
+        return false; // a refresh always asks the tracker; the entry it replaces keeps answering meanwhile
+    }
     std::lock_guard<std::mutex> lock(editMetaMutex_);
     if (FindLoaded(issueEditMeta_, backendKey, issueId) != nullptr) {
         return true;
     }
     // A scope entry fetched this session stands in for the issue (the field-edit path), and for a backend whose
     // answer does not vary per issue even on the focused-row warm. A restored one does not: it keeps answering
-    // CanEdit* offline, but a reachable tracker is asked. A refresh always asks.
+    // CanEdit* offline, but a reachable tracker is asked.
     const IssueEditMetaCache* scopeMeta =
         project != nullptr ? FindScopeLoaded(scopeEditMeta_, backendKey, *project, issueTypeKey) : nullptr;
     const bool scopeStandsIn = mode == LoadMode::ScopeSuffices || (mode == LoadMode::IssueOwn && !variesPerIssue);
     return scopeMeta != nullptr && scopeMeta->live && scopeStandsIn;
 }
 
+bool EditMetaCacheService::TryBeginIssueFetchLocked(const std::string& key, LoadMode mode, FetchTicket& out) {
+    if (mode != LoadMode::Refresh && issueFetchInFlight_.find(key) != issueFetchInFlight_.end()) {
+        return false;
+    }
+    out.Key = key;
+    out.Gen = ++nextFetchGen_;
+    issueFetchInFlight_[key] = out.Gen; // a Refresh replaces the running fetch's generation: that fetch is superseded
+    return true;
+}
+
+bool EditMetaCacheService::IssueFetchCurrentLocked(const FetchTicket& ticket) const {
+    const auto it = issueFetchInFlight_.find(ticket.Key);
+    return it != issueFetchInFlight_.end() && it->second == ticket.Gen;
+}
+
+void EditMetaCacheService::ReleaseIssueFetch(const FetchTicket& ticket) {
+    std::lock_guard<std::mutex> lock(editMetaMutex_);
+    const auto it = issueFetchInFlight_.find(ticket.Key);
+    if (it != issueFetchInFlight_.end() && it->second == ticket.Gen) {
+        issueFetchInFlight_.erase(it);
+    }
+}
+
+EditMetaCacheService::FetchResult EditMetaCacheService::FetchEditMeta(ITrackerFieldCatalog* catalog,
+                                                                      const TrackerConfig& cfg,
+                                                                      const std::string& issueId) {
+    FetchResult result;
+    if (catalog != nullptr) {
+        auto metaResult = catalog->FetchIssueEditMeta(cfg, issueId);
+        result.Ok = static_cast<bool>(metaResult);
+        if (result.Ok) {
+            result.Cache.fieldCanEdit = std::move(metaResult.value());
+        } else {
+            result.Error = metaResult.error().Detail;
+        }
+    }
+    // Only mark loaded after a successful fetch; on failure an empty map with loaded=true made
+    // CanEditFieldForIssue deny every field (missing keys) instead of staying optimistic offline.
+    result.Cache.loaded = result.Ok;
+    result.Cache.live = result.Ok;
+    if (!result.Ok) {
+        result.Cache.retryAfter =
+            std::chrono::steady_clock::now() + std::chrono::seconds(smatchet::offline::kLookupRetryAfterSeconds);
+    }
+    return result;
+}
+
+bool EditMetaCacheService::StoreFetchResult(const FetchTicket& ticket, const std::string& backendKey,
+                                            const std::string& issueId, const std::string* project,
+                                            const std::string& issueTypeKey, bool variesPerIssue,
+                                            const FetchResult& fetched, bool promote, bool& scopeUnchanged) {
+    std::lock_guard<std::mutex> lock(editMetaMutex_);
+    if (!IssueFetchCurrentLocked(ticket)) {
+        // A newer fetch (Refresh) or an Invalidate retired this one: its answer is not stored, so it can neither
+        // overwrite the newer answer nor bring back an entry the caller just dropped.
+        return true;
+    }
+    issueFetchInFlight_.erase(ticket.Key);
+    if (!fetched.Ok) {
+        // A failed fetch never replaces what is already loaded (Pillar 6); it only records the backoff.
+        IssueEditMetaCache& slot = issueEditMeta_[backendKey][issueId];
+        if (!slot.loaded) {
+            slot = fetched.Cache;
+        }
+        return false;
+    }
+    // Where the answer cannot vary per issue the scope entry serves every issue, so none is kept per row.
+    if (!(promote && !variesPerIssue)) {
+        issueEditMeta_[backendKey][issueId] = fetched.Cache;
+    }
+    if (promote && project != nullptr) {
+        IssueEditMetaCache& scopeEntry = scopeEditMeta_[backendKey][*project][issueTypeKey];
+        // A live entry that already says the same needs no new save (arrowing through rows of one scope).
+        scopeUnchanged = scopeEntry.loaded && scopeEntry.live && scopeEntry.fieldCanEdit == fetched.Cache.fieldCanEdit;
+        scopeEntry = fetched.Cache;
+    }
+    return false;
+}
+
 VoidResult EditMetaCacheService::LoadIssueEditMeta(const std::shared_ptr<ITrackerBackend>& backend,
                                                    const std::string& backendKey, const std::string& issueId,
                                                    const std::string& issueTypeKey, const TrackerConfig* configSnapshot,
-                                                   LoadMode mode) {
+                                                   LoadMode mode, const FetchTicket* started) {
+    FetchTicket ticket;
+    bool haveTicket = false;
+    if (started != nullptr) {
+        ticket = *started;
+        haveTicket = true;
+    }
+    // Releases the registration on every exit, a throw included; a no-op once superseded or already released.
+    smatchet::ScopeExit releaseTicket([this, &ticket, &haveTicket]() {
+        if (haveTicket) {
+            ReleaseIssueFetch(ticket);
+        }
+    });
     if (!backend || issueId.empty()) {
         return VoidOk();
     }
-    const ITrackerFieldCatalog* const catalog = backend->FieldCatalog();
+    ITrackerFieldCatalog* const catalog = backend->FieldCatalog();
     const bool variesPerIssue = catalog != nullptr && catalog->IssueEditMetaVariesPerIssue(issueId);
     std::string project;
     const bool hasScope = ScopeProjectFor(issueId, issueTypeKey, variesPerIssue, project);
@@ -450,52 +546,32 @@ VoidResult EditMetaCacheService::LoadIssueEditMeta(const std::shared_ptr<ITracke
     if (smatchet::offline::IsOfflineState(deps_.TrackerConnectivity())) {
         return VoidResult::Err("Tracker is offline; edit permissions were not refreshed.");
     }
-    const TrackerConfig cfg = configSnapshot ? *configSnapshot : ConfigManager::Load();
-    std::unordered_map<std::string, bool> meta;
-    std::string fetchError;
-    bool ok = false;
-    if (catalog != nullptr) {
-        auto metaResult = backend->FieldCatalog()->FetchIssueEditMeta(cfg, issueId);
-        ok = static_cast<bool>(metaResult);
-        if (ok) {
-            meta = std::move(metaResult.value());
-        } else {
-            fetchError = metaResult.error().Detail;
+    if (!haveTicket) {
+        std::lock_guard<std::mutex> lock(editMetaMutex_);
+        if (!TryBeginIssueFetchLocked(InFlightKey(backendKey, issueId), mode, ticket)) {
+            return VoidOk(); // this issue is being fetched already: it stays as it is until that answer lands
         }
+        haveTicket = true;
     }
-
-    IssueEditMetaCache cache;
-    // Only mark loaded after a successful fetch; on failure an empty map with loaded=true made
-    // CanEditFieldForIssue deny every field (missing keys) instead of staying optimistic offline.
-    cache.loaded = ok;
-    cache.live = ok;
-    if (ok) {
-        cache.fieldCanEdit = std::move(meta);
-    } else {
-        cache.retryAfter =
-            std::chrono::steady_clock::now() + std::chrono::seconds(smatchet::offline::kLookupRetryAfterSeconds);
-    }
+    const TrackerConfig cfg = configSnapshot ? *configSnapshot : ConfigManager::Load();
+    const FetchResult fetched = FetchEditMeta(catalog, cfg, issueId);
+    const bool ok = fetched.Ok;
     // Only a representative answer (an editable field) speaks for the scope: one uneditable issue must not
     // narrow its siblings. The others keep their own entry.
-    const bool promote = ok && hasScope && smatchet::editmeta::IsRepresentativeEditPermissions(cache.fieldCanEdit);
+    const bool promote =
+        ok && hasScope && smatchet::editmeta::IsRepresentativeEditPermissions(fetched.Cache.fieldCanEdit);
     bool scopeUnchanged = false;
-    {
-        std::lock_guard<std::mutex> lock(editMetaMutex_);
-        // Where the answer cannot vary per issue the scope entry serves every issue, so none is kept per row.
-        if (!(promote && !variesPerIssue)) {
-            issueEditMeta_[backendKey][issueId] = cache;
-        }
-        if (promote) {
-            IssueEditMetaCache& scopeEntry = scopeEditMeta_[backendKey][project][issueTypeKey];
-            // A live entry that already says the same needs no new save (arrowing through rows of one scope).
-            scopeUnchanged = scopeEntry.loaded && scopeEntry.live && scopeEntry.fieldCanEdit == cache.fieldCanEdit;
-            scopeEntry = cache;
-        }
-    }
+    const bool stale = StoreFetchResult(ticket, backendKey, issueId, hasScope ? &project : nullptr, issueTypeKey,
+                                        variesPerIssue, fetched, promote, scopeUnchanged);
+    const std::string& fetchError = fetched.Error;
+    const IssueEditMetaCache& cache = fetched.Cache;
 
     if (!ok) {
         LOG_WARN("EditMetaCacheService: editmeta fetch failed issue=%s err=%s", issueId.c_str(), fetchError.c_str());
         return VoidResult::Err(fetchError);
+    }
+    if (stale) {
+        return VoidOk(); // retired while in flight: not a failure, and nothing to store or announce
     }
     if (promote && !scopeUnchanged) {
         PostScopeSave(backendKey, project, issueTypeKey, cache.fieldCanEdit); // queued: no SQLite on this thread
@@ -515,9 +591,9 @@ VoidResult EditMetaCacheService::RefreshIssueEditMeta(const std::string& issueId
 VoidResult EditMetaCacheService::RefreshIssueEditMetaFor(const std::shared_ptr<ITrackerBackend>& backend,
                                                          const std::string& backendKey, const std::string& issueId,
                                                          const std::string& issueTypeKey) {
-    // The issue's own entry goes; the scope entry stays, so it still answers if this fetch fails, and a
-    // successful representative one replaces it.
-    InvalidateIssueEditMetaFor(backendKey, issueId);
+    // Nothing is dropped up front: the issue's own entry and its scope keep answering while this fetch runs, a
+    // failed fetch leaves them as they are, and a successful one replaces them. Beginning it supersedes any
+    // fetch of this issue still running.
     return LoadIssueEditMeta(backend, backendKey, issueId, issueTypeKey, nullptr, LoadMode::Refresh);
 }
 
@@ -534,6 +610,9 @@ void EditMetaCacheService::InvalidateIssueEditMetaFor(const std::string& backend
     if (backendIt != issueEditMeta_.end()) {
         backendIt->second.erase(issueId);
     }
+    // A fetch still running for this issue started before the change that made the caller invalidate: its
+    // answer is stale and is dropped when it returns.
+    issueFetchInFlight_.erase(InFlightKey(backendKey, issueId));
 }
 
 void EditMetaCacheService::PruneEditMetaCacheToActiveTickets() {
@@ -600,6 +679,7 @@ void EditMetaCacheService::WarmIssueEditMetaAsync(const std::string& issueId) {
     }
     const std::string backendKey = deps_.CacheBackendKey();
     const std::string inFlightKey = InFlightKey(backendKey, issueId);
+    FetchTicket ticket;
     {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
         const auto backendIt = issueEditMeta_.find(backendKey);
@@ -629,25 +709,32 @@ void EditMetaCacheService::WarmIssueEditMetaAsync(const std::string& issueId) {
                 return;
             }
         }
-        if (!issueEditMetaWarmupInFlight_.insert(inFlightKey).second) {
+        if (!TryBeginIssueFetchLocked(inFlightKey, LoadMode::IssueOwn, ticket)) {
             return;
         }
     }
-    const TrackerConfig warmupTrackerCfg = ConfigManager::Load();
+    // From here the registration is released exactly once, whether the task runs (LoadIssueEditMeta releases it),
+    // is dropped unrun (shutdown), or the launch throws: a later frame can always try again.
+    std::shared_ptr<smatchet::LaunchClaim> claim;
     try {
-        deps_.LaunchBackgroundTask([this, backend, backendKey, issueId, issueTypeKey, inFlightKey, warmupTrackerCfg]() {
-            // Clear the in-flight marker on every exit, a throw included, so a later frame can retry.
-            smatchet::ScopeExit clearInFlight([this, &inFlightKey]() {
-                std::lock_guard<std::mutex> lock(editMetaMutex_);
-                issueEditMetaWarmupInFlight_.erase(inFlightKey);
+        claim = std::make_shared<smatchet::LaunchClaim>([this, ticket]() { ReleaseIssueFetch(ticket); });
+        const TrackerConfig warmupTrackerCfg = ConfigManager::Load();
+        deps_.LaunchBackgroundTask(
+            [this, backend, backendKey, issueId, issueTypeKey, ticket, warmupTrackerCfg, claim]() {
+                if (!claim->TakeForRun()) {
+                    return;
+                }
+                // Best-effort async warmup: ignore fetch failure (issue stays optimistic) — discard VoidResult.
+                LoadIssueEditMeta(backend, backendKey, issueId, issueTypeKey, &warmupTrackerCfg, LoadMode::IssueOwn,
+                                  &ticket);
             });
-            // Best-effort async warmup: ignore fetch failure (issue stays optimistic) — discard VoidResult.
-            LoadIssueEditMeta(backend, backendKey, issueId, issueTypeKey, &warmupTrackerCfg, LoadMode::IssueOwn);
-        });
     } catch (const std::exception& ex) {
         LOG_WARN("EditMetaCacheService: editmeta warmup for %s did not start: %s", issueId.c_str(), ex.what());
-        std::lock_guard<std::mutex> lock(editMetaMutex_);
-        issueEditMetaWarmupInFlight_.erase(inFlightKey);
+        if (claim) {
+            claim->ReleaseIfUntaken();
+        } else {
+            ReleaseIssueFetch(ticket);
+        }
     }
 }
 

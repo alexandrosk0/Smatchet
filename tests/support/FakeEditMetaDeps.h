@@ -19,8 +19,10 @@
 #include "ILookupCache.h"
 #include "ITrackerBackend.h"
 
+#include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -55,8 +57,12 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     /// Flip RunOnRealThread=true for the TSan race case: the task then runs on a real
     /// std::thread captured in LaunchedThreads (tests join them before fixture teardown).
     bool RunOnRealThread = false;
-    std::vector<std::thread> LaunchedThreads;
-    int LaunchBackgroundTaskCalls = 0;
+    /// Destroy every launched task unrun, as AppController::LaunchBackgroundTask does once shutdown has begun.
+    /// Wins over RunOnRealThread.
+    bool DropTasks = false;
+    std::vector<std::thread> LaunchedThreads; ///< guarded by launchMutex_ while tasks can still be launched
+    /// Atomic: the real-thread cases launch from several threads at once (warm worker, scope-save drains).
+    std::atomic<int> LaunchBackgroundTaskCalls{0};
 
     ~FakeEditMetaDeps() override { JoinLaunchedThreads(); }
 
@@ -66,12 +72,22 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     /// Join any real-thread tasks. Tests call this explicitly in the race case before asserting
     /// final state; the destructor also calls it as a backstop.
     void JoinLaunchedThreads() {
-        for (auto& t : LaunchedThreads) {
-            if (t.joinable()) {
-                t.join();
+        // A joined worker may itself launch another (a scope-save drain): swap out a batch, join it, repeat.
+        for (;;) {
+            std::vector<std::thread> batch;
+            {
+                std::lock_guard<std::mutex> lock(launchMutex_);
+                batch.swap(LaunchedThreads);
+            }
+            if (batch.empty()) {
+                return;
+            }
+            for (auto& t : batch) {
+                if (t.joinable()) {
+                    t.join();
+                }
             }
         }
-        LaunchedThreads.clear();
     }
 
     // --- IEditMetaDeps overrides --------------------------------------------------------------
@@ -84,7 +100,11 @@ class FakeEditMetaDeps : public IEditMetaDeps {
 
     void LaunchBackgroundTask(std::function<void()> task) override {
         ++LaunchBackgroundTaskCalls;
+        if (DropTasks) {
+            return;
+        }
         if (RunOnRealThread) {
+            std::lock_guard<std::mutex> lock(launchMutex_);
             LaunchedThreads.emplace_back(std::move(task));
         } else {
             task(); // inline-synchronous: deterministic logic coverage
@@ -109,6 +129,9 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     void RequestDeferredLiveTrackerBackendSuccessNotify() const override { ++DeferredNotifyCalls; }
 
     TrackerConnectivityState TrackerConnectivity() const override { return ConnectivityImpl; }
+
+  private:
+    std::mutex launchMutex_;
 };
 
 } // namespace smatchet_tests

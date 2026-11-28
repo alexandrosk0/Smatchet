@@ -524,12 +524,6 @@ class ParkingEditMetaDeps : public FakeEditMetaDeps {
     }
 };
 
-// Drops every launched task unrun, as LaunchBackgroundTask does once shutdown has begun.
-class DroppingEditMetaDeps : public FakeEditMetaDeps {
-  public:
-    void LaunchBackgroundTask(std::function<void()> /*task*/) override { ++LaunchBackgroundTaskCalls; }
-};
-
 const std::unordered_map<std::string, bool> kEditable = {{"summary", true}, {"labels", true}};
 const std::unordered_map<std::string, bool> kReadOnly = {{"summary", false}, {"labels", false}};
 
@@ -678,32 +672,46 @@ TEST_CASE("EditMetaCacheService: a warm spends at most 8 extra candidate fetches
           smatchet::editmeta::kMaxScopesPerWarm + smatchet::editmeta::kMaxExtraCandidateFetchesPerWarm);
 }
 
-TEST_CASE("EditMetaCacheService: a warm fetch that fails ends only its scope and records no backoff") {
+TEST_CASE("EditMetaCacheService: a failing candidate is skipped, its sibling covers the scope") {
     FakeEditMetaDeps deps;
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story")); // a deleted or restricted issue
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "story"));
     deps.ActiveTicketsImpl.push_back(MakeTicket("XYZ-1", "story")); // another scope
     deps.Fake()->SetIssueEditMetaFailure("ABC-1", "HTTP 404");
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-2", {{"summary", true}, {"labels", false}});
     deps.Fake()->SetIssueEditMetaSuccess("XYZ-1", {{"summary", true}, {"labels", false}});
     EditMetaCacheService svc(deps);
 
     svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
-    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u); // ABC-1 failed; XYZ's scope was still warmed
-    CHECK_FALSE(svc.CanEditFieldForIssueWithType("Jira", "XYZ-9", "labels", nullptr, "story"));
 
-    // A failure is not "no representative result": the next warm tries ABC's scope again, and only that.
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 3u); // ABC-1 failed, ABC-2 filled ABC, XYZ-1 filled XYZ
+    CHECK_FALSE(svc.CanEditFieldForIssueWithType("Jira", "ABC-9", "labels", nullptr, "story"));
+    CHECK_FALSE(svc.CanEditFieldForIssueWithType("Jira", "XYZ-9", "labels", nullptr, "story"));
+}
+
+TEST_CASE("EditMetaCacheService: a scope whose candidates all fail records no backoff") {
+    FakeEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "story"));
+    deps.Fake()->SetIssueEditMetaFailure("ABC-1", "HTTP 404");
+    deps.Fake()->SetIssueEditMetaFailure("ABC-2", "HTTP 403");
+    EditMetaCacheService svc(deps);
+
     svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
-    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 3u);
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig()); // failures are not "no representative": retried now
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 4u);
 }
 
 namespace {
 
-// Reachable for the first query (the fetch's own offline gate), down afterwards: the tracker drops mid-warm.
-class DropsAfterFirstGateDeps : public FakeEditMetaDeps {
+// Reachable except for its second query: the fetch's own offline gate is the first, the warm's check after a failed
+// fetch the second. The tracker "drops" exactly there, so only the warm's early exit keeps it from going on.
+class DropsAtSecondQueryDeps : public FakeEditMetaDeps {
   public:
     TrackerConnectivityState TrackerConnectivity() const override {
-        return ++Queries > 1 ? TrackerConnectivityState::TransportDown
-                             : TrackerConnectivityState::AuthenticatedReachable;
+        return ++Queries == 2 ? TrackerConnectivityState::TransportDown
+                              : TrackerConnectivityState::AuthenticatedReachable;
     }
     mutable int Queries = 0;
 };
@@ -711,14 +719,15 @@ class DropsAfterFirstGateDeps : public FakeEditMetaDeps {
 } // namespace
 
 TEST_CASE("EditMetaCacheService: a warm that finds the tracker offline after a failed fetch stops there") {
-    DropsAfterFirstGateDeps deps;
+    DropsAtSecondQueryDeps deps;
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
     deps.ActiveTicketsImpl.push_back(MakeTicket("XYZ-1", "story"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("QRS-1", "story"));
     deps.Fake()->SetDefaultIssueEditMetaFailure("HTTP 503");
     EditMetaCacheService svc(deps);
 
     svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
-    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u); // the second scope is left for the next warm
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u); // the later scopes are left for the next warm
 }
 
 TEST_CASE("EditMetaCacheService: legacy per-type rows are deleted once and never read") {
@@ -793,7 +802,8 @@ TEST_CASE("EditMetaCacheService: scope saves run in order off the calling thread
 }
 
 TEST_CASE("EditMetaCacheService::FlushScopeSaves runs a save whose drain was dropped") {
-    DroppingEditMetaDeps deps;
+    FakeEditMetaDeps deps;
+    deps.DropTasks = true;
     const auto store = std::make_shared<FakeLookupCache>();
     deps.LookupCacheImpl = store;
     deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
@@ -853,4 +863,129 @@ TEST_CASE("EditMetaCacheService: a refetch that says the same does not queue ano
     svc.WarmIssueEditMetaAsync("ABC-2"); // its own fetch (Jira varies per issue), same answer
     CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
     CHECK(store->UpsertCalls.load() == 1);
+}
+
+// ---------------------------------------------------------------------------
+// EM-3: fetch generations. A Refresh supersedes the fetch it overtakes, an Invalidate retires an in-flight one,
+// a failed fetch never replaces a loaded entry, and the in-flight latch is released however a launch ends.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("EditMetaCacheService: a Refresh that lands while an older fetch is in flight wins") {
+    FakeEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}, {"labels", false}}); // the old answer
+    EditMetaCacheService svc(deps);
+    bool refreshed = false;
+    deps.Fake()->SetFetchIssueEditMetaHook([&](const std::string&) {
+        if (refreshed) {
+            return; // the Refresh's own fetch
+        }
+        refreshed = true;
+        // The tracker changed while the first fetch was in flight: a Refresh with the new answer overtakes it.
+        deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}, {"labels", true}});
+        REQUIRE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", "ABC-1", "story").has_value());
+    });
+
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value()); // returns the OLD answer, which is dropped
+
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
+    CHECK(svc.CanEditFieldForIssue("ABC-1", "labels")); // the newer answer stands
+    CHECK(store->UpsertCalls.load() == 1);              // only the newer answer reached the store
+    CHECK(SavedPermissions(*store, "Jira", "ABC", "story").at("labels"));
+}
+
+TEST_CASE("EditMetaCacheService: an Invalidate while a fetch is in flight drops its answer") {
+    FakeEditMetaDeps deps;
+    const auto store = std::make_shared<FakeLookupCache>();
+    deps.LookupCacheImpl = store;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+    deps.Fake()->SetFetchIssueEditMetaHook(
+        [&](const std::string& id) { svc.InvalidateIssueEditMeta(id); }); // the issue changed under the fetch
+
+    CHECK(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value()); // not a failure: the answer is just stale
+
+    CHECK(svc.CanEditFieldForIssue("ABC-1", "labels")); // nothing stored: optimistic again
+    CHECK(store->UpsertCalls.load() == 0);              // and nothing promoted to the scope or saved
+    deps.Fake()->SetFetchIssueEditMetaHook(nullptr);
+    CHECK(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value()); // the latch was released: a new fetch runs
+    CHECK_FALSE(svc.CanEditFieldForIssue("ABC-1", "labels"));
+}
+
+TEST_CASE("EditMetaCacheService: an Ensure that finds the issue already being fetched asks again for nothing") {
+    ParkingEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueEditMetaAsync("ABC-1"); // launched, parked: the fetch is registered
+    REQUIRE(deps.Parked.size() == 1u);
+    CHECK(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value()); // refused: no second request for the same issue
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 0u);
+    CHECK(svc.CanEditFieldForIssue("ABC-1", "labels")); // optimistic until the warm lands
+
+    deps.Parked[0]();
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
+    CHECK_FALSE(svc.CanEditFieldForIssue("ABC-1", "labels"));
+}
+
+TEST_CASE("EditMetaCacheService: a Refresh supersedes a parked warm, which then does nothing") {
+    ParkingEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueEditMetaAsync("ABC-1");
+    REQUIRE(deps.Parked.size() == 1u);
+    REQUIRE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", "ABC-1", "story").has_value());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
+
+    deps.Parked[0](); // the warm runs late: the issue is loaded already
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
+}
+
+TEST_CASE("EditMetaCacheService: a failing Refresh keeps the loaded entry of the issue") {
+    FakeEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
+    REQUIRE_FALSE(svc.CanEditFieldForIssue("ABC-1", "labels"));
+
+    deps.Fake()->SetIssueEditMetaFailure("ABC-1", "HTTP 503");
+    CHECK_FALSE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", "ABC-1", "story").has_value());
+
+    CHECK_FALSE(svc.CanEditFieldForIssue("ABC-1", "labels")); // the previous answer still applies
+    svc.WarmIssueEditMetaAsync("ABC-1");                      // still loaded: no refetch
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
+}
+
+TEST_CASE("EditMetaCacheService: a warm whose task is dropped unrun releases its latch") {
+    FakeEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+
+    deps.DropTasks = true; // shutdown has begun: the launcher destroys the task
+    svc.WarmIssueEditMetaAsync("ABC-1");
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 0u);
+
+    deps.DropTasks = false;
+    svc.WarmIssueEditMetaAsync("ABC-1"); // not stuck "in flight" forever
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
+}
+
+TEST_CASE("EditMetaCacheService: another issue's fetch in flight never blocks a Refresh") {
+    ParkingEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-2", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}});
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueEditMetaAsync("ABC-1"); // parked
+    REQUIRE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", "ABC-2", "story").has_value());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u); // another issue's fetch never blocks this one
 }

@@ -489,22 +489,26 @@ class FakeTrackerClient : public ITrackerBackend,
         if (NetworkDown()) {
             return Result<std::unordered_map<std::string, bool>, TrackerError>::Err(network_->MakeError());
         }
-        ++fetchIssueEditMetaCalls_;
-        fetchIssueEditMetaKeys_.push_back(issueKeyOrId);
-        const auto perIssue = issueEditMetaByIssue_.find(issueKeyOrId);
-        if (perIssue != issueEditMetaByIssue_.end()) {
-            const ScriptedEditMeta& s = perIssue->second;
-            if (!s.Ok) {
-                return Result<std::unordered_map<std::string, bool>, TrackerError>::Err(
-                    TrackerErrorInvalidRequest(s.Error));
-            }
-            return Result<std::unordered_map<std::string, bool>, TrackerError>::Ok(s.FieldCanEdit);
+        // The scripted answer is read under the lock, then the hook runs with the lock released: the answer is
+        // already fixed when the hook interleaves (an Invalidate, a Refresh) with this "in-flight" fetch.
+        ScriptedEditMeta answer;
+        std::function<void(const std::string&)> hook;
+        {
+            std::lock_guard<std::mutex> lock(editMetaMutex_);
+            ++fetchIssueEditMetaCalls_;
+            fetchIssueEditMetaKeys_.push_back(issueKeyOrId);
+            const auto perIssue = issueEditMetaByIssue_.find(issueKeyOrId);
+            answer = perIssue != issueEditMetaByIssue_.end() ? perIssue->second : issueEditMetaDefault_;
+            hook = fetchIssueEditMetaHook_;
         }
-        if (!issueEditMetaDefault_.Ok) {
+        if (hook) {
+            hook(issueKeyOrId);
+        }
+        if (!answer.Ok) {
             return Result<std::unordered_map<std::string, bool>, TrackerError>::Err(
-                TrackerErrorInvalidRequest(issueEditMetaDefault_.Error));
+                TrackerErrorInvalidRequest(answer.Error));
         }
-        return Result<std::unordered_map<std::string, bool>, TrackerError>::Ok(issueEditMetaDefault_.FieldCanEdit);
+        return Result<std::unordered_map<std::string, bool>, TrackerError>::Ok(std::move(answer.FieldCanEdit));
     }
 
     Result<TrackerProjectComponents, TrackerError> FetchProjectComponents(const TrackerConfig& /*cfg*/,
@@ -751,8 +755,14 @@ class FakeTrackerClient : public ITrackerBackend,
     std::size_t AttachFilesCallCount() const { return attachFilesCalls_.size(); }
     const std::vector<AttachFilesCall>& AttachFilesCalls() const { return attachFilesCalls_; }
 
-    std::size_t FetchIssueEditMetaCallCount() const { return fetchIssueEditMetaCalls_; }
-    const std::vector<std::string>& FetchIssueEditMetaKeys() const { return fetchIssueEditMetaKeys_; }
+    std::size_t FetchIssueEditMetaCallCount() const {
+        std::lock_guard<std::mutex> lock(editMetaMutex_);
+        return fetchIssueEditMetaCalls_;
+    }
+    std::vector<std::string> FetchIssueEditMetaKeys() const {
+        std::lock_guard<std::mutex> lock(editMetaMutex_);
+        return fetchIssueEditMetaKeys_;
+    }
     std::size_t FetchProjectComponentsCallCount() const { return fetchProjectComponentsCalls_; }
     const std::vector<std::string>& FetchProjectComponentsKeys() const { return fetchProjectComponentsKeys_; }
 
@@ -998,27 +1008,38 @@ class FakeTrackerClient : public ITrackerBackend,
     }
 
     // EditMetaCacheService scripting: per-issue + default editmeta (field id -> can-edit map).
+    // The editmeta scripting and counters are guarded (a warm worker fetches while the test thread scripts).
     void SetIssueEditMetaSuccess(const std::string& issueId, std::unordered_map<std::string, bool> fieldCanEdit) {
         ScriptedEditMeta s;
         s.Ok = true;
         s.FieldCanEdit = std::move(fieldCanEdit);
+        std::lock_guard<std::mutex> lock(editMetaMutex_);
         issueEditMetaByIssue_[issueId] = std::move(s);
     }
     void SetIssueEditMetaFailure(const std::string& issueId, const std::string& error) {
         ScriptedEditMeta s;
         s.Ok = false;
         s.Error = error;
+        std::lock_guard<std::mutex> lock(editMetaMutex_);
         issueEditMetaByIssue_[issueId] = std::move(s);
     }
     void SetDefaultIssueEditMetaSuccess(std::unordered_map<std::string, bool> fieldCanEdit) {
+        std::lock_guard<std::mutex> lock(editMetaMutex_);
         issueEditMetaDefault_.Ok = true;
         issueEditMetaDefault_.FieldCanEdit = std::move(fieldCanEdit);
         issueEditMetaDefault_.Error.clear();
     }
     void SetDefaultIssueEditMetaFailure(const std::string& error) {
+        std::lock_guard<std::mutex> lock(editMetaMutex_);
         issueEditMetaDefault_.Ok = false;
         issueEditMetaDefault_.FieldCanEdit.clear();
         issueEditMetaDefault_.Error = error;
+    }
+    /// Called with the issue id on every FetchIssueEditMeta, after its answer is fixed and with no fake lock held:
+    /// a test interleaves a call into the service (Refresh, Invalidate) with the fetch that is "in flight".
+    void SetFetchIssueEditMetaHook(std::function<void(const std::string&)> hook) {
+        std::lock_guard<std::mutex> lock(editMetaMutex_);
+        fetchIssueEditMetaHook_ = std::move(hook);
     }
 
     // Per-project component scripting (Options is what ProjectComponentsCacheService caches and saves).
@@ -1257,6 +1278,8 @@ class FakeTrackerClient : public ITrackerBackend,
     ScriptedEditMeta issueEditMetaDefault_{false, {}, "FetchIssueEditMeta not scripted"};
     std::size_t fetchIssueEditMetaCalls_ = 0;
     std::vector<std::string> fetchIssueEditMetaKeys_;
+    std::function<void(const std::string&)> fetchIssueEditMetaHook_;
+    mutable std::mutex editMetaMutex_; // guards the five editmeta members above
 
     // FetchProjectComponents — per-project scripted result + recording.
     struct ScriptedComponents {

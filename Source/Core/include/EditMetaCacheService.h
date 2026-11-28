@@ -38,6 +38,7 @@
 
 class IEditMetaDeps;
 class ITrackerBackend;
+class ITrackerFieldCatalog;
 struct TrackerField;
 
 class EditMetaCacheService {
@@ -133,6 +134,13 @@ class EditMetaCacheService {
     /// focused-row warm). Refresh: always fetch.
     enum class LoadMode { ScopeSuffices, IssueOwn, Refresh };
 
+    /// Claim on one issue's in-flight fetch. `Gen` is unique per begun fetch: the result is kept only while it is
+    /// still the one registered for `Key`, so a Refresh (a newer fetch) or an Invalidate (none) retires it.
+    struct FetchTicket {
+        std::string Key; ///< InFlightKey(backend, issue)
+        std::uint64_t Gen = 0;
+    };
+
     /// One scope the startup warm covers, with the tickets to try (at most kMaxCandidatesPerScope).
     struct ScopeCandidates {
         std::string Project;
@@ -155,11 +163,37 @@ class EditMetaCacheService {
     /// `project` is null when the issue has no scope.
     bool AnsweredFromCache(const std::string& backendKey, const std::string& issueId, const std::string* project,
                            const std::string& issueTypeKey, bool variesPerIssue, LoadMode mode) const;
-    /// Fetch (or accept from the scope) the edit metadata of one issue; see LoadMode. A representative result
-    /// is promoted to its scope and saved. Runs on a worker or a caller that may block on the network.
+    /// What one FetchIssueEditMeta call produced: the entry to keep on success, or the error and a failure marker.
+    struct FetchResult {
+        bool Ok = false;
+        std::string Error;
+        IssueEditMetaCache Cache;
+    };
+    static FetchResult FetchEditMeta(ITrackerFieldCatalog* catalog, const TrackerConfig& cfg,
+                                     const std::string& issueId);
+    /// Keep `fetched` per the rules of LoadIssueEditMeta (own entry, scope promotion, failure keeps loaded data) and
+    /// retire `ticket`. True when the fetch was no longer current (nothing stored). `scopeUnchanged` is set when a
+    /// promoted scope entry equals the live one. Takes editMetaMutex_.
+    bool StoreFetchResult(const FetchTicket& ticket, const std::string& backendKey, const std::string& issueId,
+                          const std::string* project, const std::string& issueTypeKey, bool variesPerIssue,
+                          const FetchResult& fetched, bool promote, bool& scopeUnchanged);
+    /// Register a new fetch of `key` and return its ticket. False (nothing registered) when a fetch of `key` is
+    /// already running and `mode` is not Refresh: a Refresh always begins and supersedes the running one.
+    /// Caller holds editMetaMutex_.
+    bool TryBeginIssueFetchLocked(const std::string& key, LoadMode mode, FetchTicket& out);
+    /// True while `ticket` is the fetch registered for its key. Caller holds editMetaMutex_.
+    bool IssueFetchCurrentLocked(const FetchTicket& ticket) const;
+    /// Unregister `ticket`'s fetch, unless a newer one replaced it. Idempotent; any thread.
+    void ReleaseIssueFetch(const FetchTicket& ticket);
+    /// Fetch (or accept from the scope) the edit metadata of one issue; see LoadMode. `started` is a ticket the
+    /// caller already began (the focused-row warm registers on the UI thread before launching); null begins one
+    /// here. A fetch that is no longer current when it returns (superseded, invalidated) stores nothing. A
+    /// representative result is promoted to its scope and saved. Runs on a worker or a caller that may block on
+    /// the network.
     VoidResult LoadIssueEditMeta(const std::shared_ptr<ITrackerBackend>& backend, const std::string& backendKey,
                                  const std::string& issueId, const std::string& issueTypeKey,
-                                 const TrackerConfig* configSnapshot, LoadMode mode);
+                                 const TrackerConfig* configSnapshot, LoadMode mode,
+                                 const FetchTicket* started = nullptr);
     /// Background-task body of WarmIssueTypeEditMetaAtStartAsync: try each scope's candidate tickets until one
     /// gives a representative result. Runs off the UI thread.
     void WarmIssueTypeEditMetaWorker(const std::vector<ScopeCandidates>& scopes,
@@ -184,12 +218,14 @@ class EditMetaCacheService {
 
     // editMetaMutex_ guards every container below up to (not including) `savedTypesLoad_` and
     // `scopeSaveIo_`, which synchronize themselves. mutable because CanEditFieldForIssue is const and only
-    // reads the maps.
+    // reads the maps. It is a leaf lock: never held across a launch, a fetch or a lookup-cache call, so a
+    // LaunchClaim release (which takes it) is safe inside any launcher.
     mutable std::mutex editMetaMutex_;
     EditMetaByBackend issueEditMeta_;
     ScopeByBackend scopeEditMeta_;
-    /// InFlightKey(backend, issue) of every running per-issue warmup.
-    std::unordered_set<std::string> issueEditMetaWarmupInFlight_;
+    /// InFlightKey(backend, issue) -> generation of the fetch now running for that issue.
+    std::unordered_map<std::string, std::uint64_t> issueFetchInFlight_;
+    std::uint64_t nextFetchGen_ = 0;
     /// InFlightKey(backend, scope store key) -> when a scope whose candidates gave no representative result
     /// may be tried again.
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> scopeNoRepresentativeUntil_;
