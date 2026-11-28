@@ -1,7 +1,7 @@
 #pragma once
 
-// Frame-safe destroy state machine for ImGui user textures (ImTextureData registered through
-// ImGui::RegisterUserTexture). Value-only and ImGui-free so the Linux doctest subset covers it;
+// Frame-safe destroy state machine for ImGui user textures, the ImTextureData objects registered with
+// RegisterUserTexture. Value-only and ImGui-free, so the Linux doctest subset covers it.
 // SmatchetImageTextureCache.cpp pins the status ints below to the real ImTextureStatus enum with a
 // static_assert (pattern: Ui/SmatchetImGuiTextureGuard.cpp).
 //
