@@ -154,13 +154,10 @@ TEST_CASE("LocalCacheManager AI chat: ClearChatMessages removes EVERY row includ
 
 TEST_CASE("LocalCacheManager AI chat: hydration latency microbench (Phase 3.10 Pillar 2 evidence)") {
     // Phase 3.10 of ai-chat-claude-desktop-parity. Drives the dominant cost of
-    // the first-frame hydration path (`LocalCacheManager::LoadChatMessages` against
-    // 200 pre-existing rows — the inline-vs-async cutoff in
-    // `HydrateFromConfigOnce`). Time per iteration is printed via MESSAGE so it
-    // shows up in `ctest --output-on-failure` even when the case passes; the
-    // measured number is recorded next to the production call site in
-    // `SmatchetAiAssistantUi.cpp::HydrateFromConfigOnce` as the Pillar 2 budget
-    // annotation. NOT a CI regression gate — the SmatchetTests rig has no
+    // the hydration read (`LocalCacheManager::LoadChatMessages` against 200
+    // pre-existing rows). `HydrateFromConfigOnce` runs it on a worker. Time per
+    // iteration is printed via MESSAGE so it shows up in `ctest --output-on-failure`
+    // even when the case passes. NOT a CI regression gate — the SmatchetTests rig has no
     // wall-clock budget. Run on the dev box to refresh the annotation when the
     // hydration path changes.
     SqliteMemFixture fix;
