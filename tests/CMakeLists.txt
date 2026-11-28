@@ -269,14 +269,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         #     against a concurrent CanEditFieldForIssue reader (sibling of TicketSyncService
         #     above). Service .cpp pulls GridLiveContext / ConfigManager / TrackerFieldValueUtils
         #     / TrackerFieldValueParser (all already linked above) + ProjectResolver
-        #     (ExtractIssueKeyPrefix, linked further down for EditMetaScopePure and the grid
-        #     input classifier). cpr/ImGui/SQLite-free; tests construct via header-only fakes
-        #     (FakeEditMetaDeps / FakeTrackerClient).
+        #     (ExtractIssueKeyPrefix) — add ProjectResolver here for the TSan-target closure
+        #     (it is in the SmatchetTests block but not this one). cpr/ImGui/SQLite-free; tests
+        #     construct via header-only fakes (FakeEditMetaDeps / FakeTrackerClient).
         Core/EditMetaCacheService.test.cpp
-        Core/EditMetaScopePure.test.cpp
         Core/EditMetaCacheConcurrent.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/EditMetaCacheService.cpp"
-        "${CMAKE_SOURCE_DIR}/Source/Core/src/EditMetaScopePure.cpp"
         # --- FieldEditPipelineService (AppController god-object decomposition Phase 2): the
         #     field-edit network pipeline. Holds NO long-lived mutex (call-frame-scoped ctx), so
         #     it is TSan-neutral, but its .cpp calls EditMetaCacheService (above) on the same
@@ -369,7 +367,6 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/CommentBlobFormatPure.test.cpp
         Core/PublishedSnapshot.test.cpp
         Core/SerialTaskQueue.test.cpp
-        Core/LaunchClaim.test.cpp
         Core/StringUtilTrim.test.cpp
         Core/TrackerIssueExistsProbe.test.cpp
         Core/Tracker2xxErrorGuard.test.cpp
@@ -1046,7 +1043,6 @@ add_executable(SmatchetTests
     # SQLite. Production TU added to the prod-src block below; ProjectResolver.cpp (its
     # ExtractIssueKeyPrefix dep) is already linked in this target.
     Core/EditMetaCacheService.test.cpp
-    Core/EditMetaScopePure.test.cpp
     # FieldEditPipelineService (AppController god-object decomposition Phase 2) — the field-edit
     # network pipeline: regular/sprint/timetracking success, read-only + editmeta-deny blocks,
     # 400-retry editmeta refresh, offline-prepare contract, ApplyFieldEditResult. Drives a
@@ -1377,7 +1373,6 @@ add_executable(SmatchetTests
     Core/CommentBlobFormatPure.test.cpp
     Core/PublishedSnapshot.test.cpp
     Core/SerialTaskQueue.test.cpp
-    Core/LaunchClaim.test.cpp
     Core/BulkImportStatusPure.test.cpp
     Core/LazyEnrichmentCarryForwardPure.test.cpp
     Core/SmatchetCommentsModalSeedPure.test.cpp
@@ -1618,7 +1613,6 @@ add_executable(SmatchetTests
     # ProjectResolver (ExtractIssueKeyPrefix) — all already linked into this target. cpr/ImGui/
     # SQLite-free; Core/EditMetaCacheService.test.cpp drives it via header-only fakes.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/EditMetaCacheService.cpp"
-    "${CMAKE_SOURCE_DIR}/Source/Core/src/EditMetaScopePure.cpp"
     # FieldEditPipelineService (AppController god-object decomposition Phase 2). Pulls
     # EditMetaCacheService (above) + the audit pair (BackendAuditTrail / FieldEditAuditSource,
     # already linked above for OfflineQueueService) + ConfigManager + TrackerFieldValueUtils /
