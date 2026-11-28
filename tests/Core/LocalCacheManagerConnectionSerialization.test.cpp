@@ -7,6 +7,7 @@
 
 #include "LocalCacheManagerTestAccess.h"
 #include "SqliteMemFixture.h"
+#include "TempDbFile.h"
 
 #include <doctest/doctest.h>
 
@@ -281,4 +282,52 @@ TEST_CASE("LocalCacheManager connection: probe wait during long operations [.ben
     worker.join();
     MESSAGE("EnqueuePendingCreate during a 10k-row SaveTicketsWithSyncMeta batch: " << enqueued << " enqueues, worst "
                                                                                     << worstUs << " us");
+}
+
+TEST_CASE("LocalCacheManager snapshot: a read never mixes one ticket's old and new rows from a second connection") {
+    smatchet_tests::TempDbFile file("smatchet_snapshot_");
+    LocalCacheManager reader(file.Path());
+    LocalCacheManager writer(file.Path()); // a second connection on the same file, as a second process would be
+
+    const auto makeTicket = [](int generation) {
+        CachedTicket ticket;
+        ticket.id = "X";
+        ticket.fieldValues["summary"] = "gen" + std::to_string(generation);
+        ticket.fieldRichValues["description"] = "gen" + std::to_string(generation);
+        return ticket;
+    };
+    writer.SaveTicket(kBk, makeTicket(0));
+
+    std::atomic<bool> stop{false};
+    std::thread rewriting([&]() {
+        for (int generation = 1; !stop.load(); ++generation) {
+            writer.SaveTicket(kBk, makeTicket(generation));
+        }
+    });
+
+    int torn = 0;
+    int reads = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    while (std::chrono::steady_clock::now() < deadline) {
+        const std::vector<CachedTicket> all = reader.GetAllTickets(kBk);
+        CachedTicket one;
+        const bool found = reader.TryGetTicket(kBk, "X", one);
+        const std::vector<CachedTicket> byIds = reader.GetTicketsByIds(kBk, {"X"});
+        ++reads;
+        if (all.size() != 1 || !found || byIds.size() != 1) {
+            ++torn;
+            continue;
+        }
+        const CachedTicket* const rows[3] = {&all[0], &one, &byIds[0]};
+        for (std::size_t i = 0; i < 3; ++i) {
+            if (rows[i]->fieldValues.size() != 1 || rows[i]->fieldRichValues.size() != 1 ||
+                rows[i]->fieldValues.begin()->second != rows[i]->fieldRichValues.begin()->second) {
+                ++torn;
+            }
+        }
+    }
+    stop.store(true);
+    rewriting.join();
+    CHECK(reads > 10);
+    CHECK(torn == 0);
 }

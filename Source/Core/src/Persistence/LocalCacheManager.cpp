@@ -565,6 +565,7 @@ bool LocalCacheManager::readTicketRows_(const ConnGuard& guard, const std::strin
 bool LocalCacheManager::TryGetTicket(const std::string& backendKey, const std::string& ticketId, CachedTicket& out) {
     try {
         const ConnGuard guard(*this, "TryGetTicket");
+        const lcm_detail::ReadSnapshot snapshot(guard, conn(guard)); // the ticket row and its field rows agree
         return readTicketRows_(guard, backendKey, ticketId, out);
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager::TryGetTicket failed ticket=%s err=%s", ticketId.c_str(), ex.what());
@@ -628,6 +629,7 @@ std::vector<CachedTicket> LocalCacheManager::GetTicketsByIds(const std::string& 
         for (std::size_t offset = 0; offset < ids.size(); offset += kChunk) {
             const std::size_t end = (std::min)(ids.size(), offset + kChunk);
             const ConnGuard guard(*this, "GetTicketsByIds");
+            const lcm_detail::ReadSnapshot snapshot(guard, conn(guard)); // one snapshot per chunk
             for (std::size_t i = offset; i < end; ++i) {
                 CachedTicket row;
                 if (readTicketRows_(guard, backendKey, ids[i], row)) {
@@ -753,6 +755,7 @@ std::vector<CachedTicket> LocalCacheManager::GetAllTickets(const std::string& ba
     try {
         const ConnGuard guard(*this, "GetAllTickets");
         SQLite::Database& db = conn(guard);
+        const lcm_detail::ReadSnapshot snapshot(guard, db); // the id list and both field queries agree
         std::vector<CachedTicket> results;
         SQLite::Statement query(db, "SELECT id FROM tickets_v2 WHERE backend_key = ?");
         query.bind(1, backendKey);

@@ -72,6 +72,21 @@ inline void AddColumnIfMissing(const LocalCacheManager::ConnGuard& guard, SQLite
     }
 }
 
+/// One deferred read transaction around a multi-statement read: every statement sees the same snapshot, so a second
+/// process committing a ticket's rows between two of them cannot hand the caller half of the old ticket and half of the
+/// new one. Takes no lock (a deferred BEGIN) and never writes; it rolls back when it goes out of scope. The guard
+/// proves the caller holds the connection. Never create one inside a write transaction (BEGIN does not nest), and
+/// never inside `readTicketRows_`, which write paths call from inside theirs.
+class ReadSnapshot {
+  public:
+    ReadSnapshot(const LocalCacheManager::ConnGuard& /*guard*/, SQLite::Database& db) : txn_(db) {}
+    ReadSnapshot(const ReadSnapshot&) = delete;
+    ReadSnapshot& operator=(const ReadSnapshot&) = delete;
+
+  private:
+    SQLite::Transaction txn_;
+};
+
 } // namespace lcm_detail
 
 /// Runs `body(guard, db)` inside one transaction on the shared connection and returns its value (or nothing for a
