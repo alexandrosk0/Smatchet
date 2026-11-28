@@ -77,6 +77,13 @@ TEST_CASE("DecideSendDisabled: empty input disables (nothing-to-send guard)") {
                              /*hasController=*/true));
 }
 
+TEST_CASE("DecideSendDisabled: a conversation still loading from the cache disables (a turn sent now would be lost)") {
+    CHECK(DecideSendDisabled(/*inFlight=*/false, /*inputEmpty=*/false, /*hasController=*/true,
+                             /*historyLoading=*/true));
+    CHECK_FALSE(DecideSendDisabled(/*inFlight=*/false, /*inputEmpty=*/false, /*hasController=*/true,
+                                   /*historyLoading=*/false));
+}
+
 TEST_CASE("DecideSendDisabled: missing controller disables (no-AI-build guard)") {
     // `app.HasAiAssistantController() == false` — usually mid-shutdown,
     // or a stripped non-AI build accidentally rendering the panel.

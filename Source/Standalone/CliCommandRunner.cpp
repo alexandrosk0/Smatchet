@@ -262,6 +262,10 @@ int RunCmdInProcessImpl(int argc, char** argv) {
         // No frame is ever drawn for a one-shot command: a command that waits for UI-thread work (cache.recreate)
         // has to pump the dispatcher itself. An async scenario starts its render loop below, after this is lowered.
         boot.app->SetNoFrameLoop(true);
+        // The cache opens on a worker: a command that reads or writes it must not run before it is there.
+        if (!boot.app->WaitForLocalCacheOpen(std::chrono::seconds(30))) {
+            LOG_WARN("cli: the local cache did not finish opening in 30 s; running the command anyway");
+        }
         smatchet::cmd::CommandResult dispatchResult = boot.app->Commands().Dispatch(toolName, argsToSend, ctx);
         boot.app->SetNoFrameLoop(false);
 

@@ -101,6 +101,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     std::string CacheBackendKey() const override;
     /// The cache-recreate gate (IOfflineQueueDeps): a queued edit that finds no cache words its failure for it.
     bool IsCacheRecreating() const override;
+    smatchet::persistence::CacheEnqueueBlock EnqueueBlock() const override;
     /// Capture-then-check token (issue #1081) — the context's backendGeneration_ atomic.
     std::uint64_t BackendGeneration() const override;
 

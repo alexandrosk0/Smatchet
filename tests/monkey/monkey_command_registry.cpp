@@ -331,6 +331,10 @@ int RunHandlers(const Options& opts, std::uint64_t seed) {
             smatchet_tests::JiraFakeTrackerFixture::LoadFromFile(opts.fixture);
         app.SetBackendFactory(std::make_unique<smatchet_tests::ScriptedTrackerBackendFactory>(std::move(fixture)));
         app.Initialize(dbPath, "Jira");
+        if (!app.WaitForLocalCacheOpen(std::chrono::seconds(30))) { // the cache opens on a worker
+            std::fprintf(stderr, "monkey: handler-mode boot: the local cache did not finish opening\n");
+            return 66;
+        }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "monkey: handler-mode boot failed (fixture='%s', db='%s'): %s\n", opts.fixture.c_str(),
                      dbPath.c_str(), e.what());

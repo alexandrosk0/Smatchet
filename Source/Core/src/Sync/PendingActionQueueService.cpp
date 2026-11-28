@@ -1,6 +1,7 @@
 #include "Sync/PendingActionQueueService.h"
 
 #include "BackendAuditTrail.h"
+#include "Config/TunableLimits.h"
 #include "ConfigManager.h"
 #include "IOfflineQueueDeps.h"
 #include "ISyncCache.h"
@@ -17,6 +18,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <ctime>
 #include <exception>
 #include <functional>
 #include <utility>
@@ -31,8 +33,17 @@ namespace pendingaction = smatchet::pendingaction;
 constexpr std::chrono::seconds kReplayDelay{5};
 constexpr std::chrono::seconds kReplayBackoff{30};
 
-bool IsReplayable(const PendingActionRecord& row, const std::string& backendKey) {
-    return row.BackendKey == backendKey && row.State != PendingActionState::kNeedsReview;
+// How long another process's `sending` claim is honoured, from the tracker timeout in force.
+std::int64_t ClaimLeaseSec() {
+    return pendingaction::SendingClaimLeaseSec(
+        static_cast<std::int64_t>(smatchet::limits::Get().TrackerOverallTimeoutMs));
+}
+
+// A row this pass may work on: this pane's, not parked for review, and not being sent right now by another process.
+bool IsReplayable(const PendingActionRecord& row, const std::string& backendKey, std::int64_t nowSec,
+                  std::int64_t leaseSec) {
+    return row.BackendKey == backendKey && row.State != PendingActionState::kNeedsReview &&
+           !pendingaction::IsForeignLiveClaim(row, nowSec, leaseSec);
 }
 
 nlohmann::json AuditExtra(const PendingActionRecord& row) {
@@ -138,17 +149,20 @@ PendingActionQueueService::Enqueue(PendingActionKind kind, const std::string& ba
     }
     // Before the cache is latched: the old file is still there for the first moments of a recreate and a row queued
     // into it would be wiped with it.
-    if (deps_.IsCacheRecreating()) {
-        out.Error = smatchet::sync::CacheRecreatingEnqueueMessage();
-        LOG_WARN("PendingActionQueueService: enqueue on %s refused: the local cache is being recreated.",
-                 issueKey.c_str());
+    const smatchet::persistence::CacheEnqueueBlock block = deps_.EnqueueBlock();
+    if (block != smatchet::persistence::CacheEnqueueBlock::None) {
+        out.Error = smatchet::sync::CacheEnqueueBlockedMessage(block);
+        LOG_WARN("PendingActionQueueService: enqueue on %s refused: the local cache cannot take a write (block=%d).",
+                 issueKey.c_str(), static_cast<int>(block));
         return out;
     }
     // Latched once: the UI thread may swap the cache (StartRecreateLocalCacheDatabase) mid-enqueue.
     const std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
     if (!cache) {
-        out.Error = deps_.IsCacheRecreating() ? smatchet::sync::CacheRecreatingEnqueueMessage()
-                                              : "The local cache is unavailable, so this could not be saved offline.";
+        const smatchet::persistence::CacheEnqueueBlock late = deps_.EnqueueBlock();
+        out.Error = late != smatchet::persistence::CacheEnqueueBlock::None
+                        ? smatchet::sync::CacheEnqueueBlockedMessage(late)
+                        : "The local cache is unavailable, so this could not be saved offline.";
         return out;
     }
     const char* wire = PendingActionKindWire(kind);
@@ -186,9 +200,11 @@ void PendingActionQueueService::Tick() {
     // Pillar 2: decide from the in-memory snapshot — no worker, no SQLite, while nothing is queued.
     const std::string backendKey = deps_.CacheBackendKey();
     const std::shared_ptr<const PendingActionsSnapshot> snap = Snapshot();
+    const std::int64_t nowSec = static_cast<std::int64_t>(std::time(nullptr));
+    const std::int64_t leaseSec = ClaimLeaseSec();
     if (backendKey.empty() ||
         std::none_of(snap->Pending.begin(), snap->Pending.end(),
-                     [&backendKey](const PendingActionRecord& row) { return IsReplayable(row, backendKey); })) {
+                     [&](const PendingActionRecord& row) { return IsReplayable(row, backendKey, nowSec, leaseSec); })) {
         return;
     }
     if (ConfigManager::Load().ReadOnlyMode) {
@@ -253,8 +269,10 @@ std::chrono::seconds PendingActionQueueService::RunReplayPass(ISyncCache& cache,
     }
     const TrackerConfig cfg = ConfigManager::Load();
     ReplayTally tally;
+    const std::int64_t nowSec = static_cast<std::int64_t>(std::time(nullptr));
+    const std::int64_t leaseSec = ClaimLeaseSec();
     for (const PendingActionRecord& row : rows) {
-        if (!IsReplayable(row, backendKey)) {
+        if (!IsReplayable(row, backendKey, nowSec, leaseSec)) {
             continue;
         }
         ReplayOne(cache, collab, cfg, row, tally);
@@ -286,6 +304,27 @@ void PendingActionQueueService::ReplayOne(ISyncCache& cache, ITrackerCollaborati
         ++tally.Failures;
         return;
     }
+    // A row whose `sending` claim ran out is taken over FIRST. A state check alone cannot do it (`sending` to `sending`
+    // always matches), so the take-over compares the claim this pass read: of two processes that read the same expired
+    // claim exactly one wins, and the winner is then the only one touching the row, including the tracker check and
+    // every write below (a loser's id-only write could otherwise undo the winner's live claim).
+    bool alreadyClaimed = false;
+    if (row.State == PendingActionState::kSending) {
+        try {
+            alreadyClaimed =
+                cache.TakeOverPendingActionClaim(row.Id, row.ClaimedAtEpochSec, row.Attempts, row.LastError);
+        } catch (const std::exception& ex) {
+            LOG_ERROR("PendingActionQueueService: taking over id=%lld failed: %s", static_cast<long long>(row.Id),
+                      ex.what());
+            ++tally.Failures;
+            return;
+        }
+        if (!alreadyClaimed) {
+            LOG_INFO("PendingActionQueueService: id=%lld was claimed or changed by another pass; left alone",
+                     static_cast<long long>(row.Id));
+            return;
+        }
+    }
     // `sending` at the start of a pass means an earlier pass sent it but could not record the outcome.
     const bool maybeSent = row.State == PendingActionState::kAmbiguous || row.State == PendingActionState::kSending;
     if (maybeSent && kind == PendingActionKind::WorklogAdd) {
@@ -306,15 +345,17 @@ void PendingActionQueueService::ReplayOne(ISyncCache& cache, ITrackerCollaborati
     // Claim the stored row before sending. The compare-and-set skips a row discarded or changed since
     // this pass loaded its copy, and persists the in-flight marker: if the process dies mid-send, the
     // next start turns the row ambiguous and checks the tracker instead of sending it twice.
-    bool claimed = false;
-    try {
-        claimed =
-            cache.TransitionPendingAction(row.Id, row.State, PendingActionState::kSending, row.Attempts, row.LastError);
-    } catch (const std::exception& ex) {
-        LOG_ERROR("PendingActionQueueService: marking id=%lld as sending failed: %s", static_cast<long long>(row.Id),
-                  ex.what());
-        ++tally.Failures;
-        return;
+    bool claimed = alreadyClaimed;
+    if (!claimed) {
+        try {
+            claimed = cache.TransitionPendingAction(row.Id, row.State, PendingActionState::kSending, row.Attempts,
+                                                    row.LastError);
+        } catch (const std::exception& ex) {
+            LOG_ERROR("PendingActionQueueService: marking id=%lld as sending failed: %s",
+                      static_cast<long long>(row.Id), ex.what());
+            ++tally.Failures;
+            return;
+        }
     }
     if (!claimed) {
         LOG_INFO("PendingActionQueueService: id=%lld was discarded or changed during the pass; not sent",

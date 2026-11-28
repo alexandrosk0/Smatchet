@@ -1,4 +1,5 @@
 #include "LocalCacheManager.h"
+#include "LocalCacheManagerInternal.h"
 
 #include "Logger.h"
 
@@ -13,10 +14,11 @@
 
 // LocalCacheManager's ILookupCache half (Quality Pillar 6): persisted read-side lookups such as the
 // workflow remembered from earlier online use. Additive table; an older cache file gains it on open.
-// Every method uses its own local SQLite::Statement, so none touches the cached-statement slots that
-// stmtMutex_ guards (same shape as EnqueuePendingFieldEdit); the connection is OPEN_FULLMUTEX.
+// Every method holds the connection guard (connMutex_) for its whole operation and uses its own local
+// SQLite::Statement.
 
-void LocalCacheManager::InitLookupCacheSchema_() {
+void LocalCacheManager::InitLookupCacheSchema_(const ConnGuard& guard) {
+    SQLite::Database& db = conn(guard);
     db.exec("CREATE TABLE IF NOT EXISTS lookup_cache ("
             "backend_key TEXT NOT NULL, kind TEXT NOT NULL, cache_key TEXT NOT NULL, "
             "payload_json TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 1, "
@@ -26,6 +28,8 @@ void LocalCacheManager::InitLookupCacheSchema_() {
 bool LocalCacheManager::UpsertLookup(const std::string& backendKey, const std::string& kind,
                                      const std::string& cacheKey, const std::string& payloadJson) {
     try {
+        const ConnGuard guard(*this, "UpsertLookup");
+        SQLite::Database& db = conn(guard);
         const std::int64_t nowSec = std::time(nullptr);
         SQLite::Statement stmt(db, "INSERT OR REPLACE INTO lookup_cache (backend_key, kind, cache_key, "
                                    "payload_json, schema_version, updated_at) VALUES (?, ?, ?, ?, 1, ?)");
@@ -45,6 +49,8 @@ bool LocalCacheManager::UpsertLookup(const std::string& backendKey, const std::s
 bool LocalCacheManager::TryGetLookup(const std::string& backendKey, const std::string& kind,
                                      const std::string& cacheKey, LookupCacheRow& out) {
     try {
+        const ConnGuard guard(*this, "TryGetLookup");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement stmt(db, "SELECT cache_key, payload_json, updated_at FROM lookup_cache "
                                    "WHERE backend_key = ? AND kind = ? AND cache_key = ?");
         stmt.bind(1, backendKey);
@@ -66,6 +72,8 @@ bool LocalCacheManager::TryGetLookup(const std::string& backendKey, const std::s
 std::vector<LookupCacheRow> LocalCacheManager::LoadLookups(const std::string& backendKey, const std::string& kind) {
     std::vector<LookupCacheRow> result;
     try {
+        const ConnGuard guard(*this, "LoadLookups");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement stmt(db, "SELECT cache_key, payload_json, updated_at FROM lookup_cache "
                                    "WHERE backend_key = ? AND kind = ?");
         stmt.bind(1, backendKey);
@@ -88,7 +96,10 @@ std::vector<LookupCacheRow> LocalCacheManager::LoadLookups(const std::string& ba
 
 bool LocalCacheManager::DeleteLookup(const std::string& backendKey, const std::string& kind,
                                      const std::string& cacheKey) {
+    // SMATCHET_DEVIATION(rule=duplication; reason=single-statement autocommit writers share the guard-bind-exec shape with the queue deleters; owner=orchestrator; revisit=sq-write-helper)
     try {
+        const ConnGuard guard(*this, "DeleteLookup");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement stmt(db, "DELETE FROM lookup_cache WHERE backend_key = ? AND kind = ? AND cache_key = ?");
         stmt.bind(1, backendKey);
         stmt.bind(2, kind);

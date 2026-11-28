@@ -123,6 +123,10 @@ std::string GridContextDepsAdapter::CacheBackendKey() const { return ctx().Cache
 
 bool GridContextDepsAdapter::IsCacheRecreating() const { return app_.IsLocalCacheRecreating(); }
 
+smatchet::persistence::CacheEnqueueBlock GridContextDepsAdapter::EnqueueBlock() const {
+    return app_.LocalCacheEnqueueBlock();
+}
+
 std::uint64_t GridContextDepsAdapter::BackendGeneration() const { return ctx().backendGeneration_.load(); }
 
 // ---- ITicketSyncDeps ------------------------------------------------------------------

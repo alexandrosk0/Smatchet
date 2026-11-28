@@ -107,6 +107,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/StatusBarAutoHidePure.test.cpp
         # Status bar grid row count ("N rows" / "X of N rows") — ImGui-free header-only.
         Core/StatusBarRowCountPure.test.cpp
+        # Local cache location planner (Persistence/LocalCacheDbPathPure.h) — header-only, lexical, no I/O.
+        Core/LocalCacheDbPathPure.test.cpp
+        # Cache status vocabulary + recovery record + startup notice wording (Persistence/LocalCacheStatusPure.h).
+        Core/LocalCacheStatusPure.test.cpp
         # Desktop touchscreen gestures (TouchGesturePure.h: tap / long-press / pan / fling) and
         # touch-sized hit targets (Ui/TouchSizingPure.h) — header-only, ImGui-free, no threads.
         Core/TouchGesturePure.test.cpp
@@ -212,6 +216,14 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # background task) + SaveTicket (UI-thread write) from two std::threads sharing
         # one LocalCacheManager instance. LCM.cpp already linked above; no extra .cpp.
         Core/LocalCacheConcurrentSeed.test.cpp
+        # One shared connection, serialized: rollback isolation, no nested BEGIN, re-entry throws.
+        Core/LocalCacheManagerConnectionSerialization.test.cpp
+        # Interruptible open: OpenOptions::Abort ends a wait on a locked file promptly.
+        Core/LocalCacheManagerOpenOptions.test.cpp
+        Core/LocalCacheManagerSalvage.test.cpp
+        Core/LocalCacheManagerPendingActionsPersist.test.cpp
+        # One-time import of a legacy cache into its planned location (read-only source, init-lock, no-replace publish).
+        Core/LocalCacheLocationMigration.test.cpp
         # lookup_cache (Pillar 6 offline lookups), in-memory cases — LocalCacheManager_Lookup.cpp
         # linked below.
         Core/LocalCacheManagerLookup.test.cpp
@@ -223,6 +235,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Lookup.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_LeftViewHistory.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingActions.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingQueues.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Salvage.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheLocationMigration.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_CacheIdentity.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueDraft.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
@@ -786,6 +801,10 @@ add_executable(SmatchetTests
     Core/StatusBarAutoHidePure.test.cpp
     # Status bar grid row count (StatusBarRowCountPure.h) — ImGui-free header-only.
     Core/StatusBarRowCountPure.test.cpp
+    # Local cache location planner (Persistence/LocalCacheDbPathPure.h) — header-only, lexical, no I/O.
+    Core/LocalCacheDbPathPure.test.cpp
+    # Cache status vocabulary + recovery record + startup notice wording (Persistence/LocalCacheStatusPure.h).
+    Core/LocalCacheStatusPure.test.cpp
     # Desktop touchscreen gestures + touch-sized hit targets (TouchGesturePure.h,
     # Ui/TouchSizingPure.h) — header-only, ImGui-free.
     Core/TouchGesturePure.test.cpp
@@ -872,6 +891,13 @@ add_executable(SmatchetTests
     # multi-grid-tabs.md Slice 5 TSan pass — concurrent seed-read (GetAllTickets) +
     # write (SaveTicket) from two std::threads; also in SmatchetTsanTests for TSan.
     Core/LocalCacheConcurrentSeed.test.cpp
+    # One shared connection, serialized: rollback isolation, no nested BEGIN, re-entry throws.
+    Core/LocalCacheManagerConnectionSerialization.test.cpp
+    # Interruptible open: OpenOptions::Abort ends a wait on a locked file promptly.
+    Core/LocalCacheManagerOpenOptions.test.cpp
+    Core/LocalCacheManagerSalvage.test.cpp
+    # One-time import of a legacy cache into its planned location (read-only source, init-lock, no-replace publish).
+    Core/LocalCacheLocationMigration.test.cpp
     # Multi-grid Slice 1b (ADR-0018) — tickets_v2 backend-key namespacing: one-time copy
     # migration round-trip on a pre-migration fixture DB, idempotence via cache_meta flag,
     # and two-backend disjointness on a colliding numeric id. Links the production LCM TU
@@ -1593,6 +1619,9 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Lookup.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_LeftViewHistory.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingActions.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingQueues.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Salvage.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheLocationMigration.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_CacheIdentity.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
@@ -2441,6 +2470,8 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
         # File-backed by design (named in .coderabbit.yaml's test rules): the cache recreate deletes and reopens
         # the database file, so this TU opens a real file inside the test env's temp directory.
         Core/AppControllerCacheRecreate.posix.test.cpp
+        # The startup cache open on a worker: Opening gate, session-only degrade, retry, abort on destruction.
+        Core/AppControllerStartupCacheOpen.posix.test.cpp
         # ~AppController joins tasks launched while shutdown begins (#2308): a stress over the real controller.
         Core/AppControllerShutdown.posix.test.cpp
     )

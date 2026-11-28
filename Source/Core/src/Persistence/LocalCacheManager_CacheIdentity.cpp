@@ -2,6 +2,7 @@
 // to the site keys that namespace the cache by tracker site and account (#2268).
 
 #include "LocalCacheManager.h"
+#include "LocalCacheManagerInternal.h"
 
 #include "Logger.h"
 
@@ -27,16 +28,17 @@ const char* const kQueueTables[] = {"pending_field_edits",  "pending_field_edits
                                     "pending_creates_dead", "pending_actions",          "pending_actions_dead",
                                     "left_view_history"};
 
-std::size_t RekeyRows(SQLite::Database& db, const std::string& sql, const std::string& to, const std::string& from) {
+std::size_t RekeyRows(const LocalCacheManager::ConnGuard& /*guard*/, SQLite::Database& db, const std::string& sql,
+                      const std::string& to, const std::string& from) {
     SQLite::Statement st(db, sql);
     st.bind(1, to);
     st.bind(2, from);
-    st.exec();
-    const int changed = db.getChanges();
+    const int changed = st.exec();
     return changed > 0 ? static_cast<std::size_t>(changed) : 0u;
 }
 
-void DropRows(SQLite::Database& db, const char* table, const std::string& from) {
+void DropRows(const LocalCacheManager::ConnGuard& /*guard*/, SQLite::Database& db, const char* table,
+              const std::string& from) {
     SQLite::Statement st(db, std::string("DELETE FROM ") + table + " WHERE backend_key = ?");
     st.bind(1, from);
     st.exec();
@@ -47,31 +49,36 @@ void DropRows(SQLite::Database& db, const char* table, const std::string& from) 
 std::size_t
 LocalCacheManager::RunOneTimeCacheIdentityRekey(const std::vector<std::pair<std::string, std::string>>& fromTo) {
     try {
-        SQLite::Transaction transaction(db);
-        if (HasCacheMetaFlag(kCacheIdentityRekeyFlag)) {
-            transaction.commit();
-            return 0;
-        }
-        std::size_t moved = 0;
-        for (const std::pair<std::string, std::string>& rekey : fromTo) {
-            const std::string& from = rekey.first;
-            const std::string& to = rekey.second;
-            if (from.empty() || to.empty() || from == to) {
-                continue; // never re-key into or out of the empty namespace
-            }
-            for (const char* table : kCacheTables) {
-                moved += RekeyRows(
-                    db, std::string("UPDATE OR IGNORE ") + table + " SET backend_key = ? WHERE backend_key = ?", to,
-                    from);
-                DropRows(db, table, from);
-            }
-            for (const char* table : kQueueTables) {
-                moved += RekeyRows(db, std::string("UPDATE ") + table + " SET backend_key = ? WHERE backend_key = ?",
-                                   to, from);
-            }
-        }
-        SetCacheMetaFlag(kCacheIdentityRekeyFlag); // same connection: part of this transaction
-        transaction.commit();
+        // One transaction under the connection guard; the body returns the count and the log waits for the commit
+        // (a BUSY retry re-runs the body).
+        const std::size_t moved =
+            RunTxn_("RunOneTimeCacheIdentityRekey", [&](const ConnGuard& guard, SQLite::Database& db) -> std::size_t {
+                if (hasCacheMetaFlag_(guard, kCacheIdentityRekeyFlag)) {
+                    return 0;
+                }
+                std::size_t rows = 0;
+                for (const std::pair<std::string, std::string>& rekey : fromTo) {
+                    const std::string& from = rekey.first;
+                    const std::string& to = rekey.second;
+                    if (from.empty() || to.empty() || from == to) {
+                        continue; // never re-key into or out of the empty namespace
+                    }
+                    for (const char* table : kCacheTables) {
+                        rows += RekeyRows(guard, db,
+                                          std::string("UPDATE OR IGNORE ") + table +
+                                              " SET backend_key = ? WHERE backend_key = ?",
+                                          to, from);
+                        DropRows(guard, db, table, from);
+                    }
+                    for (const char* table : kQueueTables) {
+                        rows += RekeyRows(guard, db,
+                                          std::string("UPDATE ") + table + " SET backend_key = ? WHERE backend_key = ?",
+                                          to, from);
+                    }
+                }
+                setCacheMetaFlag_(guard, kCacheIdentityRekeyFlag); // same connection: part of this transaction
+                return rows;
+            });
         if (moved > 0) {
             LOG_INFO("LocalCacheManager::RunOneTimeCacheIdentityRekey moved rows=%zu across %zu key(s)", moved,
                      fromTo.size());

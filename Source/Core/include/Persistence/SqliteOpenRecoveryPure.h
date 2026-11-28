@@ -93,7 +93,7 @@ inline int BusyRetryBackoffMs(int attempt) {
     return ms > 400 ? 400 : ms;
 }
 
-/// The same retry decision for a WRITE transaction's loop, with one extra bound: a TOTAL
+/// The same retry decision for a WRITE transaction's loop (`LocalCacheManager::RunTxn_`), with one extra bound: a TOTAL
 /// wall-clock budget (issue #2045). An attempt-count cap alone is not a latency cap — each attempt
 /// can sit for the whole armed busy_timeout (5 s) before SQLite returns BUSY, so five attempts
 /// plus their backoffs stall the caller for ~25 s. That write path is reachable from the UI thread

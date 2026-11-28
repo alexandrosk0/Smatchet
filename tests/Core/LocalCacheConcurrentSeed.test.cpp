@@ -3,7 +3,7 @@
 // Exercises the Slice-5a concurrent seed-read pattern: a background task calls
 // GetAllTickets while the UI thread concurrently writes via SaveTicket. Both
 // paths share one LocalCacheManager instance (OPEN_FULLMUTEX serialises the
-// sqlite3* handle; stmtMutex_ guards cached prepared statements). TSan
+// sqlite3* handle; the connection guard serializes every operation). TSan
 // instruments this to detect any C++ data races in the seed path.
 //
 // ImGui-free closure: LocalCacheManager.cpp + IssueDraft.cpp + Logger.cpp only.

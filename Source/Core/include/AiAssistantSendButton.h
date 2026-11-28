@@ -30,8 +30,10 @@ namespace ai {
 /// All three inputs are independently fatal — if any is true the button is
 /// disabled. No precedence assumptions; callers may surface a per-condition
 /// tooltip or status strip separately.
-inline bool DecideSendDisabled(bool inFlight, bool inputEmpty, bool hasController) {
-    return inFlight || inputEmpty || !hasController;
+/// `historyLoading`: the saved conversation is still being read from the local cache. A turn sent meanwhile would be
+/// replaced by the loaded rows and never stored, so Send waits for it.
+inline bool DecideSendDisabled(bool inFlight, bool inputEmpty, bool hasController, bool historyLoading = false) {
+    return inFlight || inputEmpty || !hasController || historyLoading;
 }
 
 /// What Esc does in the Assistant panel's input row.

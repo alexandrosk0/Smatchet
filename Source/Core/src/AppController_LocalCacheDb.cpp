@@ -11,8 +11,10 @@
 #include "LeftViewHistoryService.h"
 // clang-format on
 
+#include "Config/CacheBackendKeyPure.h" // LegacyCacheKeyRekeys
 #include "ConfigManager.h"
 #include "LocalCacheManager.h"
+#include "Persistence/LocalCacheLocationMigration.h"
 #include "Logger.h"
 #include "SmatchetLocalization.h"
 #include "Ui/SmatchetToast.h" // the completion toast (the recreate has no other UI)
@@ -29,9 +31,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <exception>
 #include <future>
+#include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -134,15 +139,448 @@ std::string AppController::GetResolvedLocalCacheDbPath() const {
     return p.string();
 }
 
+void AppController::SetLocalCacheStatus_(const smatchet::persistence::LocalCacheStatus& status, bool notify) {
+    {
+        std::lock_guard<std::mutex> lock(localCacheStatusMutex_);
+        localCacheStatus_ = status;
+        localCacheNoticePending_ = notify;
+    }
+    localCacheState_.store(static_cast<std::uint8_t>(status.State), std::memory_order_release);
+}
+
+smatchet::persistence::LocalCacheStatus AppController::GetLocalCacheStatus() const {
+    std::lock_guard<std::mutex> lock(localCacheStatusMutex_);
+    return localCacheStatus_;
+}
+
+smatchet::persistence::CacheEnqueueBlock AppController::LocalCacheEnqueueBlock() const {
+    using smatchet::persistence::CacheEnqueueBlock;
+    using smatchet::persistence::LocalCacheState;
+    const LocalCacheState state = static_cast<LocalCacheState>(localCacheState_.load(std::memory_order_acquire));
+    if (state == LocalCacheState::Opening) {
+        return CacheEnqueueBlock::Opening;
+    }
+    if (cacheRecreating_.load()) {
+        return CacheEnqueueBlock::Recreating;
+    }
+    return state == LocalCacheState::SessionOnly ? CacheEnqueueBlock::SessionOnly : CacheEnqueueBlock::None;
+}
+
+std::string AppController::TakeLocalCacheStartupNotice() {
+    smatchet::persistence::LocalCacheStatus status;
+    {
+        std::lock_guard<std::mutex> lock(localCacheStatusMutex_);
+        if (!localCacheNoticePending_) {
+            return std::string();
+        }
+        localCacheNoticePending_ = false;
+        status = localCacheStatus_;
+    }
+    smatchet::persistence::LocalCacheNoticeStrings strings;
+    strings.SessionOnly = SmatchetLocalization::T(
+        "cache.notice.session_only",
+        "The local database at {path} could not be opened ({error}). Smatchet is using a temporary cache for this "
+        "session: edits cannot be saved offline until it opens.");
+    strings.Rebuilt = SmatchetLocalization::T(
+        "cache.notice.rebuilt",
+        "The local database was damaged and has been rebuilt. The damaged copy is kept at {quarantined}.");
+    strings.RebuiltSalvaged = SmatchetLocalization::T(
+        "cache.notice.rebuilt_salvaged",
+        "The local database was damaged and has been rebuilt. {rows} queued item(s) were recovered. The damaged copy "
+        "is kept at {quarantined}.");
+    strings.RebuiltSalvageIncomplete = SmatchetLocalization::T(
+        "cache.notice.rebuilt_salvage_incomplete",
+        "The local database was damaged and has been rebuilt. {rows} queued item(s) were recovered, but some queued "
+        "changes could not be. The damaged copy is kept at {quarantined}.");
+    return smatchet::persistence::DescribeLocalCacheStartupNotice(status, strings);
+}
+
+bool AppController::IsLocalCacheOpening() const {
+    return localCacheState_.load(std::memory_order_acquire) ==
+           static_cast<std::uint8_t>(smatchet::persistence::LocalCacheState::Opening);
+}
+
+bool AppController::WaitForLocalCacheOpen(std::chrono::milliseconds timeout) {
+    // The completion is a main-thread task, so a caller with no frame loop (the one-shot CLI, a test) pumps it here.
+    // Call it outside a main-thread drain: a completion already swapped into the running drain's batch is invisible to
+    // the nested pump, so the wait would run to its timeout.
+    const std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + timeout;
+    while (IsLocalCacheOpening()) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+        DrainMainThreadOnce();
+        if (IsLocalCacheOpening()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    return true;
+}
+
+void AppController::RunOneTimeCacheMigrations_(LocalCacheManager& cache, const std::string& resolvedCacheKey,
+                                               const std::vector<std::pair<std::string, std::string>>& rekeys) {
+    try {
+        // Legacy rows were necessarily cached against the then-only configured backend.
+        (void)cache.RunOneTimeTicketsV2CopyMigration(resolvedCacheKey);
+    } catch (const std::exception& ex) {
+        // Pillar 3 graceful degradation: a failed copy leaves the flag unset (transactional), so the next launch
+        // retries; the session continues with whatever v2 already holds.
+        LOG_ERROR("AppController: tickets_v2 copy migration failed: %s", ex.what());
+    }
+    // Multi-grid Slice 1c: backfill the pending-queue backend_key columns once. Legacy queue rows were necessarily
+    // queued against the then-only configured backend.
+    try {
+        (void)cache.RunOneTimePendingQueueBackendKeyStamp(resolvedCacheKey);
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController: pending-queue backend_key stamp failed: %s", ex.what());
+    }
+    // #2268: move rows keyed by tracker kind ("Jira", "Plane", ...) to the site-and-account keys the cache now uses,
+    // once, after the stamps above and before the first ticket read or replay tick.
+    try {
+        (void)cache.RunOneTimeCacheIdentityRekey(rekeys);
+    } catch (const std::exception& ex) {
+        // The transaction leaves the flag unset on failure. Until the next start the legacy rows sit under keys no
+        // context uses: hidden and held, never replayed.
+        LOG_ERROR("AppController: cache site-key re-key failed: %s", ex.what());
+    }
+}
+
+// Worker: copies the best older cache file to `target` when `target` does not exist yet (never touching the older
+// file) and records the result on `outcome`. Returns the path to open: `target`, or the older file itself when it
+// could not be copied just now (this session then borrows it).
+std::string AppController::ImportLegacyCacheForOpen_(const std::string& target,
+                                                     const std::vector<std::string>& candidates,
+                                                     const std::atomic<bool>& abort, StartupCacheOpenOutcome& outcome) {
+    if (candidates.empty()) {
+        return target;
+    }
+    smatchet::persistence::LegacyCacheImportOptions importOptions;
+    importOptions.Abort = &abort;
+    const smatchet::persistence::LegacyCacheImportResult imported =
+        smatchet::persistence::ImportLegacyLocalCacheIfNeeded(target, candidates, importOptions);
+    outcome.OtherLegacyCaches = imported.OtherCandidates;
+    if (!imported.Detail.empty()) {
+        LOG_INFO("AppController: local cache location: %s", imported.Detail.c_str());
+    }
+    switch (imported.Kind) {
+    case smatchet::persistence::LegacyCacheImportKind::Imported:
+        outcome.ImportedFrom = imported.LegacyPath;
+        break;
+    case smatchet::persistence::LegacyCacheImportKind::UseLegacyThisSession:
+        outcome.UsingLegacyPath = true;
+        outcome.LegacyPath = imported.LegacyPath;
+        outcome.OpenedPath = imported.OpenPath;
+        return imported.OpenPath;
+    case smatchet::persistence::LegacyCacheImportKind::Deferred:
+        // Nothing could be copied and the target must not be created outside the import lock: this session runs on a
+        // memory-only cache (the next start tries again), with the reason shown.
+        throw std::runtime_error("the cache could not be moved from its older location yet: " + imported.Detail);
+    case smatchet::persistence::LegacyCacheImportKind::NotNeeded:
+    case smatchet::persistence::LegacyCacheImportKind::CreatedEmpty:
+    case smatchet::persistence::LegacyCacheImportKind::LegacyUnreadable:
+        break;
+    }
+    return target;
+}
+
+AppController::StartupCacheOpenOutcome
+AppController::OpenStartupCacheOnWorker_(const StartupCacheOpenRequest& request) noexcept {
+    /* PILLAR2_WORKER_ONLY */ // est-latency: 50-25000 ms (open, busy wait, migrations, legacy sweeps)
+    StartupCacheOpenOutcome outcome;
+    outcome.OpenedPath = request.TargetPath;
+    try {
+        const std::string openPath =
+            ImportLegacyCacheForOpen_(request.TargetPath, request.LegacyCandidates, cacheRecreateAbort_, outcome);
+        if (cacheRecreateAbort_.load()) {
+            outcome.Aborted = true;
+            return outcome;
+        }
+        LocalCacheManager::OpenOptions options;
+        options.Abort = &cacheRecreateAbort_;
+        // An older location's file borrowed for this session is not ours to repair: a corrupt one is never moved aside.
+        options.RebuildCorruptFile = !outcome.UsingLegacyPath;
+        std::shared_ptr<LocalCacheManager> cache = std::make_shared<LocalCacheManager>(openPath, options);
+        if (cacheRecreateAbort_.load()) {
+            outcome.Aborted = true;
+            return outcome;
+        }
+        try {
+            outcome.LegacyDropped = cache->RunOneTimeLegacyDropPendingAtMaxAttempts();
+        } catch (const std::exception& ex) {
+            LOG_ERROR("AppController: legacy pending cleanup failed: %s", ex.what());
+        }
+        RunOneTimeCacheMigrations_(*cache, request.FocusedCacheKey, request.Rekeys);
+        if (offlineQueue_ && !cacheRecreateAbort_.load()) {
+            outcome.QueueChangedBySweep = offlineQueue_->RunLegacyProjectSweepOn(*cache, request.ActiveTrackerType);
+        }
+        if (request.ActiveTrackerType == "Plane" && !cacheRecreateAbort_.load()) {
+            try {
+                // One-shot: the saved Plane views are checked once for a project scope (logged on the UI thread, where
+                // the backend is reachable), then the flag stops it from ever looking again.
+                static const std::string kPlaneSweepFlag = "legacy_plane_view_swept_v1";
+                if (!cache->HasCacheMetaFlag(kPlaneSweepFlag)) {
+                    const PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+                    const auto bucket = disk.Backends.find(ConfigManager::NormalizeViewsBackendKey("Plane"));
+                    if (bucket != disk.Backends.end()) {
+                        for (const ViewDefinition& view : bucket->second.Views) {
+                            outcome.PlaneViewsToCheck.push_back(std::make_pair(view.Name, view.Jql));
+                        }
+                    }
+                    cache->SetCacheMetaFlag(kPlaneSweepFlag);
+                }
+            } catch (const std::exception& ex) {
+                LOG_ERROR("AppController: legacy Plane-view sweep failed: %s", ex.what());
+            }
+        }
+        if (cacheRecreateAbort_.load()) {
+            outcome.Aborted = true;
+            return outcome;
+        }
+        outcome.Recovery = cache->RecoveryReport();
+        if (!outcome.Recovery.Rebuilt) {
+            try {
+                (void)cache->ReadLastRecoveryReport(outcome.Recovery); // an earlier launch's rebuild, for Preferences
+            } catch (const std::exception& ex) {
+                LOG_WARN("AppController: the last recovery record could not be read: %s", ex.what());
+            }
+        }
+        outcome.OpenedCache = std::move(cache);
+        outcome.Opened = true;
+        return outcome;
+    } catch (const std::exception& ex) {
+        outcome.Error = ex.what();
+    } catch (...) { // catch-all-ok: recorded as the failure reason and degraded to a session-only cache below
+        outcome.Error = "unknown exception";
+    }
+    if (cacheRecreateAbort_.load()) {
+        outcome.Aborted = true;
+        return outcome;
+    }
+    LOG_ERROR("AppController: the local cache '%s' could not be opened (%s); continuing with a session-only cache",
+              request.TargetPath.c_str(), outcome.Error.c_str());
+    // A corrupt file is rebuilt inside the constructor, so a throw here is an environment fault: an unwritable or
+    // missing directory, a locked file, or too old an SQLite. Reads and sync still work against a memory-only cache.
+    // Durable enqueues are refused with the reason (CacheEnqueueBlock::SessionOnly) instead of being lost at exit.
+    outcome.SessionOnly = true;
+    outcome.ImportedFrom.clear();
+    outcome.UsingLegacyPath = false;
+    outcome.LegacyPath.clear();
+    outcome.OpenedPath = request.TargetPath;
+    try {
+        outcome.OpenedCache = std::make_shared<LocalCacheManager>(":memory:");
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController: the session-only cache could not be opened either: %s", ex.what());
+        outcome.OpenedCache.reset();
+    } catch (...) { // catch-all-ok: no cache at all; every reader null-guards
+        LOG_ERROR("AppController: the session-only cache could not be opened either: unknown exception");
+        outcome.OpenedCache.reset();
+    }
+    return outcome;
+}
+
+std::shared_ptr<std::vector<std::thread>>
+AppController::QuiescePaneSyncsForCacheGate_(std::vector<TicketSyncService*>& outServices) {
+    // DR6: quiesce EVERY live pane's streaming-sync worker, not just the focused one. Each non-focused
+    // GridLiveContext runs its own TicketSyncService std::thread that dereferences Cache via the sync-worker path.
+    // The services are flagged cancelled, blocked from starting anything new, and hand their worker threads over:
+    // the UI thread never joins them (a request on the wire runs to its own timeout), a worker does.
+    outServices = CollectPaneSyncServices_();
+    std::shared_ptr<std::vector<std::thread>> syncThreads = std::make_shared<std::vector<std::thread>>();
+    for (TicketSyncService* svc : outServices) {
+        std::thread handedOut = svc->BeginCacheTeardown();
+        if (handedOut.joinable()) {
+            syncThreads->push_back(std::move(handedOut));
+        }
+    }
+    return syncThreads;
+}
+
+void AppController::LaunchStartupCacheOpen_(StartupCacheOpenRequest request) {
+    // UI thread. The gate stays up from here until FinishStartupCacheOpen_: no sync starts (requests are held), and an
+    // enqueue is refused with "still opening".
+    if (shuttingDown_.load()) {
+        return;
+    }
+    cacheRecreating_.store(true);
+    {
+        smatchet::persistence::LocalCacheStatus status = GetLocalCacheStatus();
+        status.State = smatchet::persistence::LocalCacheState::Opening;
+        status.Path = request.TargetPath;
+        status.LastError.clear();
+        SetLocalCacheStatus_(status, false);
+    }
+    if (cacheRecreateWorker_.joinable()) {
+        cacheRecreateWorker_.join(); // the previous run posted its completion as its last step: an instant join
+    }
+    cacheRecreateAbort_.store(false);
+    std::vector<TicketSyncService*> services;
+    const std::shared_ptr<std::vector<std::thread>> syncThreads = QuiescePaneSyncsForCacheGate_(services);
+    const bool isReopen = request.IsReopen;
+    try {
+        cacheRecreateWorker_ = std::thread([this, syncThreads, isReopen, request]() {
+            for (std::thread& t : *syncThreads) {
+                if (t.joinable()) {
+                    t.join();
+                }
+            }
+            syncThreads->clear();
+            StartupCacheOpenOutcome outcome = OpenStartupCacheOnWorker_(request);
+            if (outcome.Aborted) {
+                return; // shutting down: nothing is published, and the controller's teardown joins this thread
+            }
+            mainThreadDispatcher.PostCompletionToMainThread(
+                [this, outcome, isReopen]() { FinishStartupCacheOpen_(outcome, isReopen); });
+        });
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController: the cache open worker could not start (%s); using a session-only cache", ex.what());
+        for (std::thread& t : *syncThreads) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
+        StartupCacheOpenOutcome outcome;
+        outcome.OpenedPath = request.TargetPath;
+        outcome.Error = ex.what();
+        outcome.SessionOnly = true;
+        try {
+            outcome.OpenedCache = std::make_shared<LocalCacheManager>(":memory:"); // no file I/O: fine on this thread
+        } catch (const std::exception& memEx) {
+            LOG_ERROR("AppController: the session-only cache could not be opened either: %s", memEx.what());
+        }
+        FinishStartupCacheOpen_(std::move(outcome), isReopen);
+    }
+}
+
+void AppController::FinishStartupCacheOpen_(StartupCacheOpenOutcome outcome, bool isReopen) {
+    // UI thread, and no SQLite or file I/O: the worker did all of it.
+    if (outcome.Aborted || shuttingDown_.load()) {
+        return;
+    }
+    std::atomic_store(&Cache, outcome.OpenedCache);
+    smatchet::persistence::LocalCacheStatus status = GetLocalCacheStatus();
+    status.Path = outcome.OpenedPath;
+    status.State = outcome.SessionOnly ? smatchet::persistence::LocalCacheState::SessionOnly
+                                       : smatchet::persistence::LocalCacheState::Ready;
+    status.LastError = outcome.SessionOnly ? outcome.Error : std::string();
+    status.UsingLegacyPath = outcome.UsingLegacyPath;
+    status.LegacyPath = outcome.LegacyPath;
+    status.ImportedFrom = outcome.ImportedFrom;
+    status.OtherLegacyCaches = outcome.OtherLegacyCaches;
+    status.LastRecovery = outcome.Recovery;
+    // A session-only start and a rebuild of this launch are told to the user once; a recovery from an earlier launch is
+    // only shown in Preferences.
+    SetLocalCacheStatus_(status, outcome.SessionOnly || (outcome.Recovery.Rebuilt && outcome.Recovery.FromThisLaunch));
+    localCacheOpenGeneration_.fetch_add(1,
+                                        std::memory_order_acq_rel); // after the status: a reader that sees it sees it
+
+    if (outcome.LegacyDropped > 0 && offlineQueue_) {
+        char buf[384];
+        std::snprintf(buf, sizeof(buf),
+                      "Startup: dropped %zu legacy offline pending row(s) already at max retries "
+                      "(not archived). They were removed from the active queue only.",
+                      outcome.LegacyDropped);
+        offlineQueue_->legacyPendingStartupBanner_ = buf;
+    }
+    ITrackerBackend* const backend = focusedContext().Backend.get();
+    if (backend != nullptr) {
+        for (std::size_t i = 0; i < outcome.PlaneViewsToCheck.size(); ++i) {
+            if (backend->Connectivity().ExtractProjectFromQuery(outcome.PlaneViewsToCheck[i].second).empty()) {
+                LOG_WARN("Plane view '%s' has no project scope; pick a project in the view editor",
+                         outcome.PlaneViewsToCheck[i].first.c_str());
+            }
+        }
+    }
+
+    // The queue views and every pane's rows come from the cache that is now there.
+    if (offlineQueue_) {
+        offlineQueue_->RequestSnapshotRefresh();
+    }
+    if (pendingActions_) {
+        pendingActions_->RequestSnapshotRefresh();
+    }
+    if (leftViewHistory_) {
+        if (isReopen) {
+            leftViewHistory_->ResetForCacheRecreate(); // the rows on screen came from the memory-only cache
+        } else {
+            leftViewHistory_->Load(); // the load at init found no cache yet: read the history now that it is there
+        }
+    }
+    RefreshLocalDataAsync();
+    RereadOtherPanesFromCache_();
+    // The saved user roster is read once per launch by the UI, on its first draw, which is before this open published
+    // the cache: an offline start would show no roster for the whole session. Seed it now (a live roster is never
+    // overridden).
+    SeedAvailableUsersFromStoreAsync();
+
+    const TicketSyncService* const focusedSync = focusedContext().ticketSync_.get();
+    for (TicketSyncService* svc : CollectPaneSyncServices_()) {
+        // After a successful retry the focused pane's held request rides on the full sync started below; a retry that
+        // failed again starts no sync, so nothing is folded.
+        svc->EndCacheTeardown(isReopen && outcome.Opened && svc == focusedSync);
+    }
+    cacheRecreating_.store(false); // down before the follow-up sync starts
+    if (isReopen && outcome.Opened) {
+        LOG_INFO("AppController: the local cache is open on its file again.");
+        SyncWithBackendMode(nullptr, nullptr, smatchet::sync::SyncMode::Full);
+    }
+}
+
+VoidResult AppController::StartReopenLocalCache() {
+    // UI thread.
+    if (shuttingDown_.load()) {
+        return VoidResult::Err("Application is shutting down.");
+    }
+    if (localCacheState_.load(std::memory_order_acquire) !=
+        static_cast<std::uint8_t>(smatchet::persistence::LocalCacheState::SessionOnly)) {
+        return VoidResult::Err("The local cache is already open.");
+    }
+    bool expected = false;
+    if (!cacheRecreating_.compare_exchange_strong(expected, true)) {
+        return VoidResult::Err("The local cache is busy; try again in a moment.");
+    }
+    StartupCacheOpenRequest request;
+    request.IsReopen = true;
+    request.TargetPath = localCacheDbPath_;
+    request.LegacyCandidates = legacyCacheCandidates_;
+    request.FocusedCacheKey = focusedContext().CacheBackendKeyCopy();
+    request.Rekeys = smatchet::cache_keys::LegacyCacheKeyRekeys(ConfigManager::Load());
+    ITrackerBackend* const backend = focusedContext().Backend.get();
+    request.ActiveTrackerType =
+        backend != nullptr ? backend->Connectivity().GetTrackerType() : ConfigManager::Load().TrackerType;
+    LaunchStartupCacheOpen_(std::move(request));
+    return VoidOk();
+}
+
+void AppController::StartStartupCacheOpenForTest(const std::string& dbPath, const std::string& cacheKey,
+                                                 const std::vector<std::string>& legacyCandidates) {
+    localCacheDbPath_ = dbPath;
+    legacyCacheCandidates_ = legacyCandidates;
+    WireCoreServices();
+    initLeftViewHistory_(); // as InitConfig does: its first load runs while the cache is still opening
+    focusedContext().SetCacheBackendKey(cacheKey);
+    StartupCacheOpenRequest request;
+    request.TargetPath = dbPath;
+    request.LegacyCandidates = legacyCandidates;
+    request.FocusedCacheKey = cacheKey;
+    LaunchStartupCacheOpen_(std::move(request));
+}
+
 VoidResult AppController::StartRecreateLocalCacheDatabase(
     std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone) {
-    // UI thread. The gate goes up first, so two callers cannot both start; a refusal lowers it again.
+    // UI thread. While the startup open runs, the gate is already up for it: say so instead of "already recreating".
+    if (IsLocalCacheOpening()) {
+        return VoidResult::Err(smatchet::sync::CacheRecreateStartRefusal(false, false, false, true, true));
+    }
+    // The gate goes up first, so two callers cannot both start; a refusal lowers it again.
     bool expected = false;
     if (!cacheRecreating_.compare_exchange_strong(expected, true)) {
         return VoidResult::Err(smatchet::sync::CacheRecreateStartRefusal(false, false, true));
     }
-    const std::string refusal =
-        smatchet::sync::CacheRecreateStartRefusal(localCacheDbPath_.empty(), shuttingDown_.load(), false);
+    const std::string refusal = smatchet::sync::CacheRecreateStartRefusal(
+        localCacheDbPath_.empty(), shuttingDown_.load(), false,
+        localCacheState_.load(std::memory_order_acquire) !=
+            static_cast<std::uint8_t>(smatchet::persistence::LocalCacheState::Ready),
+        IsLocalCacheOpening(), GetLocalCacheStatus().UsingLegacyPath);
     if (!refusal.empty()) {
         cacheRecreating_.store(false);
         return VoidResult::Err(refusal);
@@ -151,18 +589,9 @@ VoidResult AppController::StartRecreateLocalCacheDatabase(
         cacheRecreateWorker_.join(); // the previous run posted its completion as its last step: an instant join
     }
 
-    // DR6: quiesce EVERY live pane's streaming-sync worker, not just the focused one. Each non-focused
-    // GridLiveContext runs its own TicketSyncService std::thread that dereferences Cache via the sync-worker path.
-    // The services are flagged cancelled, blocked from starting anything new, and hand their worker threads over:
-    // the UI thread never joins them (a request on the wire runs to its own timeout), the recreate worker does.
-    const std::vector<TicketSyncService*> services = CollectPaneSyncServices_();
-    auto syncThreads = std::make_shared<std::vector<std::thread>>();
-    for (TicketSyncService* svc : services) {
-        std::thread handedOut = svc->BeginCacheTeardown();
-        if (handedOut.joinable()) {
-            syncThreads->push_back(std::move(handedOut));
-        }
-    }
+    // The recreate worker joins the sync threads handed out here (the UI thread never does).
+    std::vector<TicketSyncService*> services;
+    const std::shared_ptr<std::vector<std::thread>> syncThreads = QuiescePaneSyncsForCacheGate_(services);
     const std::string focusedCacheKey = focusedContext().CacheBackendKeyCopy();
     try {
         cacheRecreateWorker_ = std::thread([this, syncThreads, focusedCacheKey, onDone]() {
@@ -563,11 +992,15 @@ bool AppController::MarkFieldEditConflictForTest(std::int64_t id, const std::str
 }
 
 bool AppController::EnsureLocalCacheForUiTest() {
-    // Bucket-E opt-in (SMATCHET_UITEST_WITH_LOCAL_CACHE=1). A normal boot already
-    // opened a file-backed cache in InitConfig; only stand one up when it is unset
+    // Bucket-E opt-in (SMATCHET_UITEST_WITH_LOCAL_CACHE=1). The startup open runs on a worker: wait for it first, or
+    // its cache would replace the throwaway one below. A normal boot already
+    // opened a file-backed cache in InitBackends; only stand one up when it is unset
     // so this is a true no-op in the common case. The in-memory db lives for the
     // AppController's lifetime (torn down with `Cache`), so the scenario's offline
     // writes never touch the developer profile or any file.
+    if (IsLocalCacheOpening() && !WaitForLocalCacheOpen(std::chrono::seconds(30))) {
+        LOG_WARN("EnsureLocalCacheForUiTest: the local cache did not finish opening in 30 s");
+    }
     if (!Cache) {
         try {
             // DR6: publish via atomic_store to stay consistent with the off-thread snapshot

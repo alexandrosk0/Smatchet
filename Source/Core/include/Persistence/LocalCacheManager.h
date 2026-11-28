@@ -1,5 +1,6 @@
 #pragma once
 #include <SQLiteCpp/SQLiteCpp.h>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -7,6 +8,8 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -16,6 +19,7 @@
 #include "LeftViewRecord.h"
 #include "ISyncCache.h"
 #include "OfflineQueueReplayPolicy.h"
+#include "Persistence/LocalCacheStatusPure.h"
 
 #if defined(SMATCHET_WITH_AI)
 #include "AiTypes.h"
@@ -59,12 +63,47 @@ class LocalCacheCloseSignal {
     bool closed_ = false;
 };
 
+namespace lcm_detail {
+struct OpenBusyState; // defined in LocalCacheManager.cpp
+}
+
 class LocalCacheManager : public ISyncCache, public ILookupCache {
   public:
+    /// Options for an open that must stay interruptible (a startup open on a worker).
+    struct OpenOptions {
+        /// While the open waits for a lock another process holds, this is checked every 10 ms; once it is true the open
+        /// gives up at once (the constructor throws) instead of waiting out the busy timeout. Must outlive the call.
+        const std::atomic<bool>* Abort = nullptr;
+        /// False for a file that is not ours to repair (an older location's cache opened for one session): a corrupt
+        /// file then makes the constructor throw instead of being moved aside and replaced by an empty one.
+        bool RebuildCorruptFile = true;
+    };
+
     explicit LocalCacheManager(const std::string& dbPath);
+    LocalCacheManager(const std::string& dbPath, const OpenOptions& options);
 
     /// Fires when this manager is fully destroyed (connection closed), on whichever thread drops the last reference.
     std::shared_ptr<LocalCacheCloseSignal> CloseSignal() const { return closeNotifier_.Signal; }
+
+    /// Proof that the calling thread holds this manager's connection. Every public method takes one for its whole
+    /// operation; the SQLite connection is reachable only through `conn(guard)`, so code that touches it without
+    /// the lock does not compile. One guard per thread at a time: a same-thread nested guard (a public method
+    /// calling another public method) throws `std::logic_error` in every build instead of deadlocking. Not
+    /// copyable or movable, and constructible only by the manager.
+    class ConnGuard {
+      public:
+        ConnGuard(const ConnGuard&) = delete;
+        ConnGuard& operator=(const ConnGuard&) = delete;
+        ~ConnGuard();
+
+      private:
+        friend class LocalCacheManager;
+        friend struct LocalCacheManagerTestAccess;
+        ConnGuard(const LocalCacheManager& owner, const char* op);
+
+        const LocalCacheManager& owner_;
+        std::unique_lock<std::mutex> lock_;
+    };
 
     // Ticket storage is namespaced by `backendKey` (the NormalizeViewsBackendKey output for the
     // owning backend — multi-grid Slice 1b, ADR-0018 decision 4). All ticket methods read/write
@@ -133,6 +172,11 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
      * next start retries). @return rows moved. */
     size_t RunOneTimeCacheIdentityRekey(const std::vector<std::pair<std::string, std::string>>& fromTo);
 
+    /// What the corrupt-file rebuild of THIS open did (`Rebuilt` is false when the file opened normally).
+    const smatchet::persistence::LocalCacheRecoveryReport& RecoveryReport() const noexcept { return recovery_; }
+    /// The last rebuild recorded in the file, from this or an earlier launch. False when none was recorded.
+    bool ReadLastRecoveryReport(smatchet::persistence::LocalCacheRecoveryReport& out);
+
     /** Generic `cache_meta` flag helpers used by one-shot migration sweeps. */
     bool HasCacheMetaFlag(const std::string& key) override;
     void SetCacheMetaFlag(const std::string& key) override;
@@ -144,6 +188,8 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     std::vector<PendingActionRecord> LoadPendingActions() override;
     void UpdatePendingAction(std::int64_t id, const std::string& state, int attempts,
                              const std::string& lastError) override;
+    bool TakeOverPendingActionClaim(std::int64_t id, std::int64_t staleClaimedAtEpochSec, int attempts,
+                                    const std::string& lastError) override;
     bool TransitionPendingAction(std::int64_t id, const std::string& fromState, const std::string& toState,
                                  int attempts, const std::string& lastError) override;
     void DeletePendingAction(std::int64_t id) override;
@@ -239,38 +285,67 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
 #endif
 
   private:
-    /// Write one ticket's rows via the cached prepared statements. Caller holds `stmtMutex_`
-    /// and owns the enclosing SQLite::Transaction (SaveTicket / SaveTickets). See the .cpp.
-    void writeTicketRows_(const std::string& backendKey, const CachedTicket& ticket);
-    /// Read one ticket's rows (false when absent). Caller holds `stmtMutex_`; no transaction needed.
-    bool readTicketRows_(const std::string& backendKey, const std::string& ticketId, CachedTicket& out);
-    /// `ticket_sync_meta` helpers; all assume the caller holds `stmtMutex_` (they use cached statements).
-    void deleteSyncMeta_(const std::string& backendKey, const std::string& ticketId);
-    bool readSyncMeta_(const std::string& backendKey, const std::string& ticketId, TicketSyncMeta& out);
-    void writeSyncMeta_(const std::string& backendKey, const std::string& ticketId, const TicketSyncMeta& meta);
+    friend struct LocalCacheManagerTestAccess;
+
+    /// The connection, for the holder of `guard` (a guard of ANOTHER manager throws `std::logic_error`).
+    SQLite::Database& conn(const ConnGuard& guard);
+
+    /// Run `body(guard, db)` in one transaction, retrying the whole attempt on a transient BUSY/LOCKED, and return
+    /// its value. Defined in LocalCacheManagerInternal.h (private to the LocalCacheManager*.cpp files). The body
+    /// can run more than once: it returns its outputs, never writes through a captured reference, and does no
+    /// non-SQLite side effect.
+    template <typename Body>
+    auto RunTxn_(const char* op,
+                 Body&& body) -> decltype(body(std::declval<const ConnGuard&>(), std::declval<SQLite::Database&>()));
+
+    // The helpers below take the guard first: they run inside a public method's guard, never take their own, and so
+    // can be called from one without re-entering the lock.
+    /// Write one ticket's rows via the cached prepared statements. The caller owns the enclosing
+    /// SQLite::Transaction (SaveTicket / SaveTickets). See the .cpp.
+    void writeTicketRows_(const ConnGuard& guard, const std::string& backendKey, const CachedTicket& ticket);
+    /// Read one ticket's rows (false when absent); no transaction needed.
+    bool readTicketRows_(const ConnGuard& guard, const std::string& backendKey, const std::string& ticketId,
+                         CachedTicket& out);
+    /// `ticket_sync_meta` helpers (they use cached statements).
+    void deleteSyncMeta_(const ConnGuard& guard, const std::string& backendKey, const std::string& ticketId);
+    bool readSyncMeta_(const ConnGuard& guard, const std::string& backendKey, const std::string& ticketId,
+                       TicketSyncMeta& out);
+    void writeSyncMeta_(const ConnGuard& guard, const std::string& backendKey, const std::string& ticketId,
+                        const TicketSyncMeta& meta);
     /// Delete one ticket's rows + meta inside the caller's transaction.
-    void deleteTicketRows_(const std::string& backendKey, const std::string& ticketId);
+    void deleteTicketRows_(const ConnGuard& guard, const std::string& backendKey, const std::string& ticketId);
+    /// Best effort, after a corrupt file was moved aside and replaced: copies the queue tables out of the quarantined
+    /// copy into the fresh cache and records what could and could not be carried over (`recovery_`, plus the
+    /// `last_corruption_recovery_v1` `cache_meta` value). Never throws.
+    void SalvageFromQuarantine_(const ConnGuard& guard, const std::string& quarantinedMain,
+                                const std::string& quarantinedWal, const std::string& reason) noexcept;
+    smatchet::persistence::LocalCacheRecoveryReport recovery_;
+    /// True while the constructor runs and its caller asked it to stop (OpenOptions::Abort).
+    bool OpenAbortRequested_() const;
+    /// `cache_meta` flag probe / set for code that already holds the guard (the public forms take their own).
+    bool hasCacheMetaFlag_(const ConnGuard& guard, const std::string& key);
+    void setCacheMetaFlag_(const ConnGuard& guard, const std::string& key);
 
     /// Apply WAL + synchronous pragmas + busy-timeout (best-effort; logs on failure).
     /// Re-runnable: called for the initial open and again after a corrupt-file rebuild.
-    void ApplyWalPragmas();
+    void ApplyWalPragmas(const ConnGuard& guard);
     /// Create/upgrade every cache table (additive-only schema). Re-runnable on a fresh
     /// file — the ctor calls it after quarantining + reopening an unreadable cache.
-    void InitSchema();
+    void InitSchema(const ConnGuard& guard);
     /// Create the lookup_cache table (Pillar 6 offline reads); called from InitSchema.
-    void InitLookupCacheSchema_();
+    void InitLookupCacheSchema_(const ConnGuard& guard);
     /// Create the left_view_history table; called from InitSchema.
-    void InitLeftViewHistorySchema_();
+    void InitLeftViewHistorySchema_(const ConnGuard& guard);
     /// Create the pending_actions tables (Pillar 6 offline writes) and turn rows left in `sending`
     /// by an interrupted run into `ambiguous`; called from InitSchema.
-    void InitPendingActionsSchema_();
+    void InitPendingActionsSchema_(const ConnGuard& guard);
     /// Recover from a genuinely-corrupt cache file (ctor caught SQLITE_NOTADB / SQLITE_CORRUPT
     /// from InitSchema): release the handle, quarantine the bad file + its WAL sidecars to
     /// `<db>.corrupt-<ts>`, reopen a fresh DB on the same path, and re-init. A throw here is an
     /// unrecoverable environment fault and propagates.
-    void RebuildFreshAfterCorruption(const SQLite::Exception& ex);
+    void RebuildFreshAfterCorruption(const ConnGuard& guard, const SQLite::Exception& ex);
 
-    /// Sets CloseSignal() when destroyed. Declared first so it is destroyed last: by then `db` and every prepared
+    /// Sets CloseSignal() when destroyed. Declared first so it is destroyed last: by then `db_` and every prepared
     /// statement are gone, so the signal means the connection is really closed.
     struct CloseNotifier {
         std::shared_ptr<LocalCacheCloseSignal> Signal = std::make_shared<LocalCacheCloseSignal>();
@@ -282,23 +357,34 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     CloseNotifier closeNotifier_;
 
     /// On-disk cache path, retained so the ctor's corrupt-file rebuild can reopen the
-    /// same location after quarantining the bad file. Declared before `db` so it is
-    /// initialised first (the `db` member's path argument reads it).
+    /// same location after quarantining the bad file. Declared before `db_` so it is
+    /// initialised first (the `db_` member's path argument reads it).
     const std::string dbPath_;
-    SQLite::Database db;
+    /// Names this cache connection as the claimer of the `sending` rows it writes, so another process's claims are not
+    /// mistaken for ours (and ours are not flipped by a second Smatchet starting up). Fresh per connection.
+    static std::string MakeClaimToken_();
+    const std::string claimToken_ = MakeClaimToken_();
+    /// Busy-wait state of the interruptible open (see OpenOptions); only non-null while the constructor runs.
+    lcm_detail::OpenBusyState* openBusy_ = nullptr;
+    /// The one connection. Reachable only through `conn(guard)`; opened FULLMUTEX, but SQLite's own mutex only
+    /// serializes single calls, so a whole operation (a transaction, a prepared statement's bind-step-reset cycle)
+    /// is serialized by `connMutex_` below.
+    SQLite::Database db_;
 
-    // Cached prepared statements for the hot paths (SaveTicket / TryGetTicket).
-    // Lazily initialised on first use; reset+clearBindings before each bind cycle.
-    // SQLite::Statement (and the underlying sqlite3_stmt) is NOT thread-safe per
-    // <https://sqlite.org/threadsafe.html> — even when the connection itself was
-    // opened with OPEN_FULLMUTEX (which serialises sqlite3_step calls on the
-    // connection), two threads sharing the same prepared statement still race on
-    // bound parameter state and result-row cursors. SaveTicket / TryGetTicket
-    // are called from both the UI thread and the Lua automation worker thread
-    // (via LuaGetTicketBind), so we serialise every cached-statement-using
-    // method through stmtMutex_ below.
-    mutable std::mutex stmtMutex_;
-    SQLite::Statement& stmt(std::unique_ptr<SQLite::Statement>& slot, const char* sql);
+    /// Serializes every operation on `db_` and the cached statements below: ONE non-recursive mutex, held by a
+    /// `ConnGuard` for the whole of each public method. A transaction on the shared connection otherwise absorbs
+    /// another thread's concurrent writes, and a rollback undoes them; SQLite forbids a nested BEGIN on one
+    /// connection. The thread currently holding it is recorded in `connOwner_` so a same-thread re-entry throws.
+    mutable std::mutex connMutex_;
+    mutable std::atomic<std::thread::id> connOwner_{std::thread::id()};
+    static_assert(std::is_trivially_copyable<std::thread::id>::value,
+                  "connOwner_ is a std::atomic<std::thread::id>: the id must be trivially copyable");
+
+    // Cached prepared statements for the hot paths: ticket save and read. Each slot is prepared on first use and
+    // reset with its bindings cleared before every bind cycle. A sqlite3_stmt is not safe to share across threads
+    // even on a FULLMUTEX connection, because the bound parameters and the result cursor belong to the statement,
+    // so the slots are only touched under the connection guard.
+    SQLite::Statement& stmt(const ConnGuard& guard, std::unique_ptr<SQLite::Statement>& slot, const char* sql);
 
     std::unique_ptr<SQLite::Statement> stmt_save_upsert_ticket_;
     std::unique_ptr<SQLite::Statement> stmt_save_delete_fields_;

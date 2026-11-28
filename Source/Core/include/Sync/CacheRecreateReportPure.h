@@ -27,8 +27,13 @@ struct CacheRecreateOutcome {
 };
 
 /// Why a recreate cannot start now ("" = it can): no database path is configured, the application is shutting
-/// down, or another recreate is already running. A refusal changes nothing.
-inline std::string CacheRecreateStartRefusal(bool dbPathEmpty, bool shuttingDown, bool alreadyRecreating) {
+/// down, another recreate is already running, or the cache is not open on its durable file (a session-only run has
+/// no file of its own to delete, and deleting the file the open just failed on could only lose more), or the open
+/// file is an older one borrowed for this session (it belongs to the location it was left at: a wipe there would
+/// take a copy another build still uses). A refusal changes nothing.
+inline std::string CacheRecreateStartRefusal(bool dbPathEmpty, bool shuttingDown, bool alreadyRecreating,
+                                             bool cacheNotOpen = false, bool cacheOpening = false,
+                                             bool usingLegacyPath = false) {
     if (dbPathEmpty) {
         return "Local cache database path is not set.";
     }
@@ -37,6 +42,17 @@ inline std::string CacheRecreateStartRefusal(bool dbPathEmpty, bool shuttingDown
     }
     if (alreadyRecreating) {
         return "The local cache is already being recreated.";
+    }
+    if (cacheOpening) {
+        return "The local cache is still opening. Try again in a moment.";
+    }
+    if (usingLegacyPath) {
+        return "This session is using a cache file from an older location, so it cannot be recreated. Restart Smatchet "
+               "to move it to the current location first.";
+    }
+    if (cacheNotOpen) {
+        return "The local cache is not open on its database file, so it cannot be recreated. Restart Smatchet after "
+               "fixing the cause.";
     }
     return std::string();
 }

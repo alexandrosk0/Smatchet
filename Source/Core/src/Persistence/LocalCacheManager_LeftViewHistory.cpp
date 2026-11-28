@@ -1,11 +1,11 @@
 #include "LocalCacheManager.h"
+#include "LocalCacheManagerInternal.h"
 #include "Logger.h"
 
 #include <SQLiteCpp/SQLiteCpp.h>
 
 #include <cstdint>
 #include <exception>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -17,7 +17,7 @@ namespace {
 
 constexpr const char* kViewListingKind = "view_listing";
 
-void TrimLeftViewRows(SQLite::Database& db, int maxRows) {
+void TrimLeftViewRows(const LocalCacheManager::ConnGuard& /*guard*/, SQLite::Database& db, int maxRows) {
     SQLite::Statement trim(db, "DELETE FROM left_view_history WHERE id NOT IN "
                                "(SELECT id FROM left_view_history ORDER BY left_at DESC, id DESC LIMIT ?)");
     trim.bind(1, maxRows);
@@ -26,7 +26,8 @@ void TrimLeftViewRows(SQLite::Database& db, int maxRows) {
 
 } // namespace
 
-void LocalCacheManager::InitLeftViewHistorySchema_() {
+void LocalCacheManager::InitLeftViewHistorySchema_(const ConnGuard& guard) {
+    SQLite::Database& db = conn(guard);
     db.exec("CREATE TABLE IF NOT EXISTS left_view_history ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "backend_key TEXT NOT NULL, pane_id TEXT NOT NULL, view_id TEXT NOT NULL, view_name TEXT NOT NULL, "
@@ -41,50 +42,56 @@ bool LocalCacheManager::CommitLeftViewDepartures(std::vector<smatchet::LeftViewR
                                                  const std::string& backendKey, const std::string& viewId,
                                                  const std::string& listingJson, std::int64_t listingSavedAtUnixSec) {
     try {
-        // The connection is shared: another thread's BEGIN or COMMIT must not land inside this transaction.
-        std::lock_guard<std::mutex> lock(stmtMutex_);
-        SQLite::Transaction transaction(db);
-        SQLite::Statement insert(db, "INSERT INTO left_view_history (backend_key, pane_id, view_id, view_name, query, "
-                                     "issue_key, summary, kind, reason_kind, reason, reason_detail_json, author, "
-                                     "browse_url, last_known_json, left_at, listed_at) "
-                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id");
-        for (smatchet::LeftViewRecord& row : rows) {
-            insert.reset();
-            insert.clearBindings();
-            insert.bind(1, row.backendKey);
-            insert.bind(2, row.paneId);
-            insert.bind(3, row.viewId);
-            insert.bind(4, row.viewName);
-            insert.bind(5, row.query);
-            insert.bind(6, row.issueKey);
-            insert.bind(7, row.summary);
-            insert.bind(8, static_cast<int>(row.kind));
-            insert.bind(9, static_cast<int>(row.reasonKind));
-            insert.bind(10, row.reason);
-            insert.bind(11, row.reasonDetailJson);
-            insert.bind(12, row.author);
-            insert.bind(13, row.browseUrl);
-            insert.bind(14, row.lastKnownJson);
-            insert.bind(15, static_cast<std::int64_t>(row.leftAtUnixSec));
-            insert.bind(16, static_cast<std::int64_t>(row.listedAtUnixSec));
-            // RETURNING, not last_insert_rowid: a lookup upsert on another thread can move that between statements.
-            if (insert.executeStep()) {
-                row.id = insert.getColumn(0).getInt64();
-            }
-            insert.reset(); // a statement still stepping would block the COMMIT
+        // The body can run again after a BUSY retry, so it only reads `rows` and returns the new ids; they reach
+        // `rows[i].id` after the commit.
+        const std::vector<std::int64_t> ids = RunTxn_(
+            "CommitLeftViewDepartures", [&](const ConnGuard& guard, SQLite::Database& db) -> std::vector<std::int64_t> {
+                std::vector<std::int64_t> inserted(rows.size());
+                SQLite::Statement insert(db, "INSERT INTO left_view_history (backend_key, pane_id, view_id, "
+                                             "view_name, query, issue_key, summary, kind, reason_kind, reason, "
+                                             "reason_detail_json, author, browse_url, last_known_json, left_at, "
+                                             "listed_at) "
+                                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id");
+                for (std::size_t i = 0; i < rows.size(); ++i) {
+                    const smatchet::LeftViewRecord& row = rows[i];
+                    insert.reset();
+                    insert.clearBindings();
+                    insert.bind(1, row.backendKey);
+                    insert.bind(2, row.paneId);
+                    insert.bind(3, row.viewId);
+                    insert.bind(4, row.viewName);
+                    insert.bind(5, row.query);
+                    insert.bind(6, row.issueKey);
+                    insert.bind(7, row.summary);
+                    insert.bind(8, static_cast<int>(row.kind));
+                    insert.bind(9, static_cast<int>(row.reasonKind));
+                    insert.bind(10, row.reason);
+                    insert.bind(11, row.reasonDetailJson);
+                    insert.bind(12, row.author);
+                    insert.bind(13, row.browseUrl);
+                    insert.bind(14, row.lastKnownJson);
+                    insert.bind(15, static_cast<std::int64_t>(row.leftAtUnixSec));
+                    insert.bind(16, static_cast<std::int64_t>(row.listedAtUnixSec));
+                    // RETURNING reads the id from this statement itself, not from the connection.
+                    inserted[i] = lcm_detail::StepReturningId(insert);
+                    insert.reset(); // a statement still stepping would block the COMMIT
+                }
+                SQLite::Statement listing(db, "INSERT OR REPLACE INTO lookup_cache (backend_key, kind, cache_key, "
+                                              "payload_json, schema_version, updated_at) VALUES (?, ?, ?, ?, 1, ?)");
+                listing.bind(1, backendKey);
+                listing.bind(2, kViewListingKind);
+                listing.bind(3, viewId);
+                listing.bind(4, listingJson);
+                listing.bind(5, static_cast<std::int64_t>(listingSavedAtUnixSec));
+                listing.exec();
+                if (!rows.empty()) {
+                    TrimLeftViewRows(guard, db, maxRows);
+                }
+                return inserted;
+            });
+        for (std::size_t i = 0; i < rows.size() && i < ids.size(); ++i) {
+            rows[i].id = ids[i];
         }
-        SQLite::Statement listing(db, "INSERT OR REPLACE INTO lookup_cache (backend_key, kind, cache_key, "
-                                      "payload_json, schema_version, updated_at) VALUES (?, ?, ?, ?, 1, ?)");
-        listing.bind(1, backendKey);
-        listing.bind(2, kViewListingKind);
-        listing.bind(3, viewId);
-        listing.bind(4, listingJson);
-        listing.bind(5, static_cast<std::int64_t>(listingSavedAtUnixSec));
-        listing.exec();
-        if (!rows.empty()) {
-            TrimLeftViewRows(db, maxRows);
-        }
-        transaction.commit();
         return true;
     } catch (const std::exception& ex) {
         LOG_WARN("LocalCacheManager::CommitLeftViewDepartures failed rows=%zu: %s", rows.size(), ex.what());
@@ -95,6 +102,8 @@ bool LocalCacheManager::CommitLeftViewDepartures(std::vector<smatchet::LeftViewR
 std::vector<smatchet::LeftViewRecord> LocalCacheManager::LoadLeftViewRows(int maxRows) {
     std::vector<smatchet::LeftViewRecord> out;
     try {
+        const ConnGuard guard(*this, "LoadLeftViewRows");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement stmt(db, "SELECT id, backend_key, pane_id, view_id, view_name, query, issue_key, summary, "
                                    "kind, reason_kind, reason, reason_detail_json, author, browse_url, "
                                    "last_known_json, left_at, listed_at FROM left_view_history "
@@ -129,8 +138,8 @@ std::vector<smatchet::LeftViewRecord> LocalCacheManager::LoadLeftViewRows(int ma
 
 bool LocalCacheManager::UpdateLeftViewReason(const smatchet::LeftViewRecord& row) {
     try {
-        // Same shared connection: this write must not land inside another thread's open transaction.
-        std::lock_guard<std::mutex> lock(stmtMutex_);
+        const ConnGuard guard(*this, "UpdateLeftViewReason");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement stmt(db, "UPDATE left_view_history SET kind = ?, reason_kind = ?, reason = ?, "
                                    "reason_detail_json = ?, author = ?, browse_url = ?, summary = ? WHERE id = ?");
         stmt.bind(1, static_cast<int>(row.kind));
@@ -150,7 +159,8 @@ bool LocalCacheManager::UpdateLeftViewReason(const smatchet::LeftViewRecord& row
 
 bool LocalCacheManager::DeleteLeftViewRow(std::int64_t id) {
     try {
-        std::lock_guard<std::mutex> lock(stmtMutex_);
+        const ConnGuard guard(*this, "DeleteLeftViewRow");
+        SQLite::Database& db = conn(guard);
         SQLite::Statement stmt(db, "DELETE FROM left_view_history WHERE id = ?");
         stmt.bind(1, static_cast<std::int64_t>(id));
         return stmt.exec() > 0;
@@ -162,8 +172,8 @@ bool LocalCacheManager::DeleteLeftViewRow(std::int64_t id) {
 
 bool LocalCacheManager::ClearLeftViewRows() {
     try {
-        std::lock_guard<std::mutex> lock(stmtMutex_);
-        db.exec("DELETE FROM left_view_history");
+        const ConnGuard guard(*this, "ClearLeftViewRows");
+        conn(guard).exec("DELETE FROM left_view_history");
         return true;
     } catch (const std::exception& ex) {
         LOG_WARN("LocalCacheManager::ClearLeftViewRows failed: %s", ex.what());

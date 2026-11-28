@@ -345,7 +345,7 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaCreateIssueBind(sol
         // shared "being recreated, retry in a moment" message, checked before the cache is looked at.
         std::string queueRefusal;
         auto cacheSnap = std::atomic_load(&app_.Cache);
-        if (!cacheSnap && !app_.IsLocalCacheRecreating()) {
+        if (!cacheSnap && app_.LocalCacheEnqueueBlock() == smatchet::persistence::CacheEnqueueBlock::None) {
             return {sol::make_object(sv, sol::nil),
                     std::string("Local cache not initialized (cannot queue offline create)")};
         }

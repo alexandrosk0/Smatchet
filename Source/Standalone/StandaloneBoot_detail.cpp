@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdlib>
 #include <system_error>
 
 // g_ui is defined in SmatchetUI.cpp; the header-side extern is gated on
@@ -67,6 +68,43 @@ void EnsureDirectoryExists(const std::string& path) {
     }
     std::error_code ec;
     ghc::filesystem::create_directories(ghc::filesystem::path(path), ec);
+}
+
+namespace {
+
+void AbsolutizeExplicitDbPath(bool cliHasDbPath, std::string& dbPath) {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
+    const char* const envDbPath = std::getenv("SMATCHET_DB_PATH");
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+    const bool explicitOverride = cliHasDbPath || (envDbPath != nullptr && envDbPath[0] != '\0');
+    if (!explicitOverride || dbPath.empty()) {
+        return;
+    }
+    const ghc::filesystem::path configured = ghc::filesystem::u8path(dbPath);
+    if (!configured.is_relative()) {
+        return;
+    }
+    std::error_code ec;
+    const ghc::filesystem::path absolute = ghc::filesystem::absolute(configured, ec);
+    if (ec) {
+        LOG_WARN("db-path: could not make '%s' absolute (%s); keeping it as given", dbPath.c_str(),
+                 ec.message().c_str());
+        return;
+    }
+    dbPath = absolute.lexically_normal().string();
+}
+
+} // namespace
+
+TrackerConfig LoadBootConfig(const ConfigManager::CliOverrides& cli) {
+    TrackerConfig cfg = ConfigManager::Load(cli);
+    AbsolutizeExplicitDbPath(cli.HasDbPath, cfg.DbPath);
+    return cfg;
 }
 
 std::string ResolveStandaloneUserDataDir(const std::string& exeDir) {

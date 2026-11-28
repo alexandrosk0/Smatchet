@@ -1406,3 +1406,65 @@ TEST_CASE("OfflineQueueServiceRuntime: a create the tracker provably did not app
     CHECK(svc.GetPendingCreates().front().Attempts == 1);
     CHECK(svc.GetDeadPendingCreateCount() == 0u);
 }
+
+// --- Why an enqueue is refused: each CacheEnqueueBlock names its own reason on every durable enqueue path -----------
+
+TEST_CASE("a create and a field edit refused by an enqueue block say why, and write nothing") {
+    using smatchet::persistence::CacheEnqueueBlock;
+    struct Case {
+        CacheEnqueueBlock Block;
+        const char* Expect;
+    };
+    const Case cases[] = {{CacheEnqueueBlock::Opening, "still opening"},
+                          {CacheEnqueueBlock::SessionOnly, "could not be opened"}};
+    for (const Case& c : cases) {
+        OfflineQueueTestEnvGuard guard;
+        FakeOfflineQueueDeps deps;
+        OfflineQueueService svc(deps);
+        deps.EnqueueBlockImpl = c.Block; // the cache itself is present (session-only keeps a memory cache)
+
+        std::string editErr;
+        CHECK(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", editErr, std::string()) == 0);
+        CHECK(editErr.find(c.Expect) != std::string::npos);
+        CHECK(deps.CacheImpl->LoadPendingFieldEdits().empty());
+
+        std::string createErr;
+        CHECK(svc.QueueCreateOffline(MakeBasicCreateDraft("blocked"), std::string(), &createErr) == 0);
+        CHECK(createErr == editErr); // one wording per reason, on every path
+        CHECK(deps.CacheImpl->LoadPendingCreates().empty());
+    }
+}
+
+TEST_CASE("with no enqueue block a create and a field edit queue as before") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    OfflineQueueService svc(deps);
+    std::string err;
+    CHECK(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", err, std::string()) > 0);
+    CHECK(svc.QueueCreateOffline(MakeBasicCreateDraft("blocked"), std::string(), &err) > 0);
+    CHECK(err.empty());
+}
+
+// --- The startup legacy-project sweep against an explicit cache (it runs on the open worker, before publication) -----
+
+TEST_CASE("RunLegacyProjectSweepOn recovers a queued create's project from its parent key, once") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    OfflineQueueService svc(deps);
+    IssueDraft draft = MakeBasicCreateDraft("legacy row");
+    draft.ProjectKey.clear();           // a row queued before the global project was removed
+    draft.ExistingIssueKey = "PROJ-12"; // the parent key names the project
+    const std::int64_t id = deps.CacheImpl->EnqueuePendingCreate("Jira@test#1", IssueDraftHelpers::ToJson(draft));
+    REQUIRE(id > 0);
+
+    CHECK(svc.RunLegacyProjectSweepOn(*deps.CacheImpl, "Jira")); // it changed a row
+    const std::vector<PendingCreate> after = deps.CacheImpl->LoadPendingCreates();
+    REQUIRE(after.size() == 1u);
+    IssueDraft recovered;
+    std::string err;
+    REQUIRE(IssueDraftHelpers::FromJson(after[0].Payload, recovered, err));
+    CHECK(recovered.ProjectKey == "PROJ");
+    CHECK(deps.CacheImpl->HasCacheMetaFlag("legacy_project_swept_v1"));
+
+    CHECK_FALSE(svc.RunLegacyProjectSweepOn(*deps.CacheImpl, "Jira")); // flagged: nothing to do the second time
+}

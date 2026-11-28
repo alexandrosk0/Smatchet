@@ -743,6 +743,67 @@ const TranslationEntry kEntries[] = {
      "Preferences -> Local data.",
      u8"Le cache local est indisponible ; cette modification ne peut pas être mise en file hors ligne. Redémarrez "
      u8"Smatchet ou vérifiez Paramètres -> Préférences -> Données locales."},
+    {"offline.cache_session_only",
+     "The local database could not be opened, so this cannot be queued offline. Restart Smatchet or check Settings "
+     "-> Preferences -> Local data.",
+     u8"La base de données locale n'a pas pu être ouverte : cela ne peut pas être mis en file hors ligne. Redémarrez "
+     u8"Smatchet ou vérifiez Paramètres -> Préférences -> Données locales."},
+    {"offline.cache_opening",
+     "The local database is still opening, so this cannot be queued offline right now. Retry in a moment.",
+     u8"La base de données locale est encore en cours d'ouverture : cela ne peut pas être mis en file hors ligne "
+     u8"pour l'instant. Réessayez dans un instant."},
+    {"toast.local_cache", "Local database", u8"Base de données locale"},
+    {"cache.opening_cue", "Opening the local database...", u8"Ouverture de la base de données locale..."},
+    {"prefs.local_db.retry", "Retry opening", u8"Réessayer l'ouverture"},
+    {"prefs.local_db.retry_tooltip", "Try the database file again without restarting.",
+     u8"Réessayer d'ouvrir le fichier de base de données sans redémarrer."},
+    {"prefs.local_db.session_only",
+     "The database could not be opened (%s). Smatchet is using a temporary cache for this session, so edits cannot "
+     "be saved offline. Fix the cause, then use Retry or restart Smatchet.",
+     u8"La base de données n'a pas pu être ouverte (%s). Smatchet utilise un cache temporaire pour cette session : "
+     u8"les modifications ne peuvent pas être enregistrées hors ligne. Corrigez la cause, puis utilisez Réessayer ou "
+     u8"redémarrez Smatchet."},
+    {"prefs.local_db.recreate_legacy",
+     "Unavailable while this session uses a cache file from an older location. Restart Smatchet to move it first.",
+     u8"Indisponible tant que cette session utilise un fichier de cache d'un ancien emplacement. Redémarrez "
+     u8"Smatchet pour le déplacer d'abord."},
+    {"prefs.local_db.last_rebuilt", "The database was damaged and has been rebuilt. The damaged copy is kept at %s.",
+     u8"La base de données était endommagée et a été reconstruite. La copie endommagée est conservée à "
+     u8"l'emplacement %s."},
+    {"prefs.local_db.using_legacy",
+     "This session is using the cache file left at %s because it could not be copied to the current location just "
+     "now. Restart Smatchet to move it.",
+     u8"Cette session utilise le fichier de cache laissé à l'emplacement %s, car il n'a pas pu être copié vers "
+     u8"l'emplacement actuel pour l'instant. Redémarrez Smatchet pour le déplacer."},
+    {"prefs.local_db.imported_from", "Copied from the cache file left at %s. That file was not changed.",
+     u8"Copié depuis le fichier de cache laissé à l'emplacement %s. Ce fichier n'a pas été modifié."},
+    {"prefs.local_db.other_caches", "Another older cache file was found at %s and was not used. It was not changed.",
+     u8"Un autre ancien fichier de cache a été trouvé à l'emplacement %s et n'a pas été utilisé. Il n'a pas été "
+     u8"modifié."},
+    {"prefs.local_db.recreate_unavailable",
+     "Unavailable while the database cannot be opened: there is no file to recreate.",
+     u8"Indisponible tant que la base de données ne peut pas être ouverte : il n'y a aucun fichier à recréer."},
+    {"cache.notice.session_only",
+     "The local database at {path} could not be opened ({error}). Smatchet is using a temporary cache for this "
+     "session: edits cannot be saved offline until it opens.",
+     u8"La base de données locale {path} n'a pas pu être ouverte ({error}). Smatchet utilise un cache temporaire "
+     u8"pour cette session : les modifications ne peuvent pas être enregistrées hors ligne tant qu'elle n'est pas "
+     u8"ouverte."},
+    {"cache.notice.rebuilt",
+     "The local database was damaged and has been rebuilt. The damaged copy is kept at {quarantined}.",
+     u8"La base de données locale était endommagée et a été reconstruite. La copie endommagée est conservée dans "
+     u8"{quarantined}."},
+    {"cache.notice.rebuilt_salvaged",
+     "The local database was damaged and has been rebuilt. {rows} queued item(s) were recovered. The damaged copy "
+     "is kept at {quarantined}.",
+     u8"La base de données locale était endommagée et a été reconstruite. {rows} élément(s) en file ont été "
+     u8"récupéré(s). La copie endommagée est conservée dans {quarantined}."},
+    {"cache.notice.rebuilt_salvage_incomplete",
+     "The local database was damaged and has been rebuilt. {rows} queued item(s) were recovered, but some queued "
+     "changes could not be. The damaged copy is kept at {quarantined}.",
+     u8"La base de données locale était endommagée et a été reconstruite. {rows} élément(s) en file ont été "
+     u8"récupéré(s), mais certaines modifications en file n'ont pas pu l'être. La copie endommagée est conservée "
+     u8"dans {quarantined}."},
     {"prefs.whisper.test_internal_error", "the request could not be completed — check the API key and try again",
      u8"la requête n'a pas pu aboutir — vérifiez la clé API et réessayez"},
     {"bulk.create_failed_no_detail", "the Tracker rejected this row without details — check required fields and retry",

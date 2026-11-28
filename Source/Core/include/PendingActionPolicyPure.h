@@ -20,6 +20,15 @@ namespace pendingaction {
 /// (clock skew, and a send that landed just before the queue recorded it).
 constexpr std::int64_t kCommentDedupeWindowSec = 300;
 
+/// How long a `sending` claim is honoured for a send with this overall tracker timeout: the request, one retry and
+/// slack for the outcome write, clamped to [120 s, kMaxSendingClaimLeaseSec].
+std::int64_t SendingClaimLeaseSec(std::int64_t trackerOverallTimeoutMs);
+
+/// True when `record` is `sending`, was claimed by another process (not this connection's token) and its claim is still
+/// inside `leaseSec`: that process is sending it right now, so this one must not touch it. A clock that moved
+/// backwards counts the claim as live only inside the same window (the age is taken as an absolute value).
+bool IsForeignLiveClaim(const PendingActionRecord& record, std::int64_t nowSec, std::int64_t leaseSec);
+
 /// The state a failed send leaves the action in. "" when the failure is final (the tracker
 /// rejected it). kPending when the tracker certainly did not act on it
 /// (TrackerError::ProvablyNotApplied: never sent, or rate limited), and for a watch in any retryable

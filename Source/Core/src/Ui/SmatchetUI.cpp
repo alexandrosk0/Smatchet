@@ -599,9 +599,34 @@ void SmatchetUI::drawApplyAppearanceSettings(UiDrawSession& d) {
 // Per-frame background work: startup banners, update-check kickoff, panel-status expiry,
 // offline-queue ticks, and one-time attachment / open-file handler registration.
 void SmatchetUI::drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession& d) {
-    if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed) {
+    // The startup cache open runs on a worker: when it takes visibly long (a file another process holds), say so.
+    {
+        static std::chrono::steady_clock::time_point s_openingSince;
+        static bool s_openingCueShown = false;
+        if (app.IsLocalCacheOpening()) {
+            const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+            if (s_openingSince == std::chrono::steady_clock::time_point()) {
+                s_openingSince = now;
+            } else if (!s_openingCueShown && now - s_openingSince > std::chrono::milliseconds(250)) {
+                s_openingCueShown = true;
+                SmatchetToastManager::Instance().Push(
+                    SmatchetLocalization::T("toast.local_cache", "Local database"),
+                    SmatchetLocalization::T("cache.opening_cue", "Opening the local database..."), ToastType::Info,
+                    4000);
+            }
+        }
+    }
+    // The startup banners wait for the cache open: the legacy-pending banner and the cache notice are produced by it.
+    if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed && !app.IsLocalCacheOpening()) {
         d.offlineLegacyStartupBannerConsumed = true;
         d.offlineLegacyStartupBannerText = app.TakeLegacyPendingStartupBanner();
+        // Same seam for the cache: a memory-only session (the open failed) or a rebuilt-after-corruption file was
+        // previously visible only in the log.
+        const std::string cacheNotice = app.TakeLocalCacheStartupNotice();
+        if (!cacheNotice.empty()) {
+            SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.local_cache", "Local database"),
+                                                  cacheNotice, ToastType::Warning, 15000);
+        }
         // One-shot corrupt-config notice (previously log-only: settings reverted to defaults
         // with zero UI signal). Same startup seam as the legacy banner; UI thread only.
         const std::string badConfigName = ConfigManager::TakeStartupConfigWarning();

@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <exception>
 #include <deque>
 #include <mutex>
 #include <unordered_map>
@@ -154,6 +155,9 @@ bool IsThisProcessForeground() {
 struct SmatchetImGuiHost::Impl {
     std::atomic<bool> Initialized{false};
     std::atomic<bool> Initializing{false};
+    /// Set when Initialize failed in a way a retry cannot fix (the app or a plugin threw): BeginFrame stops retrying.
+    /// Never cleared: a host instance is single-use after such a failure (create a new one to try again).
+    std::atomic<bool> InitFailedTerminal{false};
     std::atomic<bool> BuildingFrame{false};
     // Wall-clock time of the previous BeginFrame. The plugin passes a fixed 1/60 s, which made ImGui's
     // clock (double-click window, touch long-press) run at the presentation rate instead of real time.
@@ -588,9 +592,6 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
     ImplData->App.SetAttachmentViewerHandler(options.AttachmentViewerHandler);
     ImplData->App.SetCloseEmbeddedUiHandler([this]() { SetUiVisible(false); });
 
-    initRegisterPlugins(options, cfg);
-    ImplData->Plugins.OnEarlyInit(ImplData->App);
-
     std::string resolvedDbPath = options.DbPath;
     if (cfg.DbPath != SmatchetDefaults::kDefaultDbPath) {
         resolvedDbPath = cfg.DbPath;
@@ -600,8 +601,25 @@ bool SmatchetImGuiHost::Initialize(const InitOptions& options, std::string& outE
         resolvedBackend = cfg.TrackerType;
     }
 
-    ImplData->App.Initialize(resolvedDbPath, resolvedBackend);
-    ImplData->Plugins.OnStart(ImplData->App);
+    // Nothing may throw out of here: Initialize is reached from the C ABI (SmatchetHost_BeginFrame), where an escaping
+    // exception is undefined behaviour. A throw is not retryable either (the app is half built), so it ends the lazy
+    // retry in BeginFrame and surfaces through LastInitError.
+    try {
+        initRegisterPlugins(options, cfg);
+        ImplData->Plugins.OnEarlyInit(ImplData->App);
+        ImplData->App.Initialize(resolvedDbPath, resolvedBackend);
+        ImplData->Plugins.OnStart(ImplData->App);
+    } catch (const std::exception& ex) {
+        outError = std::string("Initialization threw: ") + ex.what();
+    } catch (...) { // catch-all-ok: reported through outError and LastInitError below
+        outError = "Initialization threw an unknown exception.";
+    }
+    if (!outError.empty()) {
+        ImplData->LastInitError = outError;
+        ImplData->InitFailedTerminal.store(true, std::memory_order_release);
+        LOG_ERROR("SmatchetImGuiHost::Initialize failed: %s", outError.c_str());
+        return false;
+    }
     ImplData->App.SetRuntimePluginHost(&ImplData->Plugins);
 
     ImplData->Initialized.store(true, std::memory_order_release);
@@ -648,7 +666,8 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
 
     // Lazy init while UI is visible (retry if DX resources weren't ready at first show).
     if (!ImplData->Initialized.load(std::memory_order_acquire)) {
-        if (IsUiVisible() && ImplData->OptionsSet.load(std::memory_order_acquire)) {
+        if (IsUiVisible() && ImplData->OptionsSet.load(std::memory_order_acquire) &&
+            !ImplData->InitFailedTerminal.load(std::memory_order_acquire)) {
 #if defined(_WIN32)
             // Prevent multiple concurrent Initialize() calls (can corrupt ImGui global state).
             if (!ImplData->Initializing.exchange(true, std::memory_order_acq_rel)) {

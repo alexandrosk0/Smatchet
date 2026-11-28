@@ -622,7 +622,7 @@ static int BootApplication(int argc, char** argv, MainBootState& boot) {
         return 0;
     }
 
-    const TrackerConfig cfg = ConfigManager::Load(cli);
+    const TrackerConfig cfg = smatchet::standalone::boot_detail::LoadBootConfig(cli);
 
     // Seed the live vsync hub with the documented boot precedence and apply it
     // to the (current) GL context now; RunFrameLoop live-applies later changes.

@@ -16,8 +16,12 @@ _Avoid_: ILocalCache (the renamed working title — it overclaimed the whole loc
 The local copy of one tracker issue's field values, namespaced by backend key.
 
 **Backend key**:
-The namespace string that partitions cached tickets per tracker backend, so a Jira row can never serve a GitHub view.
+The namespace string that partitions cached rows per tracker site and account (`Jira@<host>#<account hash>`, `Plane@<host>/<workspace>`, …), so a Jira row can never serve a GitHub view or another Jira site.
 _Avoid_: "tracker type" (a config concept; the key is the cache-side namespace)
+
+**Session-only cache**:
+The memory-only cache that serves reads and sync for one run when the durable file could not be opened. Durable enqueues are refused with a reason rather than lost at exit, and "Recreate database" is off; the next launch tries the file again. States: opening, ready, session-only.
+_Avoid_: "unavailable" (reads still work, and it collides with the freshness state of the same word)
 
 **Pending write**:
 A create or field edit queued while offline (or after a transport failure), awaiting replay against the live backend. Two kinds: **pending create** and **pending field edit**.
@@ -32,6 +36,10 @@ _Avoid_: "failed edit" (a dead letter is parked, not lost)
 
 **Meta flag**:
 An idempotent, one-way named marker on the local cache (set-once, never unset) used to remember that a one-time transition already happened.
+
+**Meta value**:
+A mutable named value in `cache_meta` (JSON in `value`), unlike a **meta flag** it is overwritten, and it is read only through its own accessor, never through `HasCacheMetaFlag`. Today: `last_corruption_recovery_v1`, the record of the last rebuild after a damaged file (what was salvaged, what was not, where the damaged copy is kept).
+_Avoid_: calling it a flag (a flag is set-once and tested for presence only)
 
 ## Relationships
 
