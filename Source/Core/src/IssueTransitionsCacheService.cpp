@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -47,8 +48,10 @@ TransitionsLookup IssueTransitionsCacheService::GetAvailableTransitions(const Tr
     const std::string liveKey = LiveKey(backendKey, q.IssueId);
     const TrackerConnectivityState connectivity = deps_.TrackerConnectivity();
     const auto entry = live_.Get(liveKey);
-    if (entry.HasValue && entry.Live) {
-        lookup.options = entry.Payload;
+    // Live only for the from-status it was fetched for, and only while the issue was still there.
+    if (entry.HasValue && entry.Live && !entry.Payload.ServerElsewhere &&
+        entry.Payload.FromStatusKey == q.FromStatusKey) {
+        lookup.options = entry.Payload.Options;
         lookup.freshness = live_.Freshness(liveKey, connectivity);
         lookup.fromLive = true;
         return lookup;
@@ -86,11 +89,13 @@ void IssueTransitionsCacheService::EnsureIssueTransitionsLoaded(const Transition
     const std::string backendKey = deps_.CacheBackendKey();
     EnsureLearnedLoaded(backendKey);
 
-    using TransitionsCache = smatchet::offline::KeyedLookupCache<std::vector<TrackerFieldOption>>;
-    TransitionsCache::Ticket ticket;
-    if (!live_.TryBeginFetch(LiveKey(backendKey, q.IssueId), deps_.TrackerConnectivity(),
-                             smatchet::offline::Clock::now(), ticket)) {
-        return; // in flight, already live, offline, or inside the failure backoff
+    LiveCache::Ticket ticket;
+    // The combo asks every frame it is open, so this must stay a cheap refusal: a live set is admitted again only
+    // for another from-status or past its max age (the predicate runs under the cache's mutex).
+    if (!live_.TryBeginFetchIf(LiveKey(backendKey, q.IssueId), deps_.TrackerConnectivity(), deps_.SteadyNow(), ticket,
+                               smatchet::offline::LiveMaxAgeAdmission(/*revalidate=*/false),
+                               [&q](const LiveTransitions& live) { return live.FromStatusKey != q.FromStatusKey; })) {
+        return; // in flight, current, offline, or inside the failure backoff
     }
     const std::shared_ptr<ILookupCache> store = deps_.LookupCacheShared();
     const bool haveCfg = configSnapshot != nullptr;
@@ -100,25 +105,31 @@ void IssueTransitionsCacheService::EnsureIssueTransitionsLoaded(const Transition
         deps_.LaunchBackgroundTask([this, backend, catalog, ticket, q, backendKey, store, haveCfg, cfg]() {
             // Everything that can throw, the config load included, runs inside RunKeyedFetch: its guard
             // records a failure on every exit, so a throw can never leave the ticket in flight.
-            smatchet::offline::RunKeyedFetch(live_, ticket, [&]() {
+            using FetchResult = Result<LiveTransitions, TrackerError>;
+            const auto fetchBody = [&]() {
                 const TrackerConfig useCfg = haveCfg ? cfg : ConfigManager::Load();
                 auto r = catalog->FetchIssueTransitions(useCfg, q.IssueId);
-                if (r.has_value()) {
-                    RememberLearned(backendKey, q, r.value(), store);
-                } else {
+                if (!r.has_value()) {
                     LOG_DEBUG("IssueTransitionsCacheService: transitions fetch failed issue=%s kind=%s",
                               q.IssueId.c_str(), ToString(r.error().Kind));
+                    return FetchResult::Err(r.error());
                 }
-                return r;
-            });
+                LiveTransitions live;
+                live.IssueId = q.IssueId;
+                live.FromStatusKey = q.FromStatusKey;
+                live.ServerElsewhere =
+                    RememberLearned(backendKey, q, r.value(), store) == LearnOutcome::ServerElsewhere;
+                live.Options = std::move(r.value());
+                return FetchResult::Ok(std::move(live));
+            };
+            smatchet::offline::RunKeyedFetch(live_, ticket, fetchBody, [this]() { return deps_.SteadyNow(); });
         });
     } catch (const std::exception& ex) {
         // The launch itself failed (or, with an inline runner, the fetch threw): record a failure so
         // the entry backs off and retries instead of staying in flight forever.
         LOG_WARN("IssueTransitionsCacheService: transitions fetch for %s did not complete: %s", q.IssueId.c_str(),
                  ex.what());
-        live_.CompleteFailure(ticket, TrackerErrorUnknown("transitions fetch did not complete"),
-                              smatchet::offline::Clock::now());
+        live_.CompleteFailure(ticket, TrackerErrorUnknown("transitions fetch did not complete"), deps_.SteadyNow());
     }
 }
 
@@ -132,6 +143,33 @@ void IssueTransitionsCacheService::InvalidateIssueTransitions(const std::string&
         return;
     }
     live_.Invalidate(LiveKey(backendKey, issueId));
+}
+
+void IssueTransitionsCacheService::PruneLiveToActiveTickets() {
+    const std::size_t cap = static_cast<std::size_t>(smatchet::limits::Get().TransitionsLiveCacheMax);
+    if (live_.Size() <= cap) {
+        return;
+    }
+    // The union over every live pane: the map is process-wide, so one pane's roster would evict the sets another
+    // pane's open status combo is using.
+    std::unordered_set<std::string> active;
+    for (const std::shared_ptr<const std::vector<CachedTicket>>& snap : deps_.GetActiveTicketsSnapshotsAllPanes()) {
+        if (!snap) {
+            continue;
+        }
+        active.reserve(active.size() + snap->size());
+        for (const CachedTicket& ticket : *snap) {
+            if (!ticket.id.empty()) {
+                active.insert(ticket.id);
+            }
+        }
+    }
+    // Keyed on the issue id the entry holds (its map key also carries the backend namespace).
+    const std::size_t erased = live_.RetainIf(deps_.SteadyNow(), [&active](const std::string&, const LiveEntry& entry) {
+        return active.count(entry.Payload.IssueId) != 0;
+    });
+    LOG_DEBUG("IssueTransitionsCacheService: pruned %zu live transitions sets (cap %zu, %zu kept)", erased, cap,
+              live_.Size());
 }
 
 void IssueTransitionsCacheService::OnConnectivityRecovered() {
@@ -154,21 +192,25 @@ void IssueTransitionsCacheService::EnsureLearnedLoaded(const std::string& backen
             }
             std::lock_guard<std::mutex> lock(learnedMutex_);
             for (auto& kv : parsed) {
+                if (learnedErased_.count(kv.first) != 0) {
+                    continue; // erased after this load read its row: the stored copy is obsolete
+                }
                 learned_.emplace(std::move(kv.first), std::move(kv.second)); // never overwrite a newer edge
             }
         });
 }
 
-void IssueTransitionsCacheService::RememberLearned(const std::string& backendKey, const TransitionsQuery& q,
-                                                   const std::vector<TrackerFieldOption>& options,
-                                                   const std::shared_ptr<ILookupCache>& store) {
+IssueTransitionsCacheService::LearnOutcome
+IssueTransitionsCacheService::RememberLearned(const std::string& backendKey, const TransitionsQuery& q,
+                                              const std::vector<TrackerFieldOption>& options,
+                                              const std::shared_ptr<ILookupCache>& store) {
     if (options.empty()) {
-        return;
+        return LearnOutcome::Skipped;
     }
     const std::string learnedKey =
         smatchet::workflow::BuildLearnedTransitionsKey(q.ProjectKey, q.IssueTypeKey, q.FromStatusKey);
     if (learnedKey.empty()) {
-        return;
+        return LearnOutcome::Skipped;
     }
     // The from-status itself among the targets means the issue moved on the server (these targets
     // belong to another from-status) — unless a global or looped transition offers it, which Jira lists
@@ -182,7 +224,7 @@ void IssueTransitionsCacheService::RememberLearned(const std::string& backendKey
                                           ToLowerAsciiCopy(opt.Value) == ToLowerAsciiCopy(q.FromStatusName));
         if (isFromStatus) {
             if (!opt.ReachableFromAnyStatus) {
-                return;
+                return LearnOutcome::ServerElsewhere;
             }
             continue;
         }
@@ -192,20 +234,25 @@ void IssueTransitionsCacheService::RememberLearned(const std::string& backendKey
         // Every option was a global or looped self-target, so this status has no other move now. An
         // edge learned from an earlier fetch is obsolete and must not be offered offline.
         {
+            const std::string memoryKey = LearnedMemoryKey(backendKey, learnedKey);
             std::lock_guard<std::mutex> lock(learnedMutex_);
-            learned_.erase(LearnedMemoryKey(backendKey, learnedKey));
+            learned_.erase(memoryKey);
+            learnedErased_.insert(memoryKey);
         }
         if (store) {
             store->DeleteLookup(backendKey, smatchet::workflow::kLearnedTransitionsKind, learnedKey);
         }
-        return;
+        return LearnOutcome::Erased;
     }
     {
+        const std::string memoryKey = LearnedMemoryKey(backendKey, learnedKey);
         std::lock_guard<std::mutex> lock(learnedMutex_);
-        learned_[LearnedMemoryKey(backendKey, learnedKey)] = remembered;
+        learned_[memoryKey] = remembered;
+        learnedErased_.erase(memoryKey);
     }
     if (store) {
         store->UpsertLookup(backendKey, smatchet::workflow::kLearnedTransitionsKind, learnedKey,
                             smatchet::workflow::SerializeTransitionTargets(remembered));
     }
+    return LearnOutcome::Remembered;
 }

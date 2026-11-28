@@ -752,6 +752,150 @@ TEST_CASE("ConfigMigration action keys: a disabled binding on the chord does not
     CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Ctrl+PageUp") == 1);
 }
 
+// The sibling seed migrations and the zoom widenings apply the same rule: a default chord an enabled
+// binding for another command already holds is not added on top of it.
+
+TEST_CASE("ConfigMigration grid search focus: a chord the user gave another command is not seeded") {
+    smatchet_tests::TestEnvGuard env;
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+F","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json");
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedGridSearchFocusHotkeyV1 == true);
+    const int gi = cfg.Keybindings.FindBindingIndex("grid.search.focus", "{}");
+    REQUIRE(gi >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(gi)].Hotkeys == std::vector<std::string>{"/"});
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Ctrl+F") == 1);
+    const int user = cfg.Keybindings.FindBindingIndex("view.sidebar.primary", "{\"action\":\"toggle\"}");
+    REQUIRE(user >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(user)].PrimaryHotkey() == "Ctrl+F");
+}
+
+TEST_CASE("ConfigMigration gesture keys: a held chord is dropped and a fully held row is not added") {
+    smatchet_tests::TestEnvGuard env;
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkeys":["Delete","Shift+Alt+Down"],"args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json");
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedGestureKeysV1 == true);
+    CHECK(cfg.Keybindings.FindBindingIndex("ui.list.remove", "{}") < 0);
+    const int grow = cfg.Keybindings.FindBindingIndex("ui.splitter.grow", "{}");
+    REQUIRE(grow >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(grow)].Hotkeys ==
+          std::vector<std::string>{"Shift+Alt+Right"});
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Delete") == 1);
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Shift+Alt+Down") == 1);
+    const int up = cfg.Keybindings.FindBindingIndex("ui.list.move_up", "{}");
+    REQUIRE(up >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(up)].PrimaryHotkey() == "Alt+Up");
+}
+
+TEST_CASE("ConfigMigration quick-create: Ctrl+Shift+T held by another command is not seeded") {
+    smatchet_tests::TestEnvGuard env;
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+Shift+T","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json");
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedQuickCreateHotkeyV1 == true);
+    CHECK(cfg.Keybindings.FindBindingIndex("issue.quick_create.open", "{}") < 0);
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Ctrl+Shift+T") == 1);
+}
+
+TEST_CASE("ConfigMigration menu shortcuts v2: Ctrl+Shift+Y held by another command is not seeded") {
+    smatchet_tests::TestEnvGuard env;
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+Shift+Y","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json");
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMenuShortcutsV2 == true);
+    CHECK(cfg.Keybindings.FindBindingIndex("view.toggle.notifications", "{\"action\":\"show\"}") < 0);
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Ctrl+Shift+Y") == 1);
+}
+
+TEST_CASE("ConfigMigration menu shortcuts: a seeded zoom row drops a chord another command holds") {
+    smatchet_tests::TestEnvGuard env;
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+MouseWheelUp","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json");
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    const int in = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(in >= 0);
+    const std::vector<std::string> expectedIn = {"Ctrl+=", "Ctrl+Shift+=", "Ctrl+NumAdd"};
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(in)].Hotkeys == expectedIn);
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Ctrl+MouseWheelUp") == 1);
+    const int out = cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}");
+    REQUIRE(out >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(out)].Hotkeys.size() == 3U);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(out)].HasHotkey("Ctrl+MouseWheelDown"));
+}
+
+TEST_CASE("ConfigMigration zoom aliases: a trimmed seed is not widened back onto held chords") {
+    smatchet_tests::TestEnvGuard env;
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkeys":["Ctrl+Shift+=","Ctrl+NumAdd","Ctrl+MouseWheelUp"],"args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json");
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    const int in = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(in >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(in)].Hotkeys == std::vector<std::string>{"Ctrl+="});
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Ctrl+Shift+=") == 1);
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Ctrl+NumAdd") == 1);
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Ctrl+MouseWheelUp") == 1);
+    CHECK(cfg.MigratedMultiHotkeyZoomV1 == true);
+    CHECK(cfg.MigratedMultiHotkeyZoomV2 == true);
+    CHECK(cfg.MigratedMultiHotkeyZoomV3 == true);
+}
+
+TEST_CASE("ConfigMigration zoom aliases v2: the wheel alias another command holds is not added") {
+    smatchet_tests::TestEnvGuard env;
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,
+        "migrated_menu_shortcuts_v2":true,"migrated_quick_create_hotkey_v1":true,
+        "migrated_multi_hotkey_zoom_v1":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkeys":["Ctrl+=","Ctrl+Shift+=","Ctrl+NumAdd"],"args_json":"{}","enabled":true},
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+MouseWheelUp","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json");
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    const int in = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(in >= 0);
+    const std::vector<std::string> expectedIn = {"Ctrl+=", "Ctrl+Shift+=", "Ctrl+NumAdd"};
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(in)].Hotkeys == expectedIn);
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Ctrl+MouseWheelUp") == 1);
+    CHECK(cfg.MigratedMultiHotkeyZoomV2 == true);
+}
+
+TEST_CASE("ConfigMigration zoom aliases v3: an alias another command holds is not appended") {
+    smatchet_tests::TestEnvGuard env;
+    WriteConfigRaw(env, R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,
+        "migrated_menu_shortcuts_v2":true,"migrated_quick_create_hotkey_v1":true,
+        "migrated_multi_hotkey_zoom_v1":true,"migrated_multi_hotkey_zoom_v2":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkey":"Ctrl+=","args_json":"{}","enabled":true},
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+NumAdd","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json");
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    const int in = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(in >= 0);
+    const std::vector<std::string> expectedIn = {"Ctrl+=", "Ctrl+Shift+=", "Ctrl+MouseWheelUp"};
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(in)].Hotkeys == expectedIn);
+    CHECK(CountEnabledWithHotkey(cfg.Keybindings, "Ctrl+NumAdd") == 1);
+    CHECK(cfg.MigratedMultiHotkeyZoomV3 == true);
+}
+
 // --- Gesture-key bindings — one-shot seed migration (migrated_gesture_keys_v1) ---
 //
 // Same replace-not-merge failure class as the seeds above: a config saved before the gesture commands existed

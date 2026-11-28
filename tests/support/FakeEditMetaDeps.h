@@ -19,6 +19,7 @@
 #include "ILookupCache.h"
 #include "ITrackerBackend.h"
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -49,6 +50,18 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     /// remembered workflow install a FakeLookupCache.
     std::shared_ptr<ILookupCache> LookupCacheImpl;
     std::string CacheBackendKeyImpl = "Jira";
+
+    /// SteadyNow() answers `NowImpl` while `UseFakeNow` is set (age-limit tests advance it with AdvanceNow), the
+    /// real steady clock otherwise. Set both before a worker runs: they are plain members.
+    bool UseFakeNow = false;
+    std::chrono::steady_clock::time_point NowImpl{};
+    void AdvanceNow(std::chrono::seconds by) {
+        if (!UseFakeNow) {
+            UseFakeNow = true;
+            NowImpl = std::chrono::steady_clock::now(); // continue from the real clock, never step back in time
+        }
+        NowImpl += by;
+    }
 
     /// LaunchBackgroundTask mode. Default INLINE-SYNCHRONOUS (runs the task on the calling
     /// thread immediately) so logic-coverage cases stay deterministic and single-threaded.
@@ -81,6 +94,10 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     std::shared_ptr<ILookupCache> LookupCacheShared() override { return LookupCacheImpl; }
 
     std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
+
+    std::chrono::steady_clock::time_point SteadyNow() const override {
+        return UseFakeNow ? NowImpl : std::chrono::steady_clock::now();
+    }
 
     void LaunchBackgroundTask(std::function<void()> task) override {
         ++LaunchBackgroundTaskCalls;

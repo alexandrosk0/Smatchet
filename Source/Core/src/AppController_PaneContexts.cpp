@@ -29,6 +29,7 @@
 #include "Sync/LazyEnrichmentCarryForwardPure.h"
 #include "Sync/ChangeMonitorPaneState.h"
 #include "Sync/ChangeMonitorRosterProbe.h"
+#include "Sync/MonitorProbeConfigPure.h"
 #include "Sync/WalkOwnedKeysPure.h"
 #include "Tracker/ParentHierarchyPure.h" // ParentKeyOf: the parent-field contract the walk-owned check applies
 #include "Sync/DeltaSyncPure.h"
@@ -127,9 +128,8 @@ std::chrono::seconds ProbeWindow(std::chrono::system_clock::time_point polledAt,
 struct MonitorProbeJob {
     std::string PaneId;
     std::shared_ptr<ITrackerBackend> Backend; // strong handle: a live backend swap must not free it mid-fetch
-    TrackerConfig Cfg;
-    std::string PaneJql;       // the query the pane's rows answer (ChooseMonitorProbeQuery)
-    bool PaneJqlKnown = false; // false: keep Cfg's (the focused pane's) query
+    TrackerConfig Cfg;                        // the pane's own config (ChooseMonitorProbeConfig)
+    std::shared_ptr<const ViewsStore> Views;  // the pane's session views; null: load Cfg's bucket on the worker
     std::vector<std::string> SalientFieldIds;
     std::vector<std::string> CachedKeys;                          // the membership baseline (changed-since path)
     std::unordered_map<std::string, std::string> ResidentUpdated; // id -> held stamp (roster path only)
@@ -147,12 +147,24 @@ struct MonitorProbeResult {
     TrackerConfig ProbedCfg; // the config the cycle ran with, its query included
 };
 
+// The config and views a pane is probed with (UI thread): those of the pane's latest sync session - its query, its
+// repository / project, its fields and its active view - with the monitor's own settings from the global `cfg`.
+// A pane whose service has not started a session keeps the focused config, its query replaced by the kick stamp.
+void ResolveMonitorProbeConfig(const GridLiveContext& ctx, const TrackerConfig& cfg, MonitorProbeJob& job) {
+    TrackerConfig sessionCfg;
+    const bool sessionStarted = ctx.ticketSync_ && ctx.ticketSync_->LastSessionConfig(sessionCfg, job.Views);
+    job.Cfg = smatchet::sync::ChooseMonitorProbeConfig(cfg, sessionStarted, std::move(sessionCfg), ctx.lastSyncedJql);
+}
+
 // Worker half of one monitor cycle. False = soft failure (logged by the cycle): the caller skips the apply.
 bool RunMonitorProbe(MonitorProbeJob& job, MonitorProbeResult& result) {
-    ViewsStore views = ConfigManager::LoadViewsOrBootstrap(job.Cfg);
-    if (job.PaneJqlKnown) {
-        job.Cfg.JqlQuery = job.PaneJql; // an empty query is the backend's default one, not "unknown"
+    // A pane with a session probes with the views that session ran (the bucket's active view can name another
+    // pane's view); only a pane that has not synced yet falls back to its config's saved bucket.
+    ViewsStore loadedViews;
+    if (!job.Views) {
+        loadedViews = ConfigManager::LoadViewsOrBootstrap(job.Cfg);
     }
+    const ViewsStore& views = job.Views ? *job.Views : loadedViews;
     result.ProbedCfg = job.Cfg;
     smatchet::sync::RosterProbeContext probeContext;
     probeContext.RefusedKeys = &job.RefusedKeys;
@@ -671,15 +683,8 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
         MonitorProbeJob job;
         job.PaneId = paneId;
         job.Backend = backend;
-        job.Cfg = cfg;
-        // The pane's own query: the one its latest sync session ran, not lastSyncedJql (a view opened in the same
-        // pane leaves that naming the previous view, and the cycle then swapped the grid to it).
-        std::string sessionJql;
-        const bool sessionStarted = ctx.ticketSync_ && ctx.ticketSync_->LastSessionQuery(sessionJql);
-        const smatchet::sync::MonitorProbeQuery paneQuery =
-            smatchet::sync::ChooseMonitorProbeQuery(sessionStarted, sessionJql, ctx.lastSyncedJql);
-        job.PaneJql = paneQuery.Jql;
-        job.PaneJqlKnown = paneQuery.Known;
+        // The pane's own config, not the focused pane's: another repository or query would read its rows as gone.
+        ResolveMonitorProbeConfig(ctx, cfg, job);
         job.SalientFieldIds = salientFieldIds;
         job.Window = window;
         // A backend that lists versions needs ONE roster call per cycle instead of the changed-since query plus the

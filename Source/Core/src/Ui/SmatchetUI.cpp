@@ -1641,7 +1641,8 @@ void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
         // but the write itself still ran on the frame thread. Hand the snapshot to the config-save
         // worker instead — it coalesces again (latest-wins) and does the whole-file replace
         // off-thread. The teardown drain (DrainUiDrawSessionFuturesBeforeAppTeardown) enqueues
-        // through the same slot, so the newest snapshot always wins and nothing is lost at exit.
+        // through the same slot, so the newest snapshot wins. At exit, Stop()'s drain is bounded: a
+        // snapshot still queued when its budget runs out is dropped (Issue #2529).
         smatchet::config_save::EnqueueTrackerConfig(g_ui.cfg);
         g_ui.prefsDirty = false;
     }
