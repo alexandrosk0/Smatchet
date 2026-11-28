@@ -204,8 +204,8 @@ TEST_SUITE("FileIoAtomicWrite") {
 #endif
 
     TEST_CASE("UniqueTempSuffix is unique across threads and matches IsTempSiblingOf") {
-        constexpr int kThreads = 8;
-        constexpr int kPerThread = 100;
+        static constexpr int kThreads = 8;
+        static constexpr int kPerThread = 100;
         std::vector<std::vector<std::string>> perThread(kThreads);
         std::vector<std::thread> threads;
         for (int t = 0; t < kThreads; ++t) {
