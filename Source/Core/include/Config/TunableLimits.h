@@ -76,6 +76,7 @@ namespace limits {
     X(LookupMaxStoredUsers, "lookup_max_stored_users", 50000, 100, 1000000)                                            \
     X(LookupMaxStoredProjects, "lookup_max_stored_projects", 10000, 100, 1000000)                                      \
     X(LookupLiveMaxAgeSec, "lookup_live_max_age_sec", 1800, 0, 86400)                                                  \
+    X(TransitionsLiveCacheMax, "transitions_live_cache_max", 512, 16, 100000)                                          \
     X(FieldIconPathCacheMax, "field_icon_path_cache_max", 256, 16, 100000)                                             \
     X(FieldIconFetchNegativeMax, "field_icon_fetch_negative_max", 256, 16, 100000)                                     \
     X(PriorityResolveMemoMax, "priority_resolve_memo_max", 256, 16, 100000)                                            \

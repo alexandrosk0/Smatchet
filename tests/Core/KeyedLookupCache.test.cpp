@@ -538,7 +538,7 @@ TEST_SUITE("KeyedLookupCache admission") {
         cache.SeedFromStore("seeded-drop", 3);
         KeyedLookupCache<int>::Ticket failed;
         REQUIRE(cache.TryBeginFetch("empty-failed", kUp, t0, failed));
-        cache.CompleteFailure(failed, TrackerErrorServer("boom", 500), t0); // no value, not in flight
+        cache.CompleteFailure(failed, TrackerErrorServer("boom", 500), t0); // no value, not in flight, backing off
         KeyedLookupCache<int>::Ticket inflight;
         REQUIRE(cache.TryBeginFetch("inflight", kUp, t0, inflight));
         KeyedLookupCache<int>::Ticket revalidating;
@@ -548,11 +548,18 @@ TEST_SUITE("KeyedLookupCache admission") {
         REQUIRE(cache.TryBeginFetch("inflight-live", kUp, t0, revalidating, admit));
         REQUIRE(cache.Size() == 6);
 
-        const std::size_t erased = cache.RetainIf([](const std::string& key, const KeyedLookupCache<int>::Entry& e) {
+        const auto keepOnlyKeep = [](const std::string& key, const KeyedLookupCache<int>::Entry& e) {
             return key == "keep" && e.Payload == 1;
-        });
+        };
+        // While its backoff runs the empty failure record stays: it is what refuses the next fetch.
+        CHECK(cache.RetainIf(t0 + std::chrono::seconds(29), keepOnlyKeep) == 2); // "drop", "seeded-drop"
+        CHECK(cache.Size() == 4);
+        KeyedLookupCache<int>::Ticket early;
+        CHECK_FALSE(cache.TryBeginFetch("empty-failed", kUp, t0 + std::chrono::seconds(29), early));
+        // Once the backoff has passed it is dropped.
+        const std::size_t erased = cache.RetainIf(t0 + std::chrono::seconds(30), keepOnlyKeep);
 
-        CHECK(erased == 3); // "drop", "seeded-drop", "empty-failed"
+        CHECK(erased == 1); // "empty-failed"
         CHECK(cache.Size() == 3);
         CHECK(cache.Get("keep").HasValue);
         CHECK_FALSE(cache.Get("drop").HasValue);

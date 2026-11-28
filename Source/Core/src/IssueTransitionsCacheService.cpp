@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -88,8 +89,7 @@ void IssueTransitionsCacheService::EnsureIssueTransitionsLoaded(const Transition
     const std::string backendKey = deps_.CacheBackendKey();
     EnsureLearnedLoaded(backendKey);
 
-    using TransitionsCache = smatchet::offline::KeyedLookupCache<LiveTransitions>;
-    TransitionsCache::Ticket ticket;
+    LiveCache::Ticket ticket;
     // The combo asks every frame it is open, so this must stay a cheap refusal: a live set is admitted again only
     // for another from-status or past its max age (the predicate runs under the cache's mutex).
     if (!live_.TryBeginFetchIf(LiveKey(backendKey, q.IssueId), deps_.TrackerConnectivity(), deps_.SteadyNow(), ticket,
@@ -143,6 +143,33 @@ void IssueTransitionsCacheService::InvalidateIssueTransitions(const std::string&
         return;
     }
     live_.Invalidate(LiveKey(backendKey, issueId));
+}
+
+void IssueTransitionsCacheService::PruneLiveToActiveTickets() {
+    const std::size_t cap = static_cast<std::size_t>(smatchet::limits::Get().TransitionsLiveCacheMax);
+    if (live_.Size() <= cap) {
+        return;
+    }
+    // The union over every live pane: the map is process-wide, so one pane's roster would evict the sets another
+    // pane's open status combo is using.
+    std::unordered_set<std::string> active;
+    for (const std::shared_ptr<const std::vector<CachedTicket>>& snap : deps_.GetActiveTicketsSnapshotsAllPanes()) {
+        if (!snap) {
+            continue;
+        }
+        active.reserve(active.size() + snap->size());
+        for (const CachedTicket& ticket : *snap) {
+            if (!ticket.id.empty()) {
+                active.insert(ticket.id);
+            }
+        }
+    }
+    // Keyed on the issue id the entry holds (its map key also carries the backend namespace).
+    const std::size_t erased = live_.RetainIf(deps_.SteadyNow(), [&active](const std::string&, const LiveEntry& entry) {
+        return active.count(entry.Payload.IssueId) != 0;
+    });
+    LOG_DEBUG("IssueTransitionsCacheService: pruned %zu live transitions sets (cap %zu, %zu kept)", erased, cap,
+              live_.Size());
 }
 
 void IssueTransitionsCacheService::OnConnectivityRecovered() {

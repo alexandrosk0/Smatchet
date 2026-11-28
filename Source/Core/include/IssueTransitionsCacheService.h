@@ -54,6 +54,11 @@ class IssueTransitionsCacheService {
     /// have focus (#2260).
     void InvalidateIssueTransitions(const std::string& backendKey, const std::string& issueId);
 
+    /// Bound the live map: when it holds more than `transitions_live_cache_max` entries, drop the live sets of
+    /// issues no open pane lists any more. A set being fetched, and a failure record still backing off, are kept;
+    /// under the cap this does nothing. Cheap enough to call after every ticket merge; any thread.
+    void PruneLiveToActiveTickets();
+
     /// Connectivity came back: clear every failure backoff (fetches and the saved-workflow load) so the
     /// next combo open retries.
     void OnConnectivityRecovered();
@@ -81,7 +86,9 @@ class IssueTransitionsCacheService {
                                  const std::shared_ptr<ILookupCache>& store);
 
     IEditMetaDeps& deps_;
-    smatchet::offline::KeyedLookupCache<LiveTransitions> live_;
+    using LiveCache = smatchet::offline::KeyedLookupCache<LiveTransitions>;
+    using LiveEntry = LiveCache::Entry;
+    LiveCache live_;
     mutable std::mutex learnedMutex_;
     /// LearnedMemoryKey(backend, "project|type|from") -> target statuses. Guarded by learnedMutex_.
     std::unordered_map<std::string, std::vector<TrackerFieldOption>> learned_;

@@ -25,6 +25,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 using smatchet::offline::DataFreshness;
@@ -748,7 +749,7 @@ TEST_SUITE("IssueTransitionsCacheService learned-edge tombstones") {
         CHECK(offline.options[0].Id == "5");
     }
 
-    TEST_CASE("an erase does not touch another status's edge or another backend's") {
+    TEST_CASE("an erase does not touch another status's edge") {
         FakeEditMetaDeps deps;
         deps.Fake()->SetSupportsIssueTransitions(true);
         const auto store = std::make_shared<HookedLoadLookupCache>();
@@ -768,5 +769,180 @@ TEST_SUITE("IssueTransitionsCacheService learned-edge tombstones") {
         CHECK(other.fromLearned);
         REQUIRE(other.options.size() == 1u);
         CHECK(other.options[0].Id == "4");
+    }
+}
+
+TEST_SUITE("IssueTransitionsCacheService live map bound") {
+
+    class DeferredPruneDeps : public FakeEditMetaDeps {
+      public:
+        std::deque<std::function<void()>> Pending;
+        void LaunchBackgroundTask(std::function<void()> task) override {
+            ++LaunchBackgroundTaskCalls;
+            Pending.push_back(std::move(task));
+        }
+        void RunAll() {
+            while (!Pending.empty()) {
+                std::function<void()> task = std::move(Pending.front());
+                Pending.pop_front();
+                task();
+            }
+        }
+    };
+
+    std::string IssueId(int n) { return "PROJ-" + std::to_string(n); }
+
+    CachedTicket TicketOf(const std::string& id) {
+        CachedTicket t;
+        t.id = id;
+        return t;
+    }
+
+    // Loads a live set for PROJ-1..PROJ-n.
+    void LoadIssues(FakeEditMetaDeps & deps, IssueTransitionsCacheService & svc, int n) {
+        for (int i = 1; i <= n; ++i) {
+            deps.Fake()->SetIssueTransitions(IssueId(i), {Option("2", "In Progress")});
+            svc.EnsureIssueTransitionsLoaded(Query(IssueId(i)));
+        }
+    }
+
+    TEST_CASE("under the cap a prune changes nothing, even for issues no pane lists") {
+        smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.TransitionsLiveCacheMax = 16; });
+        FakeEditMetaDeps deps;
+        deps.Fake()->SetSupportsIssueTransitions(true);
+        IssueTransitionsCacheService svc(deps);
+        LoadIssues(deps, svc, 16); // exactly at the cap
+        deps.ActiveTicketsImpl = {TicketOf(IssueId(1))};
+
+        svc.PruneLiveToActiveTickets();
+
+        for (int i = 1; i <= 16; ++i) {
+            CHECK(svc.GetAvailableTransitions(Query(IssueId(i))).fromLive);
+        }
+    }
+
+    TEST_CASE("over the cap a prune keeps the issues a pane lists and drops the rest") {
+        smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.TransitionsLiveCacheMax = 16; });
+        FakeEditMetaDeps deps;
+        deps.Fake()->SetSupportsIssueTransitions(true);
+        IssueTransitionsCacheService svc(deps);
+        LoadIssues(deps, svc, 20);
+        deps.ActiveTicketsImpl = {TicketOf(IssueId(3)), TicketOf(IssueId(17)), TicketOf("")};
+
+        svc.PruneLiveToActiveTickets();
+
+        for (int i = 1; i <= 20; ++i) {
+            const bool listed = i == 3 || i == 17;
+            CHECK(svc.GetAvailableTransitions(Query(IssueId(i))).fromLive == listed);
+        }
+        // A dropped issue is simply fetched again the next time its combo opens.
+        svc.EnsureIssueTransitionsLoaded(Query(IssueId(5)));
+        CHECK(svc.GetAvailableTransitions(Query(IssueId(5))).fromLive);
+        CHECK(deps.Fake()->FetchIssueTransitionsCalls() == 21u);
+    }
+
+    TEST_CASE("a set being fetched survives a prune and its result lands") {
+        smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.TransitionsLiveCacheMax = 16; });
+        DeferredPruneDeps deps;
+        deps.Fake()->SetSupportsIssueTransitions(true);
+        IssueTransitionsCacheService svc(deps);
+        for (int i = 1; i <= 20; ++i) {
+            deps.Fake()->SetIssueTransitions(IssueId(i), {Option("2", "In Progress")});
+            svc.EnsureIssueTransitionsLoaded(Query(IssueId(i)));
+        }
+        deps.RunAll();
+        // PROJ-21 starts a fetch that is still running when the prune comes.
+        deps.Fake()->SetIssueTransitions(IssueId(21), {Option("2", "In Progress")});
+        svc.EnsureIssueTransitionsLoaded(Query(IssueId(21)));
+        REQUIRE(deps.Pending.size() == 1u);
+        deps.ActiveTicketsImpl = {TicketOf(IssueId(1))};
+
+        svc.PruneLiveToActiveTickets();
+        deps.RunAll();
+
+        CHECK(svc.GetAvailableTransitions(Query(IssueId(21))).fromLive);
+        CHECK(svc.GetAvailableTransitions(Query(IssueId(1))).fromLive);
+        CHECK_FALSE(svc.GetAvailableTransitions(Query(IssueId(2))).fromLive);
+        CHECK(deps.Fake()->FetchIssueTransitionsCalls() == 21u); // the prune started no fetch
+    }
+
+    TEST_CASE("a failed fetch's backoff survives a prune, so the prune cannot start a retry storm") {
+        smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.TransitionsLiveCacheMax = 16; });
+        FakeEditMetaDeps deps;
+        deps.Fake()->SetSupportsIssueTransitions(true);
+        deps.AdvanceNow(std::chrono::seconds(0));
+        IssueTransitionsCacheService svc(deps);
+        LoadIssues(deps, svc, 20);
+        // PROJ-99 is listed by a pane but its fetch fails (a throw is recorded as a failure).
+        deps.Fake()->SetIssueTransitionsThrows(true);
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-99"));
+        deps.Fake()->SetIssueTransitionsThrows(false);
+        deps.Fake()->SetIssueTransitions("PROJ-99", {Option("2", "In Progress")});
+        deps.ActiveTicketsImpl = {TicketOf("PROJ-99")};
+        const std::size_t callsBefore = deps.Fake()->FetchIssueTransitionsCalls();
+
+        svc.PruneLiveToActiveTickets();
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-99")); // inside the 30 s backoff
+        CHECK(deps.Fake()->FetchIssueTransitionsCalls() == callsBefore);
+
+        deps.AdvanceNow(std::chrono::seconds(30));
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-99"));
+        CHECK(deps.Fake()->FetchIssueTransitionsCalls() == callsBefore + 1);
+    }
+
+    TEST_CASE("the union over every pane is kept") {
+        smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.TransitionsLiveCacheMax = 16; });
+        class TwoPaneDeps : public FakeEditMetaDeps {
+          public:
+            std::vector<std::shared_ptr<const std::vector<CachedTicket>>>
+            GetActiveTicketsSnapshotsAllPanes() const override {
+                std::vector<std::shared_ptr<const std::vector<CachedTicket>>> panes;
+                panes.push_back(
+                    std::make_shared<const std::vector<CachedTicket>>(std::vector<CachedTicket>{TicketOf("PROJ-2")}));
+                panes.push_back(nullptr); // a pane without a published roster
+                panes.push_back(
+                    std::make_shared<const std::vector<CachedTicket>>(std::vector<CachedTicket>{TicketOf("PROJ-19")}));
+                return panes;
+            }
+        };
+        TwoPaneDeps deps;
+        deps.Fake()->SetSupportsIssueTransitions(true);
+        IssueTransitionsCacheService svc(deps);
+        LoadIssues(deps, svc, 20);
+
+        svc.PruneLiveToActiveTickets();
+
+        CHECK(svc.GetAvailableTransitions(Query("PROJ-2")).fromLive);
+        CHECK(svc.GetAvailableTransitions(Query("PROJ-19")).fromLive);
+        CHECK_FALSE(svc.GetAvailableTransitions(Query("PROJ-10")).fromLive);
+    }
+
+    TEST_CASE("real threads: prune races fetches and lookups without a data race") {
+        smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.TransitionsLiveCacheMax = 16; });
+        FakeEditMetaDeps deps;
+        deps.Fake()->SetSupportsIssueTransitions(true);
+        for (int i = 1; i <= 64; ++i) {
+            deps.Fake()->SetIssueTransitions(IssueId(i), {Option("2", "In Progress")});
+        }
+        deps.ActiveTicketsImpl = {TicketOf(IssueId(1)), TicketOf(IssueId(2))};
+        deps.RunOnRealThread = true;
+        IssueTransitionsCacheService svc(deps);
+
+        std::thread pruner([&svc]() {
+            for (int i = 0; i < 200; ++i) {
+                svc.PruneLiveToActiveTickets();
+            }
+        });
+        for (int round = 0; round < 3; ++round) {
+            for (int i = 1; i <= 64; ++i) {
+                svc.EnsureIssueTransitionsLoaded(Query(IssueId(i)));
+                (void)svc.GetAvailableTransitions(Query(IssueId(i)));
+            }
+        }
+        pruner.join();
+        deps.JoinLaunchedThreads();
+        svc.PruneLiveToActiveTickets();
+
+        CHECK_FALSE(svc.GetAvailableTransitions(Query(IssueId(40))).fromLive);
     }
 }

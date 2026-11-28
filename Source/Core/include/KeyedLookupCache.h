@@ -41,8 +41,8 @@ struct FetchAdmission {
 };
 
 /// The admission the revalidating callers use: a live value older than `lookup_live_max_age_sec` (0 = never)
-/// may be fetched again, and `revalidate` asks for it whatever its age. Reads the tunable limits, so call it where a
-/// lookup starts, not in a loop.
+/// may be fetched again, and `revalidate` asks for it whatever its age. Reads the tunable limits (a short mutex and
+/// a copy of the limits struct): cheap, but not free, so call it once per lookup, not once per entry.
 inline FetchAdmission LiveMaxAgeAdmission(bool revalidate) {
     FetchAdmission admit;
     admit.LiveMaxAge = std::chrono::seconds(limits::Get().LookupLiveMaxAgeSec);
@@ -225,15 +225,17 @@ template <typename Value> class KeyedLookupCache {
     }
 
     /// Drop every entry `keep(const std::string& key, const Entry& entry)` rejects, and every entry that holds no
-    /// value and is not in flight (a failure record nothing is waiting on). An in-flight entry is never erased: its
-    /// fetch still holds a ticket for it. Returns how many entries were erased. `keep` runs under the cache's mutex:
-    /// keep it cheap, never throw, never call back into this cache.
-    template <class KeepPred> std::size_t RetainIf(KeepPred&& keep) {
+    /// value, is not in flight and is no longer backing off at `now` (an empty failure record: while its backoff
+    /// runs it is what stops the next call from fetching again, so it stays). An in-flight entry is never erased:
+    /// its fetch still holds a ticket for it. Returns how many entries were erased. `keep` runs under the cache's
+    /// mutex: keep it cheap, never throw, never call back into this cache.
+    template <class KeepPred> std::size_t RetainIf(Clock::time_point now, KeepPred&& keep) {
         std::lock_guard<std::mutex> lock(mutex_);
         std::size_t erased = 0;
         for (auto it = slots_.begin(); it != slots_.end();) {
             const Entry& e = it->second.E;
-            if (!e.InFlight && (!e.HasValue || !keep(it->first, e))) {
+            const bool backingOff = it->second.RetryAfter > now;
+            if (!e.InFlight && (e.HasValue ? !keep(it->first, e) : !backingOff)) {
                 it = slots_.erase(it);
                 ++erased;
             } else {
