@@ -9,6 +9,8 @@
 #include <wrl/client.h>
 
 #include "Logger.h"
+#include "Persistence/SrvHeapBudgetPure.h"
+#include "TunableLimits.h"
 #include "imgui_impl_dx12.h"
 
 #include <cstring>
@@ -131,7 +133,10 @@ namespace standalone {
 struct Dx12Bootstrap::Impl {
     static const int NUM_FRAMES_IN_FLIGHT = 2;
     static const int NUM_BACK_BUFFERS = 2;
-    static const int SRV_HEAP_SIZE = 64;
+    // One descriptor per live user texture: the icon cache (ImageTextureCacheMaxEntries, default 384) plus
+    // queued destroys and attachment thumbnails. 1024 descriptors cost ~32 KiB; a smaller heap spills
+    // every texture past the cap onto one shared overflow slot, so unrelated icons alias each other.
+    static const int SRV_HEAP_SIZE = smatchet::persistence::kDx12SrvHeapDescriptors;
 
     struct FrameContext {
         ComPtr<ID3D12CommandAllocator> CommandAllocator;
@@ -362,6 +367,12 @@ bool Dx12Bootstrap::Init(void* hwnd, int width, int height, std::string& err) {
         gSrvAllocator.NextSlot = 1;
         gSrvAllocator.FreeList.clear();
         gSrvAllocator.bLoggedExhausted = false;
+        const int cacheMaxEntries = smatchet::limits::Get().ImageTextureCacheMaxEntries;
+        if (!smatchet::persistence::SrvHeapCoversTextureCache(gSrvAllocator.Capacity, cacheMaxEntries)) {
+            LOG_WARN("Standalone DX12: SRV heap capacity %d cannot hold image_texture_cache_max_entries=%d plus %d "
+                     "reserved descriptors; textures past the capacity will alias.",
+                     gSrvAllocator.Capacity, cacheMaxEntries, smatchet::persistence::kSrvHeapReservedDescriptors);
+        }
     }
 
     ImGui_ImplDX12_InitInfo initInfo{};

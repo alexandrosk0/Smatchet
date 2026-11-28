@@ -501,6 +501,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # User-texture destroy state machine (Persistence/UserTextureDestroyPolicy.h) — header-only,
         # ImGui-free, no threads; walks the policy against simulated GL3 / DX12 destroy gates.
         Core/UserTextureDestroyPolicy.test.cpp
+        # DX12 SRV heap budget vs the icon cache cap (Persistence/SrvHeapBudgetPure.h) — header-only, ImGui-free.
+        Core/SrvHeapBudgetPure.test.cpp
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -586,6 +588,8 @@ add_executable(SmatchetTests
     # User-texture destroy state machine (UserTextureDestroyPolicy.h): header-only and ImGui-free,
     # also in the Linux subset above.
     Core/UserTextureDestroyPolicy.test.cpp
+    # DX12 SRV heap budget (SrvHeapBudgetPure.h): header-only, also in the Linux subset.
+    Core/SrvHeapBudgetPure.test.cpp
     # mobile P1.4 — pure area-average RGBA32 downscale behind the non-Windows attachment-thumbnail
     # decode arm (stb_image cannot decode-scale; WIC does on Windows). Header-only
     # (Source/Core/include/Ui/RgbaDownscalePure.h); no production .cpp to link.

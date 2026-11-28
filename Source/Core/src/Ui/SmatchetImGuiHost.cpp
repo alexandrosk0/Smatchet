@@ -30,7 +30,9 @@
 #include "Logger.h"
 #include "imgui_impl_dx12.h"
 #include "SmatchetImGuiFonts.h"
+#include "Persistence/SrvHeapBudgetPure.h"
 #include "SmatchetImageTextureCache.h"
+#include "TunableLimits.h"
 #endif
 
 // Smatchet core components (needed for the pImpl state).
@@ -311,6 +313,12 @@ static bool Smatchet_ImplDX12_InitBackend(const SmatchetRendererInitInfo& render
             LOG_WARN("SmatchetImGuiHost: DX12 SRV heap has %d slot(s); attachment thumbnails and other dynamic "
                      "textures will not render. Pass NumSrvDescriptors>=2 in SmatchetRendererInitInfo.",
                      a.Capacity);
+        }
+        const int cacheMaxEntries = smatchet::limits::Get().ImageTextureCacheMaxEntries;
+        if (a.Capacity > 1 && !smatchet::persistence::SrvHeapCoversTextureCache(a.Capacity, cacheMaxEntries)) {
+            LOG_WARN("SmatchetImGuiHost: DX12 SRV heap capacity %d cannot hold image_texture_cache_max_entries=%d "
+                     "plus %d reserved descriptors; textures past the capacity will alias.",
+                     a.Capacity, cacheMaxEntries, smatchet::persistence::kSrvHeapReservedDescriptors);
         }
     }
 
