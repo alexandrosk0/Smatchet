@@ -4,7 +4,7 @@
 - **Priority**: P3
 - **Date**: 2026-11-25
 - **Observed on**: independent review of the agent-layer bump 75e1728 -> 4334c2b (the-unwilling-agentic-bunch#23, the plan CI-proof gate).
-- **Status**: open
+- **Status**: applied — `scripts/dev/plan-ci-proof-check.sh` now sources the layer's `merge-gates.d/30-plan-proof.sh` and delegates to `_mg_planproof_checks` / `_mg_planproof_is_plan`, failing closed (exit 2) when the module or a function is missing; its own copy of the parser is gone. Its bats suite now runs the layer's parser, so it is the cross-copy test.
 
 ## What happened
 

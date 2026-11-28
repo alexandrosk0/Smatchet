@@ -20,6 +20,8 @@ class IAppThreading : public IMainThreadPoster {
     /// Spawn `task` on a tracked background thread — joined at shutdown, never
     /// detached (the no-detach lint forbids raw std::thread::detach). Post
     /// results back to the UI thread via `PostToMainThread` inside `task`.
+    /// The task may be destroyed unrun (shutdown) or the call may throw: own any in-flight latch through
+    /// a `LaunchClaim` (LaunchClaim.h).
     virtual void LaunchBackgroundTask(std::function<void()> task) = 0;
 };
 

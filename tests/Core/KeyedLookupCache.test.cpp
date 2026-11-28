@@ -305,6 +305,83 @@ TEST_SUITE("StoreLoadLatch") {
         latch.ClearBackoff();
         CHECK(latch.TryClaim("Jira", Clock::now()));
     }
+
+    TEST_CASE("LoadSavedRowsOnce: a task the launcher destroys unrun releases the claim with a backoff") {
+        // AppController::LaunchBackgroundTask returns without a thread once shutdown has begun; the claim
+        // must not stay held for good.
+        struct DroppingDeps : FakeRowsDeps {
+            void LaunchBackgroundTask(std::function<void()> /*task*/) { /* destroyed unrun */ }
+        };
+        DroppingDeps deps;
+        deps.Store = std::make_shared<FakeRowsStore>();
+        StoreLoadLatch latch(30);
+        int applied = 0;
+        const auto apply = [&applied](const std::string&, const std::vector<std::string>&) { ++applied; };
+
+        CHECK(LoadSavedRowsOnce(deps, latch, "Jira", "kind", "test rows", apply));
+        CHECK(applied == 0);
+        CHECK(deps.Store->Reads == 0);
+        // Released, backing off (not stuck claimed): a later call after the backoff loads for real.
+        CHECK_FALSE(latch.TryClaim("Jira", Clock::now()));
+        latch.ClearBackoff();
+        FakeRowsDeps live;
+        live.Store = deps.Store;
+        CHECK(LoadSavedRowsOnce(live, latch, "Jira", "kind", "test rows", apply));
+        CHECK(applied == 1);
+    }
+
+    TEST_CASE("LoadSavedRowsOnce: a task that runs after its claim was released loads nothing") {
+        struct StashingDeps : FakeRowsDeps {
+            std::function<void()> Stashed;
+            void LaunchBackgroundTask(std::function<void()> task) {
+                Stashed = std::move(task);
+                throw std::runtime_error("launch failed after queueing");
+            }
+        };
+        StashingDeps deps;
+        deps.Store = std::make_shared<FakeRowsStore>();
+        StoreLoadLatch latch(30);
+        int applied = 0;
+        const auto apply = [&applied](const std::string&, const std::vector<std::string>&) { ++applied; };
+
+        CHECK_FALSE(LoadSavedRowsOnce(deps, latch, "Jira", "kind", "test rows", apply));
+        REQUIRE(deps.Stashed);
+        deps.Stashed(); // runs late: the throw already released the claim, so the body is skipped
+        CHECK(applied == 0);
+        CHECK(deps.Store->Reads == 0);
+    }
+
+    TEST_CASE("LoadSavedRowsOnce: a failure is released once; a throw after the body ran never frees a newer claim") {
+        // The load runs inline and fails (its own release), then the launcher itself throws, as a thread
+        // pool wrapper might. Meanwhile a newer caller claimed the key. A second release would free that
+        // caller's claim and let a duplicate load start.
+        struct RunThenThrowDeps : FakeRowsDeps {
+            StoreLoadLatch* Latch = nullptr;
+            bool Reclaimed = false;
+            void LaunchBackgroundTask(std::function<void()> task) {
+                try {
+                    task();
+                } catch (const std::exception&) {
+                    ++Contained;
+                }
+                Latch->ClearBackoff();
+                Reclaimed = Latch->TryClaim("Jira", Clock::now()); // the newer caller's claim
+                throw std::runtime_error("launcher threw after the body ran");
+            }
+        };
+        RunThenThrowDeps deps;
+        deps.Store = std::make_shared<FakeRowsStore>();
+        deps.Store->FailNextRead = true;
+        StoreLoadLatch latch(30);
+        deps.Latch = &latch;
+
+        CHECK_FALSE(LoadSavedRowsOnce(deps, latch, "Jira", "kind", "test rows",
+                                      [](const std::string&, const std::vector<std::string>&) {}));
+        CHECK(deps.Reclaimed);
+        CHECK(deps.Contained == 1);
+        latch.ClearBackoff();
+        CHECK_FALSE(latch.TryClaim("Jira", Clock::now())); // still the newer caller's: not released again
+    }
 } // TEST_SUITE
 
 TEST_CASE("KeyedLookupCache: CompleteFromSaved holds a saved copy, defers the refetch to its expiry, and ClearBackoff "

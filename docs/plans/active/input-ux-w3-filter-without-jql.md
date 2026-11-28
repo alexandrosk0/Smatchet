@@ -484,11 +484,34 @@ Per `AGENTS.md` § Verification automation: zero manual steps.
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
+- S1 · the clause editor (`query_facets`, `Tracker/QueryFacetClausesPure`) and the parse messages `QueryRejectedByTracker` / `QueryClausesDropped` with their French rows.
+
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
+S1:
+
+- The Jira component facet id is `component`, the JQL clause name, not `components` as in the § Per backend table.
+- The Linear facet list includes `reporter`. The table omits it, but § Interface contracts maps `creator` to `reporter`, which only works if it is a facet.
+- `AddFacetClause` also returns the query unchanged for a clause or value the dialect cannot write, for an unbalanced quote or parenthesis (a wrap would not be well formed), and for a non-chippable query in a subset dialect.
+- `DialectSupports` allows `=` only on GitHub, and on Linear `IN` for `status`, `labels` and `priority` with `=` elsewhere. So `!=` is never a chip in a subset dialect, also where the translator applies it.
+- `ValueSupported` also refuses an empty value in the subset dialects.
+- `DialectSupports` and `ValueSupported` do not know a field's own names (GitHub `status` takes Open and Closed, Linear `priority` its five), so they alone do not decide what is applied whole. `AddFacetClause` and `ReplaceFacetClause` also ask the translator about the clause they are about to write and leave the query unchanged when it would drop it. A picker (S6) offers only values these write.
+- Not every Jql facet clause is a chip: one with a bare `EMPTY` or `NULL`, or with a backslash escape other than `\"`, `\'` and `\\`, is kept as an "other" clause, because writing it again would change its meaning. It locks no field.
+- Jql has one field alias, `type` for `issuetype`; § Interface contracts says it has none.
+- The parse is stricter than the round-trip rule states where a translator would read other text than was typed: a byte the GitHub translator skips (so a bare `owner/repo` anchor) makes the query not chippable, and Linear needs its exact ` AND ` and ` ORDER BY ` spacing. A `~` clause also makes a query not chippable.
+- Jql allows a quoted field name, and `currentUser()` inside a list (`CurrentUser` is set beside the other `Values`).
+- `DescribeParseMessage` drops the final stop of the tracker's text, so the sentence does not end in two.
+- References re-checked against the tree before S1: the S1 inline inventory matches.
+
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+S1:
+
+- Bucket A: `QueryFacetClausesPure.test.cpp` and `TrackerFieldValueParseExplain.test.cpp`, 51 cases, passed (`ninja-test-msvc`).
+- Full `ctest` on `ninja-test-msvc`: 7 of 7 passed. Dual-target build (`SmatchetStandalone`, `SmatchetCore_DX12`, `ninja-iter-msvc`): passed.
+- Bucket E and the perf gate: not run; S1 draws nothing and adds no call from the UI.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*

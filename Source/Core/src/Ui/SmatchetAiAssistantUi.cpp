@@ -160,16 +160,6 @@ bool s_autoSendCallbackRegistered = false;
 // former per-save detached-thread shim now that the shared worker exists.
 void ScheduleConfigSaveDetached(const TrackerConfig& cfg) { smatchet::config_save::EnqueueTrackerConfig(cfg); }
 
-// Inline-vs-async hydration split. Caps ≤ this threshold load synchronously on
-// first frame; SQLite reads of ~200 rows are well under 5 ms on warm disk so a
-// brief one-frame stall is preferable to the cost of an extra background-thread
-// + MainThreadDispatcher round-trip. Above the threshold the load goes to a
-// detached worker that posts the result back via the dispatcher. The exact value
-// is documented in `docs/plans/shipped/ai-chat-claude-desktop-parity.md` § Phase 3 step
-// 7; the measured latency for the inline path is recorded next to the call site
-// via the Pillar-2 annotation below (see comment block).
-constexpr std::size_t kHydrateInlineRowThreshold = 200;
-
 void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
     static bool s_hydrated = false;
     if (s_hydrated) {
@@ -181,33 +171,19 @@ void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
         d.assistantInputBuf.reserve(kInputBufCap);
     }
 
-    // Phase 3 of ai-chat-claude-desktop-parity. Load persisted chat history through
-    // the AppController wrapper (which forwards to LocalCacheManager). Until the
-    // load completes, `assistantHistoryHydrated = false` gates dispatchSend +
-    // pin-toggle so a Send during the hydrate window doesn't insert a duplicate.
-    // Pillar 2 — UI thread budget 6.94 ms. The inline-vs-async split below honours
-    // the contract: ≤200-row read is a single SQLite SELECT against the indexed
-    // `idx_ai_chat_messages_id_desc`. Phase 3.10 measured 160.6 µs / load average
-    // for 200 rows on dev box (in-memory SQLite, 20-iter benchmark in
-    // `tests/Core/LocalCacheManagerChat.test.cpp` "hydration latency
-    // microbench") — 2.3% of frame budget, comfortably under threshold. On-disk
-    // WAL is typically 2-5x slower; even 800 µs leaves > 6 ms of headroom. Above
-    // 200 rows the read goes to a one-shot worker thread + MainThreadDispatcher
-    // post so the UI thread never blocks on the SELECT.
+    // Load persisted chat history through the AppController wrapper (which forwards to LocalCacheManager).
+    // Until the load completes, `assistantHistoryHydrated = false` gates dispatchSend + pin-toggle so a Send
+    // during the hydrate window doesn't insert a duplicate. Pillar 2: the read always runs on a worker. The
+    // cache connection is serialized, so even a small SELECT can wait behind a long worker transaction, and
+    // an inline read would hold the frame for that whole wait; the panel shows its not-hydrated state for
+    // a frame or more instead.
     const std::size_t cap =
         static_cast<std::size_t>(d.cfg.AssistantHistoryMaxRows > 0 ? d.cfg.AssistantHistoryMaxRows : 500);
-    if (cap <= kHydrateInlineRowThreshold) {
-        app.LoadAiChatMessages(cap, d.assistantHistory, d.assistantHistoryRowIds);
-        d.assistantHistoryHydrated = true;
-        return;
-    }
-    // Async hydration. Snapshot the cap by value (the worker thread cannot read
-    // d.cfg safely). Pillar 3 — the worker captures `app` by reference; AppController
-    // outlives any panel frame because `~AppController` joins `chat_persist::Stop()`
-    // before the LCM destructs, and the SmatchetUI `g_ui` is process-static. The
-    // dispatched callback may run after the panel was closed and reopened — that's
-    // fine because it only writes `d.assistantHistory` / `d.assistantHistoryRowIds`
-    // / `d.assistantHistoryHydrated`, all of which live on the same `UiDrawSession`.
+    // The worker cannot read d.cfg safely, so the cap is captured by value. Pillar 3: the worker captures `app`
+    // by pointer; AppController outlives any panel frame because `~AppController` joins `chat_persist::Stop()`
+    // before the LCM destructs, and `g_ui` is process-static. The posted callback may run after the panel was
+    // closed and reopened; it only writes `d.assistantHistory` / `d.assistantHistoryRowIds` /
+    // `d.assistantHistoryHydrated`, all of which live on the same `UiDrawSession`.
     AppController* appPtr = &app;
     // Joined background-task pool, not a raw detached thread — the no-detach lint forbids that.
     // Joined at shutdown, which is exactly the lifetime guarantee the comment above relies on.

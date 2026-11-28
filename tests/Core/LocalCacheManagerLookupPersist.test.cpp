@@ -9,14 +9,21 @@
 // which removes the file and its WAL/SHM siblings. SmatchetTests only, like the other file-backed
 // LocalCacheManager suites.
 
+#include "../support/FakeEditMetaDeps.h"
 #include "../support/TempDbFile.h"
 
+#include "EditMetaCacheService.h"
+#include "EditMetaScopePure.h"
 #include "ILookupCache.h"
 #include "LocalCacheManager.h"
+#include "LookupPayloadsPure.h"
+
+#include <memory>
 
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <doctest/doctest.h>
 
+using smatchet_tests::FakeEditMetaDeps;
 using smatchet_tests::TempDbFile;
 
 namespace {
@@ -43,6 +50,31 @@ TEST_SUITE("LocalCacheManagerLookupPersist") {
         LookupCacheRow row;
         REQUIRE(reopened.TryGetLookup("Jira", kKind, "PROJ|bug|1", row));
         CHECK(row.PayloadJson == R"([{"id":"2","name":"In Progress"}])");
+    }
+
+    TEST_CASE("legacy editmeta_type rows are deleted on load and leave the editmeta_project_type rows intact") {
+        TempDbFile tmp;
+        const std::string scopeKey = smatchet::editmeta::BuildScopeStoreKey("ABC", "story");
+        const auto store = std::make_shared<LocalCacheManager>(tmp.Path());
+        REQUIRE(store->UpsertLookup("Jira", smatchet::lookup::kEditMetaTypeKind, "story", R"({"labels":false})"));
+        REQUIRE(
+            store->UpsertLookup("Jira", smatchet::lookup::kEditMetaProjectTypeKind, scopeKey, R"({"labels":false})"));
+
+        FakeEditMetaDeps deps;
+        deps.LookupCacheImpl = store;
+        deps.ActiveTicketsImpl.emplace_back();
+        deps.ActiveTicketsImpl.back().id = "ABC-1";
+        deps.ActiveTicketsImpl.back().fieldValues["issuetype"] = "story";
+        deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+        EditMetaCacheService svc(deps);
+        svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
+
+        LookupCacheRow row;
+        CHECK_FALSE(store->TryGetLookup("Jira", smatchet::lookup::kEditMetaTypeKind, "story", row));
+        // The new kind stays, keeps a real save time (the 30-day ceiling reads it) and is restored.
+        REQUIRE(store->TryGetLookup("Jira", smatchet::lookup::kEditMetaProjectTypeKind, scopeKey, row));
+        CHECK(row.UpdatedAtEpochSec > 0);
+        CHECK_FALSE(svc.CanEditFieldForIssue("ABC-1", "labels"));
     }
 
     TEST_CASE("a cache file from before lookup_cache existed gains the table on open") {

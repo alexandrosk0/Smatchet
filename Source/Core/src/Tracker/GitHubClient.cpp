@@ -505,6 +505,11 @@ Result<TrackerFieldCatalogResult, TrackerError> GitHubClient::FetchFieldCatalog(
     return Result<TrackerFieldCatalogResult, TrackerError>::Ok(std::move(outCatalog));
 }
 
+bool GitHubClient::IssueEditMetaVariesPerIssue(const std::string& issueKeyOrId) const {
+    smatchet::github::ParsedCommitKey commitKey;
+    return smatchet::github::ParseGitHubCommitKey(issueKeyOrId, commitKey);
+}
+
 Result<std::unordered_map<std::string, bool>, TrackerError>
 GitHubClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) {
     // GitHub has no per-issue editmeta endpoint — the 6 native fields are uniformly

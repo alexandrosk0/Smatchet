@@ -633,10 +633,17 @@ fi
 # check skips — a skipped check is a pass, so the proof would silently never run
 # (#2400). Offline: it predicts the skip with the classifier the workflow runs.
 echo "pre-ship: running plan CI-proof check (plan-ci-proof-check.sh)"
-if ! bash scripts/dev/plan-ci-proof-check.sh "$base_ref"; then
-    echo "pre-ship: FAIL — a plan names a CI proof this diff will skip; fix the trigger set or the plan's proof before pushing." >&2
-    exit 1
-fi
+plan_proof_rc=0
+bash scripts/dev/plan-ci-proof-check.sh "$base_ref" || plan_proof_rc=$?
+case "$plan_proof_rc" in
+    0) ;;
+    1)
+        echo "pre-ship: FAIL — a plan names a CI proof this diff will skip; fix the trigger set or the plan's proof before pushing." >&2
+        exit 1 ;;
+    *)
+        echo "pre-ship: FAIL — the plan CI-proof check could not run (exit $plan_proof_rc; its message above names why); fix the checkout before pushing." >&2
+        exit 1 ;;
+esac
 
 fi # end of Group B (the lint stages skipped under SMATCHET_PRESHIP_GATE_ONLY=1)
 
