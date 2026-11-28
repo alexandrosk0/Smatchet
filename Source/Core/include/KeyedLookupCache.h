@@ -14,6 +14,7 @@
 // the Payload, HasValue and Live flag stay put while it runs and when it fails, so the cue reads Refreshing
 // and then CachedStale instead of dropping the value (Pillar 6: a failed fetch never wipes cached data).
 
+#include "Config/TunableLimits.h"
 #include "OfflineFirstPure.h"
 #include "ScopeExit.h"
 #include "TrackerError.h"
@@ -38,6 +39,16 @@ struct FetchAdmission {
     /// for connectivity and the failure backoff, and never starts a second fetch for a key already in flight.
     bool Revalidate = false;
 };
+
+/// The admission the revalidating callers use: a live value older than `lookup_live_max_age_sec` (0 = never)
+/// may be fetched again, and `revalidate` asks for it whatever its age. Reads the tunable limits, so call it where a
+/// lookup starts, not in a loop.
+inline FetchAdmission LiveMaxAgeAdmission(bool revalidate) {
+    FetchAdmission admit;
+    admit.LiveMaxAge = std::chrono::seconds(limits::Get().LookupLiveMaxAgeSec);
+    admit.Revalidate = revalidate;
+    return admit;
+}
 
 template <typename Value> class KeyedLookupCache {
   public:

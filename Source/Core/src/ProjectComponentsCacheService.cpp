@@ -1,7 +1,6 @@
 #include "ProjectComponentsCacheService.h"
 
 #include "CachedTicketTypes.h"
-#include "Config/TunableLimits.h"
 #include "FieldOptionsJsonPure.h"
 #include "IEditMetaDeps.h"
 #include "ILookupCache.h"
@@ -31,16 +30,6 @@ using OptionsList = std::vector<TrackerFieldOption>;
 // One cache entry per (tracker, project); the parts are escaped, so two pairs never collide.
 std::string EntryKey(const std::string& backendKey, const std::string& projectKey) {
     return smatchet::workflow::BuildScopedKey(backendKey, projectKey);
-}
-
-// How the revalidating paths (a user's Refresh, the post-sync warm) treat a live list: one older than
-// lookup_live_max_age_sec may be asked for again, and `revalidate` asks for it whatever its age. The lazy Ensure
-// path never uses this: it keeps the default admission, so a status the editor draws every frame cannot fetch.
-smatchet::offline::FetchAdmission MaxAgeAdmission(bool revalidate) {
-    smatchet::offline::FetchAdmission admit;
-    admit.LiveMaxAge = std::chrono::seconds(smatchet::limits::Get().LookupLiveMaxAgeSec);
-    admit.Revalidate = revalidate;
-    return admit;
 }
 
 } // namespace
@@ -78,7 +67,7 @@ bool ProjectComponentsCacheService::RefreshComponents(const std::string& project
         return false;
     }
     cache_.ClearBackoff(EntryKey(deps_.CacheBackendKey(), projectKey));
-    return BeginFetch(projectKey, /*bypassSaved=*/true, MaxAgeAdmission(/*revalidate=*/true));
+    return BeginFetch(projectKey, /*bypassSaved=*/true, smatchet::offline::LiveMaxAgeAdmission(/*revalidate=*/true));
 }
 
 bool ProjectComponentsCacheService::BeginFetch(const std::string& projectKey, bool bypassSaved,
@@ -127,7 +116,7 @@ void ProjectComponentsCacheService::WarmForActiveTicketsAsync(TrackerConfig trac
     }
     // Distinct Jira project keys (issue-key prefixes) across the active tickets, so each row's editor
     // offers its own project's components. Projects already live or in flight need no worker.
-    const smatchet::offline::FetchAdmission admit = MaxAgeAdmission(/*revalidate=*/false);
+    const smatchet::offline::FetchAdmission admit = smatchet::offline::LiveMaxAgeAdmission(/*revalidate=*/false);
     const auto ticketsSnap = deps_.GetActiveTicketsSnapshot();
     std::vector<std::string> projectKeys;
     std::unordered_set<std::string> seen;

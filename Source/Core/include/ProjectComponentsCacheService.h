@@ -44,7 +44,8 @@ class ProjectComponentsCacheService {
 
     /// Start a background fetch for `projectKey` when one is allowed (not live, not in flight, not
     /// offline, not inside the failure backoff) and load the saved rows once per backend. A live list is never
-    /// refetched here, however old: the editor calls this every frame, so only Refresh and the warm revalidate.
+    /// refetched here, however old, unless its last revalidation failed (then it retries after the backoff): the
+    /// editor calls this every frame, so only Refresh and the warm revalidate it.
     /// Non-blocking.
     /// True when this call changed the entry: a fetch started, or failed to start and was recorded as
     /// a failure. The caller then re-reads it (GetComponentOptions) to show the new state this frame.

@@ -32,14 +32,18 @@ class IssueTransitionsCacheService {
   public:
     explicit IssueTransitionsCacheService(IEditMetaDeps& deps);
 
-    /// Transitions for the query without touching the network: the live set fetched this session,
-    /// else the remembered workflow for (project, issue type, from status), else none. `applicable` is
-    /// false when the active backend does not support transitions. Cheap; safe every frame.
+    /// Transitions for the query without touching the network: the live set fetched this session for this
+    /// issue FROM THE STATUS THE QUERY NAMES, else the remembered workflow for (project, issue type, from
+    /// status), else none. A live set fetched for another status, or one the issue had moved on from, is never
+    /// served as live. `applicable` is false when the active backend does not support transitions. Cheap; safe
+    /// every frame.
     TransitionsLookup GetAvailableTransitions(const TransitionsQuery& q) const;
 
     /// Start a background fetch of the live transitions when one is allowed (not in flight, not
-    /// offline, not inside the failure backoff) and load the remembered workflow once per backend.
-    /// Non-blocking. Does nothing, and logs nothing, for a backend without transitions.
+    /// offline, not inside the failure backoff) and load the remembered workflow once per backend. A live set
+    /// is fetched again when it was fetched for another from-status than the query's, or is older than
+    /// `lookup_live_max_age_sec` (0 = never); it stays on screen while that runs. Non-blocking. Does nothing,
+    /// and logs nothing, for a backend without transitions.
     void EnsureIssueTransitionsLoaded(const TransitionsQuery& q, const TrackerConfig* configSnapshot = nullptr);
 
     /// Drop the live entry for one issue; called after a successful status transition so the next
@@ -54,15 +58,29 @@ class IssueTransitionsCacheService {
     void OnConnectivityRecovered();
 
   private:
+    /// What a successful live fetch stores: the options and the question they answer.
+    struct LiveTransitions {
+        std::string IssueId;
+        /// The from-status the query named when this was fetched (empty for an incomplete query).
+        std::string FromStatusKey;
+        /// The fetched targets include the from-status itself (no global or looped transition): the issue had
+        /// moved on, so these belong to another status. Kept to stop a refetch loop, never served as live.
+        bool ServerElsewhere = false;
+        std::vector<TrackerFieldOption> Options;
+    };
+    /// What RememberLearned did with a fetched set.
+    enum class LearnOutcome { Remembered, Erased, ServerElsewhere, Skipped };
+
     static std::string LiveKey(const std::string& backendKey, const std::string& issueId);
     static std::string LearnedMemoryKey(const std::string& backendKey, const std::string& learnedKey);
     bool BackendSupportsTransitions() const;
     void EnsureLearnedLoaded(const std::string& backendKey);
-    void RememberLearned(const std::string& backendKey, const TransitionsQuery& q,
-                         const std::vector<TrackerFieldOption>& options, const std::shared_ptr<ILookupCache>& store);
+    LearnOutcome RememberLearned(const std::string& backendKey, const TransitionsQuery& q,
+                                 const std::vector<TrackerFieldOption>& options,
+                                 const std::shared_ptr<ILookupCache>& store);
 
     IEditMetaDeps& deps_;
-    smatchet::offline::KeyedLookupCache<std::vector<TrackerFieldOption>> live_;
+    smatchet::offline::KeyedLookupCache<LiveTransitions> live_;
     mutable std::mutex learnedMutex_;
     /// LearnedMemoryKey(backend, "project|type|from") -> target statuses. Guarded by learnedMutex_.
     std::unordered_map<std::string, std::vector<TrackerFieldOption>> learned_;
