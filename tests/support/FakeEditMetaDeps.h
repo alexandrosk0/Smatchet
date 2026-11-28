@@ -46,7 +46,8 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     std::vector<TrackerField> AvailableFieldsImpl;
 
     bool ShuttingDownImpl = false;
-    mutable int DeferredNotifyCalls = 0;
+    /// Atomic: the real-thread race test (EditMetaCacheConcurrent) calls the notify from several threads.
+    mutable std::atomic<int> DeferredNotifyCalls{0};
     TrackerConnectivityState ConnectivityImpl = TrackerConnectivityState::AuthenticatedReachable;
     /// Null by default (no local store, like before the cache exists); tests that exercise the
     /// remembered workflow install a FakeLookupCache.
