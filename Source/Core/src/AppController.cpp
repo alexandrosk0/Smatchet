@@ -227,9 +227,9 @@ AppController::~AppController() {
     smatchet::ai::chat_persist::Stop();
 #endif
 
-    // Stop the coalescing config-save worker: flush pending config writes within a bounded budget,
-    // then join. Not AI-gated — config saves happen regardless of feature flags. After this, any
-    // further config save falls back to a synchronous write on the caller.
+    // Stop the coalescing config-save worker: a bounded, best-effort drain (a write still queued when the
+    // budget runs out is dropped, Issue #2529), then join. Not AI-gated. After this, a config save falls
+    // back to a synchronous write on the caller.
     smatchet::config_save::Stop();
 
     mainThreadDispatcher.BeginShutdown();
