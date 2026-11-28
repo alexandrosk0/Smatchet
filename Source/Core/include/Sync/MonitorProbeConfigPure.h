@@ -4,7 +4,7 @@
 // delta-sync.md § Phases (phase 6)). Header-only, C++14, no I/O, so the choice is unit-testable without an
 // AppController.
 
-#include "Config/CacheBackendKeyPure.h" // TrackerCacheBackendKey: same site and account
+#include "Config/CacheBackendKeyPure.h" // TrackerCacheBackendKey: same site (and Jira account)
 #include "Config/ConfigManager.h"       // TrackerConfig
 
 #include <string>
@@ -13,10 +13,14 @@
 namespace smatchet {
 namespace sync {
 
-/// Copies the tracker secrets of `globalCfg` over `sessionCfg` when both name the same site and account (the same
-/// cache key, #2268). The Jira and Plane readers build their auth header from the config of each request, and a
-/// session config keeps the secrets it was latched with: without this, a token saved after a pane's last sync left
-/// that pane's probes failing with 401 until it synced again. A pane on another site keeps its own secrets - the
+/// Copies the tracker secrets of `globalCfg` over `sessionCfg` when both have the same cache key (#2268): the same
+/// site and, for Jira, the same account (its key hashes the account email); for Plane, GitHub and Linear the key
+/// names the site and workspace / repository / team only. The Jira and Plane readers (and GitHub's per-request auth)
+/// build their auth from the config of each request, and a session config keeps the secrets it was latched with:
+/// without this, a token saved after a pane's last sync left that pane's probes failing with 401 until it synced
+/// again. Copying is safe because a pane's config is the global one with its TrackerType overridden - there are no
+/// per-pane credentials, so the global secret is the one the pane's next sync sends anyway. If per-pane credentials
+/// are ever added, this check needs a real account identity. A pane on another site keeps its own secrets: the
 /// global ones belong to the focused site and would pair that site's token with this one's host.
 inline void RefreshSessionSecretsFromGlobal(const TrackerConfig& globalCfg, TrackerConfig& sessionCfg) {
     if (smatchet::cache_keys::TrackerCacheBackendKey(globalCfg) !=
@@ -38,7 +42,7 @@ inline void RefreshSessionSecretsFromGlobal(const TrackerConfig& globalCfg, Trac
 /// instead ran its query against the focused pane's repository, and the membership reconcile then dropped the
 /// pane's rows as "left the view". Only the monitor's own settings - whether it runs, its interval and whether
 /// it may take the delta (roster) path - stay global: they are read from `globalCfg`, and so are the secrets when
-/// `globalCfg` names the same site and account (RefreshSessionSecretsFromGlobal).
+/// `globalCfg` has the same cache key (RefreshSessionSecretsFromGlobal).
 ///
 /// Before a session has started the focused config (`globalCfg`) is all that is known; `kickedJql`
 /// (GridLiveContext::lastSyncedJql, written by a pane kick or a focus switch) replaces its query when set.
