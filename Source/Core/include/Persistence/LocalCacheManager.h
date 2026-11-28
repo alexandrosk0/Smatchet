@@ -172,11 +172,12 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
      * next start retries). @return rows moved. */
     size_t RunOneTimeCacheIdentityRekey(const std::vector<std::pair<std::string, std::string>>& fromTo);
 
-    /** Generic `cache_meta` flag helpers used by one-shot migration sweeps. */
     /// What the corrupt-file rebuild of THIS open did (`Rebuilt` is false when the file opened normally).
     const smatchet::persistence::LocalCacheRecoveryReport& RecoveryReport() const noexcept { return recovery_; }
     /// The last rebuild recorded in the file, from this or an earlier launch. False when none was recorded.
     bool ReadLastRecoveryReport(smatchet::persistence::LocalCacheRecoveryReport& out);
+
+    /** Generic `cache_meta` flag helpers used by one-shot migration sweeps. */
     bool HasCacheMetaFlag(const std::string& key) override;
     void SetCacheMetaFlag(const std::string& key) override;
 
@@ -317,6 +318,8 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     void SalvageFromQuarantine_(const ConnGuard& guard, const std::string& quarantinedMain,
                                 const std::string& quarantinedWal, const std::string& reason) noexcept;
     smatchet::persistence::LocalCacheRecoveryReport recovery_;
+    /// True while the constructor runs and its caller asked it to stop (OpenOptions::Abort).
+    bool OpenAbortRequested_() const;
     /// `cache_meta` flag probe / set for code that already holds the guard (the public forms take their own).
     bool hasCacheMetaFlag_(const ConnGuard& guard, const std::string& key);
     void setCacheMetaFlag_(const ConnGuard& guard, const std::string& key);

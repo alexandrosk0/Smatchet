@@ -249,7 +249,7 @@ namespace {
 /// this covers the library the process actually loaded, so an older one fails the open (a session-only cache) instead
 /// of failing the first enqueue.
 const std::string& CheckSqliteVersionForOpen(const std::string& dbPath) {
-    // The memory-only session cache is the fallback for exactly this failure, and its its writers fail safely without
+    // The memory-only session cache is the fallback for exactly this failure, and its writers fail safely without
     // RETURNING.
     if (dbPath != ":memory:" && sqlite3_libversion_number() < lcm_detail::kMinSqliteVersionNumber) {
         throw std::runtime_error(std::string("SQLite ") + sqlite3_libversion() +
@@ -330,6 +330,8 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath, const OpenOption
     }
     LOG_INFO("LocalCacheManager: schema ready");
 }
+
+bool LocalCacheManager::OpenAbortRequested_() const { return openBusy_ != nullptr && openBusy_->AbortRequested(); }
 
 void LocalCacheManager::RebuildFreshAfterCorruption(const ConnGuard& guard, const SQLite::Exception& ex) {
     SQLite::Database& db = conn(guard);

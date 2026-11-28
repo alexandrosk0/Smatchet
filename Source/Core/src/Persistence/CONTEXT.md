@@ -37,6 +37,10 @@ _Avoid_: "failed edit" (a dead letter is parked, not lost)
 **Meta flag**:
 An idempotent, one-way named marker on the local cache (set-once, never unset) used to remember that a one-time transition already happened.
 
+**Meta value**:
+A mutable named value in `cache_meta` (JSON in `value`), unlike a **meta flag** it is overwritten, and it is read only through its own accessor, never through `HasCacheMetaFlag`. Today: `last_corruption_recovery_v1`, the record of the last rebuild after a damaged file (what was salvaged, what was not, where the damaged copy is kept).
+_Avoid_: calling it a flag (a flag is set-once and tested for presence only)
+
 ## Relationships
 
 - The **local cache** contains the **sync cache** plus chat history and migration state.

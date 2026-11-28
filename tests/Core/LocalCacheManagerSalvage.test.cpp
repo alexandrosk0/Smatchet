@@ -61,7 +61,7 @@ TEST_CASE("salvage: queue rows come across, a sending action becomes ambiguous, 
     CHECK(report.QuarantinedPath == oldFile.Path());
     CHECK(report.Reason == "test damage");
     CHECK(report.IncompleteTables.empty());
-    CHECK(report.SalvagedRows >= 4);
+    CHECK(report.SalvagedRows == 4); // two creates, one field edit, one action: the queued items, not the flags
     CHECK(fresh.LoadPendingCreates().size() == 2);
     CHECK(fresh.LoadPendingFieldEdits().size() == 1);
     const std::vector<PendingActionRecord> actions = fresh.LoadPendingActions();
@@ -135,4 +135,26 @@ TEST_CASE("salvage: a missing quarantined file is reported, never thrown") {
     CHECK_NOTHROW(LocalCacheManagerTestAccess::Salvage(fresh, freshFile.Path() + ".nope",
                                                        freshFile.Path() + ".nope-wal", "gone"));
     CHECK(fresh.RecoveryReport().IncompleteTables.size() == 7);
+}
+
+TEST_CASE("salvage: ids already handed out by the old file are never handed out again") {
+    smatchet_tests::TempDbFile oldFile("smatchet_salvage_seq_");
+    smatchet_tests::TempDbFile freshFile("smatchet_salvage_seq_fresh_");
+    std::int64_t archivedId = 0;
+    {
+        LocalCacheManager old(oldFile.Path());
+        const std::int64_t a = old.EnqueuePendingCreate(kBk, "{}");
+        const std::int64_t b = old.EnqueuePendingCreate(kBk, "{}");
+        archivedId = old.EnqueuePendingCreate(kBk, "{}");
+        old.ArchivePendingCreate(archivedId, "gave up", "boom");
+        old.DeletePendingCreate(a); // sent rows are deleted, so the live table's highest id falls below the sequence
+        old.DeletePendingCreate(b);
+        REQUIRE(old.LoadPendingCreates().empty());
+    }
+    LocalCacheManager fresh(freshFile.Path());
+    LocalCacheManagerTestAccess::Salvage(fresh, oldFile.Path(), oldFile.Path() + "-wal", "sequence");
+    REQUIRE(fresh.LoadDeadPendingCreates().size() == 1);
+    CHECK(fresh.LoadDeadPendingCreates()[0].OriginalId == archivedId);
+    // A new row must not share an id with the dead row's original_id: restore and the failed list key on it.
+    CHECK(fresh.EnqueuePendingCreate(kBk, "{}") > archivedId);
 }
