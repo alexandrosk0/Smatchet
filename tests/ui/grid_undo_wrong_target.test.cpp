@@ -182,15 +182,21 @@ static void RegisterUndoAfterSiteSwitch(ImGuiTestEngine* engine) {
         IM_CHECK(ShowSite(ctx, *app, paneId, originalDomain));
 
         // Round 3, away and back under a new client: the entry is still the pane's to undo.
-        const std::uint64_t third = SaveSingleEdit(ctx, *app, paneId, summary, (*tickets)[4].id, "Third round");
+        const std::string cell = (*tickets)[4].id;
+        const std::string before = SummaryInPane(*app, paneId, cell);
+        const std::uint64_t third = SaveSingleEdit(ctx, *app, paneId, summary, cell, "Third round");
         IM_CHECK(third != 0);
         SmatchetToastManager::Instance().DismissAllLive();
         IM_CHECK(ShowSite(ctx, *app, paneId, otherDomain));
         IM_CHECK(ShowSite(ctx, *app, paneId, originalDomain));
+        // The fixture's new client serves the old value again, so save the value once more for the cell to show what
+        // the entry wrote; its undo must then put the value from before it back.
+        IM_CHECK(SaveSingleEdit(ctx, *app, paneId, summary, cell, "Third round") != 0);
         IM_CHECK_NO_RET(g_ui.gridUndo.Contains(third));
-        IM_CHECK_NO_RET(UndoNewestGridEntry(*app, g_ui, paneId));
+        UndoGridEntryById(*app, g_ui, third);
         IM_CHECK_NO_RET(!g_ui.gridUndo.Contains(third));
-        IM_CHECK_NO_RET(YieldUntil(ctx, 900, [] { return EditQueueIdle(); }));
+        IM_CHECK_NO_RET(
+            YieldUntil(ctx, 900, [&] { return EditQueueIdle() && SummaryInPane(*app, paneId, cell) == before; }));
         SmatchetToastManager::Instance().DismissAllLive();
     };
 }
