@@ -196,8 +196,14 @@ void EditMetaCacheService::WarmIssueTypeEditMetaWorker(const std::vector<ScopeCa
             // Fire-and-forget warmup: a failed fetch is not surfaced and the issue stays optimistic. A tracker that
             // went offline ends the whole warm; any other failure (a deleted or restricted issue) only skips that
             // candidate, so one bad ticket keeps neither its siblings nor the scopes after it from being warmed.
-            const VoidResult loaded = LoadIssueEditMeta(backend, backendKey, scope.IssueIds[i], scope.IssueTypeKey,
-                                                        &trackerCfgForWorker, LoadMode::ScopeSuffices);
+            bool refused = false;
+            const VoidResult loaded =
+                LoadIssueEditMeta(backend, backendKey, scope.IssueIds[i], scope.IssueTypeKey, &trackerCfgForWorker,
+                                  LoadMode::ScopeSuffices, nullptr, &refused);
+            if (refused) {
+                failedAny = true; // no request was made for this candidate: not evidence of "no representative result"
+                continue;
+            }
             if (!loaded) {
                 if (smatchet::offline::IsOfflineState(deps_.TrackerConnectivity())) {
                     return;
@@ -503,8 +509,14 @@ bool EditMetaCacheService::StoreFetchResult(const FetchTicket& ticket, const std
         }
         return false;
     }
-    // Where the answer cannot vary per issue the scope entry serves every issue, so none is kept per row.
-    if (!(promote && !variesPerIssue)) {
+    // Where the answer cannot vary per issue the scope entry serves every issue, so none is kept per row (and an
+    // older one, from before the scope was filled, goes: the read side prefers an own entry).
+    if (promote && !variesPerIssue) {
+        const auto backendIt = issueEditMeta_.find(backendKey);
+        if (backendIt != issueEditMeta_.end()) {
+            backendIt->second.erase(issueId);
+        }
+    } else {
         issueEditMeta_[backendKey][issueId] = fetched.Cache;
     }
     if (promote && project != nullptr) {
@@ -519,7 +531,10 @@ bool EditMetaCacheService::StoreFetchResult(const FetchTicket& ticket, const std
 VoidResult EditMetaCacheService::LoadIssueEditMeta(const std::shared_ptr<ITrackerBackend>& backend,
                                                    const std::string& backendKey, const std::string& issueId,
                                                    const std::string& issueTypeKey, const TrackerConfig* configSnapshot,
-                                                   LoadMode mode, const FetchTicket* started) {
+                                                   LoadMode mode, const FetchTicket* started, bool* refused) {
+    if (refused != nullptr) {
+        *refused = false;
+    }
     FetchTicket ticket;
     bool haveTicket = false;
     if (started != nullptr) {
@@ -546,12 +561,25 @@ VoidResult EditMetaCacheService::LoadIssueEditMeta(const std::shared_ptr<ITracke
     if (smatchet::offline::IsOfflineState(deps_.TrackerConnectivity())) {
         return VoidResult::Err("Tracker is offline; edit permissions were not refreshed.");
     }
-    if (!haveTicket) {
+    {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
-        if (!TryBeginIssueFetchLocked(InFlightKey(backendKey, issueId), mode, ticket)) {
-            return VoidOk(); // this issue is being fetched already: it stays as it is until that answer lands
+        if (!haveTicket) {
+            if (!TryBeginIssueFetchLocked(InFlightKey(backendKey, issueId), mode, ticket)) {
+                // This issue is being fetched already: it stays as it is until that answer lands.
+                if (refused != nullptr) {
+                    *refused = true;
+                }
+                return VoidOk();
+            }
+            haveTicket = true;
+        } else if (!IssueFetchCurrentLocked(ticket)) {
+            // A Refresh or Invalidate retired the fetch this call was launched for: no request, its answer would
+            // be dropped.
+            if (refused != nullptr) {
+                *refused = true;
+            }
+            return VoidOk();
         }
-        haveTicket = true;
     }
     const TrackerConfig cfg = configSnapshot ? *configSnapshot : ConfigManager::Load();
     const FetchResult fetched = FetchEditMeta(catalog, cfg, issueId);

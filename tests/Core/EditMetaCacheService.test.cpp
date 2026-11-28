@@ -989,3 +989,51 @@ TEST_CASE("EditMetaCacheService: another issue's fetch in flight never blocks a 
     REQUIRE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", "ABC-2", "story").has_value());
     CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u); // another issue's fetch never blocks this one
 }
+
+TEST_CASE(
+    "EditMetaCacheService: a successful Refresh replaces an older own entry even where the scope serves the rows") {
+    FakeEditMetaDeps deps;
+    deps.Fake()->SetEditMetaVariesPerIssue(false);
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-1", kReadOnly); // not representative: kept as the issue's own entry
+    EditMetaCacheService svc(deps);
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
+    REQUIRE_FALSE(svc.CanEditFieldForIssue("ABC-1", "summary"));
+
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}, {"labels", true}}); // now representative
+    REQUIRE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", "ABC-1", "story").has_value());
+
+    CHECK(svc.CanEditFieldForIssue("ABC-1", "summary")); // the old all-false own entry no longer wins
+}
+
+TEST_CASE("EditMetaCacheService: a candidate another fetch is already running for does not cost the scope its retry") {
+    ParkingEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueEditMetaAsync("ABC-1");                    // parked: ABC-1 is in flight
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig()); // its only candidate is refused, no request is made
+    REQUIRE(deps.Parked.size() == 2u);
+    deps.Parked[1](); // run the startup worker (parked too)
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 0u);
+
+    svc.InvalidateIssueEditMeta("ABC-1"); // the focused fetch is retired
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
+    REQUIRE(deps.Parked.size() == 3u);
+    deps.Parked[2]();
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u); // no 30-minute backoff was recorded: the scope is warmed
+}
+
+TEST_CASE("EditMetaCacheService: a warm a Refresh retired makes no request when it finally runs") {
+    ParkingEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story"));
+    deps.Fake()->SetIssueEditMetaFailure("ABC-1", "HTTP 503");
+    EditMetaCacheService svc(deps);
+
+    svc.WarmIssueEditMetaAsync("ABC-1");                                                              // parked
+    CHECK_FALSE(svc.RefreshIssueEditMetaFor(deps.BackendImpl, "Jira", "ABC-1", "story").has_value()); // fails, no entry
+    REQUIRE(deps.Parked.size() == 1u);
+    deps.Parked[0]();
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u); // the retired warm asked nobody
+}
