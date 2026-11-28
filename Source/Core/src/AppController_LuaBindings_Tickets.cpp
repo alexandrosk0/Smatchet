@@ -252,7 +252,7 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
     // the ADR-0012 Backend atomic_load reader pattern.
     //
     // On the UI thread (a per-frame Lua draw callback) the SQLite read is off limits: the connection is
-    // serialized, so one worker transaction would stall the frame. Serve only what an open view already
+    // serialized, so one worker transaction would stall the frame. Serve only what the focused view already
     // holds in memory; a ticket no view has loaded reads as missing there. Worker and MCP states keep the
     // cache read.
     if (app_.IsOnUiThread()) {
@@ -266,7 +266,7 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
                 }
             }
         }
-        return {sol::make_object(sv, sol::nil), "Ticket not loaded in an open view"};
+        return {sol::make_object(sv, sol::nil), "Ticket not loaded in the focused view"};
     }
     auto cacheSnap = std::atomic_load(&app_.Cache);
     if (cacheSnap && cacheSnap->TryGetTicket(target.BackendKey, issueId, ticket)) {

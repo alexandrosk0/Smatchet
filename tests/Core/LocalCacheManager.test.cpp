@@ -176,6 +176,7 @@ TEST_CASE("LocalCacheManager: GetAllTickets round-trips a rich-only field value"
     t.fieldValues["summary"] = "plain";
     t.fieldValues["description"] = "plain text";
     t.fieldRichValues["description"] = "{\"type\":\"doc\"}";
+    t.fieldRichValues["comment_body"] = "<p>rich only</p>"; // a key with no plain value at all
     fix.Ref().SaveTicket(kBk, t);
 
     const std::vector<CachedTicket> all = fix.Ref().GetAllTickets(kBk);
@@ -183,6 +184,8 @@ TEST_CASE("LocalCacheManager: GetAllTickets round-trips a rich-only field value"
     CHECK(all[0].fieldValues.at("description") == "plain text");
     CHECK(all[0].fieldRichValues.at("description") == "{\"type\":\"doc\"}");
     CHECK(all[0].fieldRichValues.count("summary") == 0);
+    CHECK(all[0].fieldRichValues.at("comment_body") == "<p>rich only</p>");
+    CHECK(all[0].fieldValues.count("comment_body") == 0);
 }
 
 TEST_CASE("LocalCacheManager: cache_meta flag round-trip") {
