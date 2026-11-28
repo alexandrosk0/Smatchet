@@ -12,6 +12,8 @@
 // pulls in <GLFW/glfw3.h> + imgui_impl_glfw.h. Standalone-only (never included by
 // Source/Core), so the GLFW forward decl does not threaten the DX12 dual-target.
 
+#include "ConfigManager.h"
+
 #include <string>
 #include <vector>
 
@@ -28,6 +30,12 @@ std::string NormalizeDirectory(std::string path);
 /// Best-effort recursive create of `path` (ghc::filesystem::create_directories).
 /// Silent on failure (error_code swallowed) — callers fall back gracefully.
 void EnsureDirectoryExists(const std::string& path);
+
+/// Load the persisted config with the CLI overrides applied, for both boot paths. An explicit relative
+/// `--db-path` / `SMATCHET_DB_PATH` is made absolute against the current working directory here, so it keeps
+/// its shell meaning ("relative to where I launched it"); only an explicit value is touched, never the seeded
+/// default.
+TrackerConfig LoadBootConfig(const ConfigManager::CliOverrides& cli);
 
 /// Resolve the writable standalone user-data dir from the executable directory:
 /// the portable marker keeps data beside the exe, otherwise the OS shared dir

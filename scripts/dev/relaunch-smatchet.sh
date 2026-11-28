@@ -12,7 +12,7 @@
 #   bash scripts/dev/relaunch-smatchet.sh                 # iter preset
 #   bash scripts/dev/relaunch-smatchet.sh --preset=debug  # debug preset
 #   bash scripts/dev/relaunch-smatchet.sh --no-launch     # build only
-#   bash scripts/dev/relaunch-smatchet.sh --args="--db-path=foo.sqlite"
+#   bash scripts/dev/relaunch-smatchet.sh --args="--db-path foo.sqlite"  # the script runs from the repo root, so a relative path lands there
 #
 # Exit codes:
 #   0 — build succeeded; exe launched (or skipped with --no-launch)

@@ -593,7 +593,7 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
         TeardownPartialBoot(ctx, window, useDx12);
         return false;
     }
-    const TrackerConfig cfg = ConfigManager::Load(cli);
+    const TrackerConfig cfg = boot_detail::LoadBootConfig(cli);
 
     // Seed the live vsync hub with the documented precedence and apply it to the
     // (current) hidden-window GL context — --vsync/--no-vsync works on this path
