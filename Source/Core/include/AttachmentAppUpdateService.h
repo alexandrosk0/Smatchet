@@ -9,14 +9,15 @@
 // app-update surface keeps the same eight signatures but its bodies become thin delegators that
 // forward into this service.
 // One combined service rather than two: the attachment cluster and the app-update cluster share the
-// same tiny dependency surface (the host callbacks + OpenUrl + RequestAppQuit) and neither owns a
-// long-lived mutex, so a single service keeps one interface, one adapter base, one fake, and one
+// same tiny dependency surface (the host callbacks + OpenUrl + RequestAppQuit) and neither holds a
+// mutex across a call, so a single service keeps one interface, one adapter base, one fake, and one
 // test file — splitting would double the wiring for no behavioural or testability gain.
-// Concurrency: the only member state is the attachment disk cache (thread-safe, created on first use).
-// Every other method is a function of its arguments plus the host callbacks read live through the deps
-// interface. The cpr HTTP downloads run synchronously on the calling thread (callers already dispatch
-// the blocking downloads via LaunchBackgroundTask). The file-local download / temp-path /
-// semantic-version helpers live in the service .cpp.
+// Concurrency: the only member state is the attachment disk cache handle, guarded by a mutex and rebound
+// when the user data folder moves (the cache itself is thread-safe). Every other method is a function of
+// its arguments plus the host callbacks read live through the deps interface. The cpr HTTP downloads run
+// synchronously on the calling thread (callers already dispatch the blocking downloads via
+// LaunchBackgroundTask). The file-local download / semantic-version helpers live in the service .cpp; the
+// uncached-copy fallback lives in AttachmentUncachedStore.
 // Lifetime contract mirrors the sibling services: AppController owns the service via std::unique_ptr
 // and outlives it; the IAttachmentAppUpdateDeps& (GridContextDepsAdapter) outlives this service
 // (declared after it, destroyed after it).
@@ -83,17 +84,27 @@ class AttachmentAppUpdateService {
     VoidResult DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
                                                 std::shared_ptr<std::atomic<bool>> cancelFlag = {}) const;
 
+    /// The attachment disk cache for the CURRENT user data directory. Created on first use, and rebuilt when
+    /// ConfigManager::GetUserDataDirectory() has moved since (a storage-mode switch), so a copy is never read
+    /// from or written to the previous location. The returned handle keeps its cache alive for the caller even
+    /// if a later call rebinds. Safe from any thread; the cache's own methods do file I/O (worker only).
+    std::shared_ptr<smatchet::attachments::AttachmentDiskCache> AttachmentCache();
+
+    /// Deletes every downloaded attachment copy: the cache entries and the copies written outside the cache
+    /// (best effort; a file a viewer holds open is skipped). Returns how many were removed. Worker only: it does file
+    /// I/O.
+    std::size_t PurgeLocalAttachmentCache();
+
   private:
     /// A local copy of the attachment: the cached one when it was downloaded before (so it opens
     /// offline), else a fresh download, saved to the cache. The host allowlist, the size cap and the
     /// redirect check apply before anything is read or written. Blocking; call it from a worker.
     Result<smatchet::attachments::LocalAttachment>
     ResolveLocalAttachment(const std::string& url, const std::string& filename, const std::string& mimeType);
-    smatchet::attachments::AttachmentDiskCache& AttachmentCache();
 
     IAttachmentAppUpdateDeps& deps_;
-    std::once_flag attachmentCacheOnce_;
-    std::unique_ptr<smatchet::attachments::AttachmentDiskCache> attachmentCache_;
+    std::mutex attachmentCacheMutex_; ///< guards attachmentCache_ (rebound when the user data folder moves)
+    std::shared_ptr<smatchet::attachments::AttachmentDiskCache> attachmentCache_;
 };
 
 namespace smatchet {

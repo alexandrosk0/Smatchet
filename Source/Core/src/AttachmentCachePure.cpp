@@ -1,5 +1,6 @@
 #include "AttachmentCachePure.h"
 
+#include "FileIo.h"
 #include "Json/BoundedJsonParse.h"
 #include "Sha256.h"
 
@@ -71,6 +72,10 @@ bool IsPlainExtension(const std::string& extension) {
 
 std::string EntryKeyForUrl(const std::string& url) { return smatchet::hashing::Sha256Hex(url); }
 
+std::string EntryKeyFor(const std::string& ns, const std::string& url) {
+    return ns.empty() ? EntryKeyForUrl(url) : smatchet::hashing::Sha256Hex(ns + '\n' + url);
+}
+
 bool IsEntryKey(const std::string& name) {
     return name.size() == 64 && std::all_of(name.begin(), name.end(),
                                             [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
@@ -118,6 +123,28 @@ std::string StoredFileName(const std::string& filename, const std::string& exten
     return SanitizeFileName(name);
 }
 
+std::vector<std::string> SelectStaleEntryFiles(const std::vector<EntryFileInfo>& files,
+                                               const std::string& liveDataFileName, std::int64_t nowEpochSec,
+                                               std::int64_t graceSeconds) {
+    std::vector<std::string> stale;
+    for (const EntryFileInfo& candidate : files) {
+        if (candidate.Name == liveDataFileName || candidate.Name == kEntryMetaFileName) {
+            continue; // the entry's own files, whatever they are called
+        }
+        if (nowEpochSec - candidate.LastModifiedEpochSec < graceSeconds) {
+            continue; // possibly mid-write
+        }
+        for (const EntryFileInfo& base : files) {
+            if (&base != &candidate && smatchet::fileio::IsTempSiblingOf(candidate.Name, base.Name)) {
+                stale.push_back(candidate.Name);
+                break;
+            }
+        }
+    }
+    std::sort(stale.begin(), stale.end());
+    return stale;
+}
+
 std::vector<std::string> SelectEvictions(std::vector<CacheEntryInfo> entries, std::uint64_t capBytes,
                                          std::int64_t nowEpochSec, std::int64_t graceSeconds) {
     std::vector<std::string> evict;
@@ -157,6 +184,9 @@ std::string SerializeEntryMeta(const EntryMeta& meta) {
         j["url"] = meta.Url;
         j["mime"] = meta.Mime;
         j["file"] = meta.FileName;
+        if (!meta.Namespace.empty()) {
+            j["ns"] = meta.Namespace;
+        }
         // Strict: text that is not valid UTF-8 throws, so a URL is never stored altered (a lookup
         // compares it byte for byte).
         return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::strict);
@@ -174,6 +204,7 @@ bool ParseEntryMeta(const std::string& json, EntryMeta& out) {
     const auto url = j.find("url");
     const auto file = j.find("file");
     const auto mime = j.find("mime");
+    const auto ns = j.find("ns");
     if (url == j.end() || !url->is_string() || file == j.end() || !file->is_string()) {
         return false;
     }
@@ -181,6 +212,7 @@ bool ParseEntryMeta(const std::string& json, EntryMeta& out) {
     meta.Url = url->get<std::string>();
     meta.FileName = file->get<std::string>();
     meta.Mime = (mime != j.end() && mime->is_string()) ? mime->get<std::string>() : std::string();
+    meta.Namespace = (ns != j.end() && ns->is_string()) ? ns->get<std::string>() : std::string();
     if (meta.Url.empty() || meta.FileName.empty() || SanitizeFileName(meta.FileName) != meta.FileName) {
         return false;
     }

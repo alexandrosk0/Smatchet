@@ -246,7 +246,8 @@ void RegisterCacheRecreateCommand(CommandRegistry& reg, IAppSync& app, IMainThre
     {
         Command c = MakeCommand(
             "cache.recreate",
-            "Wipe the local cache database (cached tickets AND queued offline edits) and re-fetch the active view "
+            "Wipe the local cache database (cached tickets AND queued offline edits) and the downloaded attachment "
+            "copies and field icons, then re-fetch the active view "
             "from the tracker. The wipe runs on a worker behind a \"recreating\" gate that holds back new syncs and "
             "cache access; the UI never waits for a running request. MCP / CLI / Lua callers wait for the outcome "
             "and get the final result (a failure says whether the cache was already wiped); the command palette "

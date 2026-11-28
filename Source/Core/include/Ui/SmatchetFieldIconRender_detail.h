@@ -7,6 +7,7 @@
 // the icon HTTP GET at an arbitrary host. The I/O shell (texture cache, cpr fetch, ImGui
 // draw) stays in SmatchetFieldIconRender.cpp.
 
+#include <cstddef>
 #include <string>
 
 namespace SmatchetFieldIconRender {
@@ -42,8 +43,17 @@ std::string ResolveJiraIconUrlReference(const std::string& iconUrl, const std::s
  *  extracted; a non-JSON value degrades to label(+slug). */
 bool ParsePriorityJson(const std::string& raw, std::string& outIconUrl, std::string& outLabel, std::string& outSlug);
 
-/** Stable on-disk cache filename for a fetched icon URL ("icon_<hash-hex>.bin"). */
+/** Stable on-disk cache filename for a fetched icon URL: "icon_" + SHA-256 hex of the URL + ".bin". The
+ *  full digest (64 lowercase hex digits) makes a collision between two URLs infeasible, unlike the
+ *  64-bit std::hash names older builds wrote. */
 std::string UrlToCacheFileName(const std::string& url);
+
+/** True for exactly the shape UrlToCacheFileName produces (the prune only ever deletes such names). */
+bool IsIconCacheFileName(const std::string& name);
+
+/** True for a name older builds wrote ("icon_" + 1-16 lowercase hex digits + ".bin"): never read again,
+ *  deleted by the prune. */
+bool IsLegacyIconCacheFileName(const std::string& name);
 
 } // namespace detail
 } // namespace SmatchetFieldIconRender

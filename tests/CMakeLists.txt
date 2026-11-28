@@ -300,6 +300,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # The attachment disk cache (offline-first S13): its pure rules and the file store.
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentCachePure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentDiskCache.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentUncachedStore.cpp"
         # --- ConnectivityMonitorService (AppController god-object decomposition Phase 3): the
         #     tracker connectivity-probe FSM. UI-thread-only by contract (no mutex) but it owns the
         #     ONE cross-thread handle in the service — the std::async reachability probe future.
@@ -503,6 +504,35 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # the JQL project-scope parser it delegates to. ImGui-free, no threads.
         Core/PaneCatalogScopePure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlProjectScope.cpp"
+        # User-texture destroy state machine (Persistence/UserTextureDestroyPolicy.h) — header-only,
+        # ImGui-free, no threads; walks the policy against simulated GL3 / DX12 destroy gates.
+        Core/UserTextureDestroyPolicy.test.cpp
+        # DX12 SRV heap budget vs the icon cache cap (Persistence/SrvHeapBudgetPure.h) — header-only, ImGui-free.
+        Core/SrvHeapBudgetPure.test.cpp
+        # Binary atomic-write primitive + temp-sibling rule + streaming byte compare (FileIo.cpp, linked
+        # above for ScopedFileLock). Real files in a private temp dir; the POSIX cases pin 0600 and the
+        # exclusive no-follow temp.
+        Core/FileIoAtomicWrite.test.cpp
+        # ConfigManager::AtomicWriteTextFile (ConfigManager_PathUtils.cpp, linked above) now delegates to
+        # FileIo; its 0600 / no-follow / no-stray-temp suite runs on the Linux lane too.
+        Core/ConfigAtomicWriteSecurity.test.cpp
+        # FieldCatalogCache persists through AtomicWriteTextFile; its write-failure cases squat on the unique
+        # temp names (FileIo.h), so they run on the Linux lane too.
+        Core/FieldCatalogCacheIndex.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/FieldCatalogCache.cpp"
+        # Field-icon pipeline: SHA-256 cache names + shape predicates (the _detail TU is ImGui/cpr-free) and the
+        # worker-side disk cache driven by a fake fetch and decoder.
+        Core/SmatchetFieldIconRender_detail.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconRender_detail.cpp"
+        Core/SmatchetFieldIconDiskCache.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconDiskCache.cpp"
+        # Pure prune / revalidation rules of the icon cache directory.
+        Core/SmatchetFieldIconPrunePure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconPrunePure.cpp"
+        # Uncached attachment copies: <user data>/cache/attachment_tmp, owner-only, swept after a day.
+        Core/AttachmentUncachedStore.test.cpp
+        # Pure cache-eviction policy (CacheOverCap, SweepDue, EraseUnusedSince) — header-only.
+        Core/CacheEvictionPolicy.test.cpp
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -585,6 +615,11 @@ add_executable(SmatchetTests
     # SmatchetImageTextureCache's stbi_info pre-check. Header-only
     # (Source/Core/include/Persistence/IconDimensionsPolicy.h); no production .cpp to link.
     Core/IconDimensionsPolicy.test.cpp
+    # User-texture destroy state machine (UserTextureDestroyPolicy.h): header-only and ImGui-free,
+    # also in the Linux subset above.
+    Core/UserTextureDestroyPolicy.test.cpp
+    # DX12 SRV heap budget (SrvHeapBudgetPure.h): header-only, also in the Linux subset.
+    Core/SrvHeapBudgetPure.test.cpp
     # mobile P1.4 — pure area-average RGBA32 downscale behind the non-Windows attachment-thumbnail
     # decode arm (stb_image cannot decode-scale; WIC does on Windows). Header-only
     # (Source/Core/include/Ui/RgbaDownscalePure.h); no production .cpp to link.
@@ -686,6 +721,12 @@ add_executable(SmatchetTests
     # iconUrl confinement. The _detail TU pulls StringUtil/JsonParseUtil/nlohmann only.
     Core/SmatchetFieldIconRender_detail.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconRender_detail.cpp"
+    # FI-5 — worker-side field-icon disk cache (fake fetch + decoder; also in the Linux subset).
+    Core/SmatchetFieldIconDiskCache.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconDiskCache.cpp"
+    # FI-6 — prune / revalidation planning for the icon cache directory (also in the Linux subset).
+    Core/SmatchetFieldIconPrunePure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconPrunePure.cpp"
     # Pure cached-project filter extracted from DrawJqlQueryEditorEmbedded's project pill. The
     # _detail TU reads only CachedProjectEntry struct fields — no ImGui, no FieldCatalogCache call.
     Core/JqlProjectPillFilter.test.cpp
@@ -1104,6 +1145,9 @@ add_executable(SmatchetTests
     # (Source/Core/src/FileIo.cpp, linked below) and the BackendAuditTrail append path that is its
     # first non-Config consumer. Both production TUs are already in this target's src list.
     Core/FileIoScopedFileLock.test.cpp
+    # FI-3 — WriteFileAtomically / FileContentEquals / IsTempSiblingOf (FileIo.cpp linked below); also in
+    # the Linux subset.
+    Core/FileIoAtomicWrite.test.cpp
     # security backlog 2026-05-17 — pure CR/LF/NUL strip for header-bound config fields
     # (SanitizeConfigStringValue, defined in ConfigManager_PathUtils.cpp linked below). No extra .cpp.
     Core/ConfigStringSanitize.test.cpp
@@ -1334,6 +1378,11 @@ add_executable(SmatchetTests
     # not linked here), so the truncation/malformed-header cases run headless.
     Core/IcoDecode.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/SmatchetIcoDecode.cpp"
+    # FI-1 — SmatchetImageTextureCache destroy lifecycle against a headless ImGui context (eviction
+    # queue, per-frame tick with a simulated backend, DropAllForContextTeardown). This is the one rig TU
+    # that holds the single STB_IMAGE_IMPLEMENTATION; ASan/LSan lanes catch a texture the cache leaks.
+    Core/SmatchetImageTextureCacheTeardown.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/SmatchetImageTextureCache.cpp"
     # log-a-bug-github Phase 2 — crash marker survival + next-launch consume.
     Core/CrashSink.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/CrashSink.cpp"
@@ -1397,6 +1446,7 @@ add_executable(SmatchetTests
     Core/ProjectComponentsCacheService.test.cpp
     Core/ProjectListLookup.test.cpp
     Core/AttachmentCachePure.test.cpp
+    Core/AttachmentUncachedStore.test.cpp
     Core/AttachmentDiskCache.test.cpp
     Core/CappedBodyAccumulator.test.cpp
     Core/TrackerIssueReaderDefaults.test.cpp
@@ -1650,6 +1700,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentAppUpdateService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentCachePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentDiskCache.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AttachmentUncachedStore.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
     # Slice D of docs/plans/http-fault-injection.md — the retry+classify engine
@@ -2134,6 +2185,9 @@ target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui"
     "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty/ImGuiColorTextEdit"
+    # SmatchetImageTextureCache.cpp (the texture-teardown test) includes <stb/stb_image.h>, which lives here;
+    # the production targets get this directory from smatchet_configure_core_impl_target.
+    "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty"
     # IconCatalog.test.cpp links SmatchetIconCatalog.cpp, which includes the FA6
     # header + generated catalog (parity with the production SmatchetCoreInterface).
     "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty/IconsFontAwesome6"

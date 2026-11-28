@@ -62,6 +62,11 @@ struct AppController::Impl {
     std::unordered_map<std::string, sol::protected_function> fieldDisplayCachedProvidersByName_;
     /// Per-cell cmd-list cache. Key = `ticket.id + '\0' + fieldId`. UI-thread only.
     std::unordered_map<std::string, LuaFieldCacheEntry> luaFieldCache_;
+    std::uint64_t luaFieldCacheLastSweepFrame_ = 0; ///< ImGui frame of the last luaFieldCache_ sweep
+    /// Bounds luaFieldCache_ (UI thread): once it holds more than limits::LuaFieldCacheMax entries, drops the
+    /// ones no cell touched for a few seconds of frames, at most once per spacing window; a map still over twice
+    /// the cap after that (every entry recently used) is cleared. Defined in AppController_LuaBindings_Draw.cpp.
+    void SweepLuaFieldCacheIfOverCap(std::uint64_t frame);
     std::vector<LuaWindowEntry> luaWindows_;
     std::vector<PendingLuaWindowOp> pendingLuaWindowOps_;
     /// Snapshot of user-side providers displaced by a scenario register call (keyed by

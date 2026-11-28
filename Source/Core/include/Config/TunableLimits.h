@@ -81,6 +81,8 @@ namespace limits {
     X(FieldIconFetchNegativeMax, "field_icon_fetch_negative_max", 256, 16, 100000)                                     \
     X(PriorityResolveMemoMax, "priority_resolve_memo_max", 256, 16, 100000)                                            \
     X(GridRenderCacheMax, "grid_render_cache_max", 256, 16, 100000)                                                    \
+    X(FieldIconDiskCacheMaxMiB, "field_icon_disk_cache_max_mib", 32, 1, 1024)                                          \
+    X(LuaFieldCacheMax, "lua_field_cache_max", 16384, 256, 1000000)                                                    \
     X(CodeColorCacheMax, "code_color_cache_max", 256, 16, 100000)                                                      \
     X(AiMaxCachedPlans, "ai_max_cached_plans", 256, 8, 10000)                                                          \
     X(AiPlanCacheMaxMiB, "ai_plan_cache_max_mib", 4, 1, 256)                                                           \
@@ -113,7 +115,7 @@ struct LimitsConfig {
 /// One row of the table, for the JSON load/save loop and the unit test.
 struct LimitDescriptor {
     const char* key;
-    int LimitsConfig::* member;
+    int LimitsConfig::*member;
     int defaultValue;
     int minValue;
     int maxValue;

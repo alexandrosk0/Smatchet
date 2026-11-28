@@ -6,6 +6,7 @@
 // unit-testable without a GPU context or an ImGui frame.
 
 #include <cstddef>
+#include <cstdint>
 
 namespace smatchet {
 
@@ -19,6 +20,35 @@ inline bool CacheOverCap(std::size_t count, std::size_t bytes, std::size_t maxCo
         return false;
     }
     return count > maxCount || bytes > maxBytes;
+}
+
+/// Hysteresis for a map that is swept rather than LRU-trimmed (the Lua field render cache, which is read on
+/// every cell of every frame and so cannot afford per-hit list maintenance). A sweep is due only when the map
+/// is over `cap` AND at least `minSpacingTicks` ticks (frames) passed since the last sweep, so a grid that
+/// legitimately keeps more than `cap` cells live does not re-walk the whole map every insert. A tick counter
+/// that went backwards counts as due.
+inline bool SweepDue(std::size_t size, std::size_t cap, std::uint64_t nowTick, std::uint64_t lastSweepTick,
+                     std::uint64_t minSpacingTicks) {
+    if (size <= cap) {
+        return false;
+    }
+    return nowTick < lastSweepTick || nowTick - lastSweepTick >= minSpacingTicks;
+}
+
+/// Erases every entry of `map` whose last-use tick (`lastUsedOf(value)`) is older than `cutoffTick`; returns
+/// how many were erased. Entries used at or after the cutoff are kept.
+template <class Map, class LastUsedFn>
+std::size_t EraseUnusedSince(Map& map, std::uint64_t cutoffTick, LastUsedFn lastUsedOf) {
+    std::size_t erased = 0;
+    for (auto it = map.begin(); it != map.end();) {
+        if (lastUsedOf(it->second) < cutoffTick) {
+            it = map.erase(it);
+            ++erased;
+        } else {
+            ++it;
+        }
+    }
+    return erased;
 }
 
 } // namespace smatchet

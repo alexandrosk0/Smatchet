@@ -1021,7 +1021,8 @@ class ConfigManager {
      *  single-grid installs) and persist it. Never returns an empty pane list. */
     static PersistentPanesFile LoadPanesOrBootstrap(const TrackerConfig& cfg);
 
-    // Crash-safe write: writes to <path>.tmp then atomically renames onto <path>. Used by
+    // Crash-safe write: stages the bytes in a unique exclusive sibling (<path>.part-<pid>-<n>, owner-only,
+    // fsync'ed) via fileio::WriteFileAtomically, then atomically renames it onto <path>. Used by
     // FieldCatalogCache as well as the internal Write* helpers, so it stays in the public API.
     static bool AtomicWriteTextFile(const std::string& path, const std::string& content);
 };

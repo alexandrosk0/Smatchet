@@ -1,8 +1,10 @@
 #pragma once
 
+#include "Persistence/DecodedIcon.h"
 #include "SmatchetResult.h"
 #include "imgui.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -18,8 +20,35 @@ struct SmatchetLoadedIconTexture {
 
 namespace SmatchetImageTextureCache {
 
-/** Call once per UI frame (before/after draw) to finalize destroyed textures. */
+// --- Any thread ---
+
+/**
+ * Decode image bytes (any format stb_image reads) to RGBA32 with the same dimension limits as GetOrLoadFromMemory.
+ * Touches no texture-cache state and no ImGui, so a worker may call it (ANY_THREAD); the UI thread then uploads the
+ * pixels with GetOrCreateFromRgba. Err(reason) on empty or oversized input or a decode failure.
+ */
+Result<DecodedIcon> DecodeIconBytesAnyThread(const unsigned char* bytes, std::size_t byteCount);
+
+// --- UI thread only (every function below touches ImGui state) ---
+
+/** Create and register an RGBA32 user texture owned by the caller, not the LRU; free it via QueueUserTextureDestroy. */
+bool CreateUserTexture(const std::vector<unsigned char>& pixels, int width, int height, ImTextureData*& outTexture,
+                       std::string& outError);
+
+/**
+ * Queue a caller-owned user texture (from CreateUserTexture) for destruction; idempotent, the caller drops its
+ * pointer. Never pass a texture returned by the loaders below: the LRU owns those. See UserTextureDestroyPolicy.h.
+ */
+void QueueUserTextureDestroy(ImTextureData* tex);
+
+/** Advance every queued destroy one frame; call once per UI frame from SmatchetUI::Draw. */
 void TickPendingDestroys();
+
+/** Queued destroys not yet freed (tests and diagnostics). */
+std::size_t PendingDestroyCount();
+
+/** Free every texture this cache owns and reset it; call after the backend Shutdown, before ImGui::DestroyContext. */
+void DropAllForContextTeardown();
 
 /**
  * Cache-only lookup: returns true and populates `out` on hit (and touches LRU). Performs no I/O.

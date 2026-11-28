@@ -1,7 +1,9 @@
 #pragma once
 
+#include "SmatchetFieldIconDiskCache.h"
 #include "SmatchetImageTextureCache.h"
 
+#include <cstddef>
 #include <string>
 
 class AppController;
@@ -38,6 +40,19 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
 /** Load inline icon texture for SingleSelect (Lua map or priority); does not submit ImGui items. */
 bool TryGetInlineFieldIconTexture(const AppController& app, const TrackerField& field, const std::string& rawValue,
                                   SmatchetLoadedIconTexture& outIcon, std::string& outError);
+
+/**
+ * Test seam: replace the function workers use to fetch an icon URL (the production one is a capped cpr
+ * GET). Pass an empty function to restore the production fetch. Thread-safe.
+ */
+void SetIconFetchFnForTest(SmatchetFieldIconDiskCache::FetchFn fn);
+
+/**
+ * Deletes every downloaded field-icon file under `<user data>/cache/field_icons/` (best effort, other files
+ * stay) and returns how many went. Does file I/O: worker only. Textures already resident stay until evicted;
+ * a later request downloads again.
+ */
+std::size_t PurgeDiskCache();
 
 /** Lua / scripting: draw image from URL or resolved local path (see `ResolveFieldIconAssetPath`). */
 bool DrawImagePathOrUrl(AppController& app, const std::string& pathOrUrl, float width, float height);

@@ -45,6 +45,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "SmatchetImGuiFonts.h"
+#include "SmatchetImageTextureCache.h"
 
 // stb_image_write — single-TU implementation lives here so SmatchetStandalone
 // can encode PNGs for debug.window.screenshot output (replaces the prior raw
@@ -650,6 +651,8 @@ static int BootApplication(int argc, char** argv, MainBootState& boot) {
             ImGui_ImplOpenGL3_Shutdown();
         }
         ImGui_ImplGlfw_Shutdown();
+        // After the backend Shutdown (it freed the GPU side of every user texture), before the context goes.
+        SmatchetImageTextureCache::DropAllForContextTeardown();
         ImGui::DestroyContext();
         glfwDestroyWindow(window);
         glfwTerminate();
@@ -1151,6 +1154,8 @@ static int RunFrameLoop(MainBootState& boot) {
     }
     smatchet::standalone::UninstallStandaloneInputBridges(window);
     ImGui_ImplGlfw_Shutdown();
+    // After the backend Shutdown (it freed the GPU side of every user texture), before the context goes.
+    SmatchetImageTextureCache::DropAllForContextTeardown();
     ImGui::DestroyContext();
 
     glfwDestroyWindow(window);

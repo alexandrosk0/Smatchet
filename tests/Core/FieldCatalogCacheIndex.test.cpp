@@ -2,6 +2,7 @@
 
 #include "ConfigManager.h"
 #include "FieldCatalogCache.h"
+#include "FileIo.h"
 #include "TimeNowPure.h"
 #include "TrackerFieldSchema.h"
 
@@ -396,34 +397,45 @@ TEST_CASE("FieldCatalogCache: an empty GitHub or Linear base URL keys and lists 
 
 namespace {
 
-/// Makes every write of the cache file fail (a directory sits where the temp file goes) until released.
+/// Makes every write of the cache file fail until released. The atomic writer stages through a unique
+/// exclusive sibling named `<file>.part-<pid>-<n>` (smatchet::fileio::UniqueTempSuffix), so a directory
+/// squatting on each of the next `kWindow` names makes every create collide until it gives up. The window
+/// is far wider than the eight attempts of one write, so it covers many failing writes under one blocker.
 class WriteBlocker {
   public:
-    explicit WriteBlocker(const CacheFileCleanup& file) : dir_(file.Path() + ".tmp") {
+    explicit WriteBlocker(const CacheFileCleanup& file) {
+        const std::string probe = smatchet::fileio::UniqueTempSuffix(); // ".part-<pid>-<n>"
+        const std::string::size_type dash = probe.rfind('-');
+        REQUIRE(dash != std::string::npos);
+        const std::string prefix = file.Path() + probe.substr(0, dash + 1);
+        const unsigned long long first = std::stoull(probe.substr(dash + 1)) + 1;
+        for (unsigned long long n = first; n < first + kWindow; ++n) {
+            const std::string dir = prefix + std::to_string(n);
 #if defined(_WIN32)
-        REQUIRE(::_mkdir(dir_.c_str()) == 0);
+            REQUIRE(::_mkdir(dir.c_str()) == 0);
 #else
-        REQUIRE(::mkdir(dir_.c_str(), 0755) == 0);
+            REQUIRE(::mkdir(dir.c_str(), 0755) == 0);
 #endif
+            dirs_.push_back(dir);
+        }
     }
     ~WriteBlocker() { Release(); }
     WriteBlocker(const WriteBlocker&) = delete;
     WriteBlocker& operator=(const WriteBlocker&) = delete;
     void Release() {
-        if (released_) {
-            return;
-        }
-        released_ = true;
+        for (std::size_t i = 0; i < dirs_.size(); ++i) {
 #if defined(_WIN32)
-        ::_rmdir(dir_.c_str());
+            ::_rmdir(dirs_[i].c_str());
 #else
-        ::rmdir(dir_.c_str());
+            ::rmdir(dirs_[i].c_str());
 #endif
+        }
+        dirs_.clear();
     }
 
   private:
-    std::string dir_;
-    bool released_ = false;
+    static constexpr unsigned long long kWindow = 256;
+    std::vector<std::string> dirs_;
 };
 
 /// The lastUsedUnix the cache FILE holds for `project` (-1 when absent). Unlike ListCachedProjects() this ignores

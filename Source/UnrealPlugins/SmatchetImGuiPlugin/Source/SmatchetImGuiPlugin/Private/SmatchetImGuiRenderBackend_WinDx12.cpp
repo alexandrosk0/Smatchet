@@ -66,9 +66,13 @@ class FWinDx12RenderBackend final : public ISmatchetImGuiRenderBackend {
         }
 
         // Slot 0 is used by the ImGui font atlas (legacy single-SRV path). Slots 1..N-1 are used by
-        // the Smatchet DX12 SRV allocator for dynamic textures (attachment thumbnails). 128 entries
-        // is ample for our previews and costs ~4KB of descriptor heap memory.
-        constexpr int NumSrvDescriptors = 128;
+        // the Smatchet DX12 SRV allocator for dynamic textures: the icon cache (up to
+        // image_texture_cache_max_entries, default 384), attachment thumbnails, and textures still waiting
+        // out their frames in flight after an eviction. The plugin cannot include Core headers, so this
+        // mirrors smatchet::persistence::kDx12SrvHeapDescriptors (Persistence/SrvHeapBudgetPure.h); the
+        // host warns at init when the count it is handed cannot cover the configured cache size. 1024
+        // entries cost ~32 KiB of shader-visible heap.
+        constexpr int NumSrvDescriptors = 1024;
 
         D3D12_DESCRIPTOR_HEAP_DESC HeapDesc{};
         HeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;

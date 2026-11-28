@@ -72,7 +72,8 @@ struct LuaFieldCacheEntry {
     bool isReadOnly;
     std::uint64_t providerGen;
     bool handled;
-    LuaFieldCacheEntry() : intAvailWidth(0), isReadOnly(false), providerGen(0), handled(false) {}
+    std::uint64_t lastUsedFrame; ///< ImGui frame the cell last hit or filled this entry (the sweep's age)
+    LuaFieldCacheEntry() : intAvailWidth(0), isReadOnly(false), providerGen(0), handled(false), lastUsedFrame(0) {}
 };
 
 struct LuaWindowEntry {

@@ -10,6 +10,8 @@
 #include <vector>
 
 using smatchet::attachments::CacheEntryInfo;
+using smatchet::attachments::EntryFileInfo;
+using smatchet::attachments::EntryKeyFor;
 using smatchet::attachments::EntryKeyForUrl;
 using smatchet::attachments::EntryMeta;
 using smatchet::attachments::IsEntryKey;
@@ -17,6 +19,7 @@ using smatchet::attachments::kMaxFileNameBytes;
 using smatchet::attachments::ParseEntryMeta;
 using smatchet::attachments::SanitizeFileName;
 using smatchet::attachments::SelectEvictions;
+using smatchet::attachments::SelectStaleEntryFiles;
 using smatchet::attachments::SerializeEntryMeta;
 using smatchet::attachments::StoredFileName;
 
@@ -183,5 +186,85 @@ TEST_SUITE("AttachmentCachePure") {
         meta.Url = std::string("https://x/\xFF\xFE", 12);
         meta.FileName = "a.png";
         CHECK(SerializeEntryMeta(meta).empty());
+    }
+
+    TEST_CASE("stale entry files are exactly the old temp siblings of another file in the entry") {
+        const std::int64_t now = 10000;
+        const std::int64_t grace = 600;
+        const std::vector<EntryFileInfo> files = {
+            {"spec.pdf", now - 5000},
+            {"entry.json", now - 5000},
+            {"spec.pdf.part-12-3", now - 5000},  // old temp of the data file: stale
+            {"entry.json.part-12-4", now - 700}, // old temp of the metadata: stale
+            {"spec.pdf.part-12-5", now - 100},   // young: a writer may still be producing it
+            {"spec.part-2.pdf", now - 5000},     // a different file that merely looks similar
+            {"spec.pdf.part-2", now - 5000},     // no counter
+            {"orphan.bin.part-1-1", now - 5000}, // temp whose base is not in the entry: left to eviction
+        };
+        const std::vector<std::string> stale = SelectStaleEntryFiles(files, "spec.pdf", now, grace);
+        CHECK(stale == std::vector<std::string>{"entry.json.part-12-4", "spec.pdf.part-12-3"});
+    }
+
+    TEST_CASE("the grace boundary is inclusive of the age and nothing is stale in an empty entry") {
+        const std::vector<EntryFileInfo> files = {{"a", 0}, {"a.part-1-1", 400}};
+        CHECK(SelectStaleEntryFiles(files, "a", 1000, 600) == std::vector<std::string>{"a.part-1-1"}); // age 600 >= 600
+        CHECK(SelectStaleEntryFiles(files, "a", 999, 600).empty());                                    // age 599
+        CHECK(SelectStaleEntryFiles(std::vector<EntryFileInfo>(), "", 1000, 600).empty());
+    }
+
+    TEST_CASE("a temp of a temp is stale only through its own base") {
+        const std::vector<EntryFileInfo> files = {{"a", 0}, {"a.part-1-1", 0}, {"a.part-1-1.part-2-2", 0}};
+        CHECK(SelectStaleEntryFiles(files, "a", 1000, 10) ==
+              std::vector<std::string>{"a.part-1-1", "a.part-1-1.part-2-2"});
+    }
+
+    TEST_CASE("the entry's own files are never stale, even when the tracker named the attachment like a temp") {
+        // StoredFileName keeps a remote name such as "entry.json.part-1-2" unchanged, and every entry has an
+        // entry.json, so shape alone would sweep the live data file.
+        const std::string hostile = StoredFileName("entry.json.part-1-2", ".bin");
+        CHECK(hostile == "entry.json.part-1-2");
+        const std::vector<EntryFileInfo> files = {{"entry.json", 0}, {hostile, 0}, {"entry.json.part-9-9", 0}};
+        const std::vector<std::string> stale = SelectStaleEntryFiles(files, hostile, 10000, 600);
+        CHECK(stale == std::vector<std::string>{"entry.json.part-9-9"});
+        // entry.json itself is protected too (an attachment named so that it is its own temp's base).
+        const std::vector<EntryFileInfo> onlyMeta = {{"entry.json", 0}};
+        CHECK(SelectStaleEntryFiles(onlyMeta, "entry.json", 10000, 600).empty());
+    }
+
+    TEST_CASE("EntryKeyFor: empty namespace is the legacy key, a namespace gives a different 64-hex key") {
+        const std::string url = "https://site.atlassian.net/rest/api/3/attachment/content/1";
+        CHECK(EntryKeyFor("", url) == EntryKeyForUrl(url));
+        const std::string a = EntryKeyFor("Jira@site.atlassian.net#aaaaaaaaaaaa", url);
+        const std::string b = EntryKeyFor("Jira@site.atlassian.net#bbbbbbbbbbbb", url);
+        CHECK(IsEntryKey(a));
+        CHECK(a != b);                   // two accounts on one site never share an entry
+        CHECK(a != EntryKeyForUrl(url)); // an older build's entry is never a namespaced hit
+        CHECK(a == EntryKeyFor("Jira@site.atlassian.net#aaaaaaaaaaaa", url)); // stable
+        CHECK(a != EntryKeyFor("Jira@site.atlassian.net#aaaaaaaaaaaa", url + "2"));
+    }
+
+    TEST_CASE("EntryKeyFor: the separator keeps (ns, url) pairs distinct") {
+        // Without a separator "ab"+"c" and "a"+"bc" would hash alike.
+        CHECK(EntryKeyFor("ab", "c") != EntryKeyFor("a", "bc"));
+    }
+
+    TEST_CASE("entry.json carries the namespace, and omits it when empty") {
+        EntryMeta meta;
+        meta.Url = "https://x/1";
+        meta.Mime = "image/png";
+        meta.FileName = "a.png";
+        const std::string plain = SerializeEntryMeta(meta);
+        CHECK(plain.find("\"ns\"") == std::string::npos); // byte-identical to what older builds wrote
+        meta.Namespace = "Jira@x#abc";
+        const std::string namespaced = SerializeEntryMeta(meta);
+        CHECK(namespaced.find("\"ns\"") != std::string::npos);
+        EntryMeta back;
+        REQUIRE(ParseEntryMeta(namespaced, back));
+        CHECK(back.Namespace == "Jira@x#abc");
+        REQUIRE(ParseEntryMeta(plain, back));
+        CHECK(back.Namespace.empty());
+        // A non-string "ns" is ignored (read as no namespace), never a crash.
+        REQUIRE(ParseEntryMeta(R"({"url":"https://x/1","file":"a.png","ns":42})", back));
+        CHECK(back.Namespace.empty());
     }
 }

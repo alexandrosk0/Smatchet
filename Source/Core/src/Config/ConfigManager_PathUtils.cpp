@@ -864,114 +864,15 @@ void ConfigManager::EnsureDefaultImGuiSettingsFile() {
 }
 
 bool ConfigManager::AtomicWriteTextFile(const std::string& path, const std::string& content) {
-    const std::string tmp = path + ".tmp";
     EnsureParentDirectoryForFile(path);
-#if !defined(_WIN32)
-    // SECURITY (audit H2 follow-up): on POSIX open the temp file through a raw fd with
-    // O_NOFOLLOW + O_CREAT|O_TRUNC at mode 0600, then fchmod the fd before writing a byte.
-    // This hardens the secret-bearing config write against two gaps the prior ofstream +
-    // path-based chmod left open:
-    //   - symlink redirect: O_NOFOLLOW makes open() fail (ELOOP) when '<path>.tmp' is a
-    //     symlink, so a planted link can't divert the write — or its 0600 — onto another file.
-    //   - 0644 window / chmod TOCTOU: fchmod on the fd pins owner-only perms before the write
-    //     and the atomic rename, with no reliance on umask and no path-based chmod race.
-    // Failure to write is fatal (drop the tmp, keep the prior config); a perms/fsync miss is
-    // logged non-fatally so a hardening hiccup never loses the user's config write.
-    {
-        const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
-        if (fd < 0) {
-            LOG_ERROR("ConfigManager: failed to open temp file for write '%s' errno=%d", tmp.c_str(), errno);
-            return false;
-        }
-        // O_CREAT's mode is masked by umask and only applies on creation; fchmod pins 0600
-        // unconditionally (also covers a pre-existing .tmp left by an earlier interrupted write).
-        if (::fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
-            LOG_WARN("ConfigManager: fchmod 0600 on '%s' failed errno=%d; config may be group/world-readable",
-                     tmp.c_str(), errno);
-        }
-        const char* data = content.data();
-        size_t remaining = content.size();
-        bool writeOk = true;
-        while (remaining > 0) {
-            const ssize_t n = ::write(fd, data, remaining);
-            if (n < 0) {
-                if (errno == EINTR) {
-                    continue; // interrupted before any byte moved — retry the same chunk.
-                }
-                LOG_ERROR("ConfigManager: failed to write temp file '%s' errno=%d", tmp.c_str(), errno);
-                writeOk = false;
-                break;
-            }
-            data += n;
-            remaining -= static_cast<size_t>(n);
-        }
-        if (writeOk && ::fsync(fd) != 0) {
-            LOG_WARN("ConfigManager: fsync on '%s' failed errno=%d", tmp.c_str(), errno);
-        }
-        const bool closeOk = (::close(fd) == 0);
-        if (!writeOk || !closeOk) {
-            if (writeOk && !closeOk) {
-                LOG_ERROR("ConfigManager: close failed on temp file '%s' errno=%d", tmp.c_str(), errno);
-            }
-            std::remove(tmp.c_str());
-            return false;
-        }
-    }
-    if (std::rename(tmp.c_str(), path.c_str()) != 0) {
-        LOG_ERROR("ConfigManager: rename failed '%s' -> '%s' errno=%d", tmp.c_str(), path.c_str(), errno);
-        std::remove(tmp.c_str());
-        return false;
-    }
-    // Durability: fsync the parent directory so the rename's new dirent survives a crash / power
-    // loss. fsync(fd) above persists the file's data+metadata, but the directory entry that now
-    // points at it needs its own sync to be durable. Best-effort — a dir-sync miss is logged, not
-    // fatal, and never undoes a successful publish (the rename itself already happened atomically).
-    {
-        const std::string::size_type slash = path.find_last_of('/');
-        const std::string dir = (slash == std::string::npos) ? std::string(".")
-                                : (slash == 0)               ? std::string("/")
-                                                             : path.substr(0, slash);
-        const int dfd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
-        if (dfd >= 0) {
-            if (::fsync(dfd) != 0) {
-                LOG_WARN("ConfigManager: fsync on parent dir '%s' failed errno=%d", dir.c_str(), errno);
-            }
-            ::close(dfd);
-        } else {
-            LOG_WARN("ConfigManager: open parent dir '%s' for fsync failed errno=%d", dir.c_str(), errno);
-        }
-    }
-    return true;
-#else
-    {
-        std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
-        if (!file.is_open()) {
-            LOG_ERROR("ConfigManager: failed to open temp file for write '%s'", tmp.c_str());
-            return false;
-        }
-        if (!content.empty()) {
-            file.write(content.data(), static_cast<std::streamsize>(content.size()));
-        }
-        file.flush();
-        if (!file.good()) {
-            LOG_ERROR("ConfigManager: failed to write temp file '%s'", tmp.c_str());
-            file.close();
-            std::remove(tmp.c_str());
-            return false;
-        }
-    }
-    const std::wstring wSrc = smatchet::config_detail::Utf8ToWide(tmp);
-    const std::wstring wDst = smatchet::config_detail::Utf8ToWide(path);
-    if (wSrc.empty() || wDst.empty()) {
-        std::remove(tmp.c_str());
-        return false;
-    }
-    if (!MoveFileExW(wSrc.c_str(), wDst.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        LOG_ERROR("ConfigManager: MoveFileEx failed '%s' -> '%s' err=%lu", tmp.c_str(), path.c_str(),
-                  static_cast<unsigned long>(GetLastError()));
-        DeleteFileW(wSrc.c_str());
-        return false;
-    }
-    return true;
-#endif
+    // The one hardened writer lives in layer-0 FileIo: a unique exclusive temp sibling (POSIX: O_EXCL +
+    // O_NOFOLLOW, created 0600 and fchmod'ed before the first byte, so a planted file or symlink can
+    // neither be written through nor leave this secret-bearing config group/world readable), fsync of the
+    // file and its parent directory, then one atomic rename. A failure removes the temp, keeps the prior
+    // file, and is logged by FileIo.
+    smatchet::fileio::AtomicWriteOptions options;
+    options.OwnerOnly = true;
+    options.Durable = true;
+    std::string error;
+    return smatchet::fileio::WriteFileAtomically(path, content.data(), content.size(), options, error);
 }

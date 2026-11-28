@@ -16,8 +16,11 @@
 // AttachmentAppUpdateService. No statics, no shared world state, no order dependencies.
 
 #include "../support/FakeAttachmentAppUpdateDeps.h"
+#include "../support/ScopedTempDir.h"
+#include "../support/TestEnvGuard.h"
 
 #include "AttachmentAppUpdateService.h"
+#include "ConfigManager.h"
 #include "Types/AttachmentTypes.h"
 
 #include <doctest/doctest.h>
@@ -145,4 +148,47 @@ TEST_CASE("GetAppVersion and GetGitHubReleaseRepo return non-empty compile-time 
     CHECK_FALSE(svc.GetGitHubReleaseRepo().empty());
     // The release repo default carries the owner/name shape.
     CHECK(svc.GetGitHubReleaseRepo().find('/') != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// AttachmentCache — bound to the current user data directory, rebuilt when it moves.
+// ---------------------------------------------------------------------------
+TEST_CASE("AttachmentCache is bound to the user data directory and rebinds when it moves") {
+    smatchet_tests::TestEnvGuard env;
+    FakeAttachmentAppUpdateDeps deps;
+    AttachmentAppUpdateService svc(deps);
+
+    const std::string firstDir = ConfigManager::GetUserDataDirectory();
+    const auto first = svc.AttachmentCache();
+    REQUIRE(first != nullptr);
+    CHECK(first->UserDataDir() == firstDir);
+    CHECK(svc.AttachmentCache() == first); // unchanged directory: the same cache
+
+    // A storage-mode switch moves the user data folder; the next call must not keep serving the old one.
+    smatchet_tests::ScopedTempDir moved("smatchet_attachment_rebind_");
+    ConfigManager::SetUserDataDirectory(moved.Path() + "/");
+    const auto second = svc.AttachmentCache();
+    REQUIRE(second != nullptr);
+    CHECK(second != first);
+    CHECK(second->UserDataDir() == ConfigManager::GetUserDataDirectory());
+    CHECK(second->UserDataDir() != firstDir);
+    CHECK(first->UserDataDir() == firstDir); // the old handle stays valid for its holder
+    ConfigManager::SetUserDataDirectory(firstDir);
+}
+
+TEST_CASE("PurgeLocalAttachmentCache removes every downloaded copy of the current cache") {
+    smatchet_tests::TestEnvGuard env;
+    FakeAttachmentAppUpdateDeps deps;
+    AttachmentAppUpdateService svc(deps);
+    CHECK(svc.PurgeLocalAttachmentCache() == 0); // nothing downloaded yet
+
+    smatchet::attachments::FetchedAttachment bytes;
+    bytes.Bytes = "pixels";
+    bytes.Mime = "image/png";
+    const auto cache = svc.AttachmentCache();
+    REQUIRE(cache->Store("Jira@a.atlassian.net#aaaaaaaaaaaa", "https://a.atlassian.net/1", "one", bytes).has_value());
+    REQUIRE(cache->Store("", "https://a.atlassian.net/2", "two", bytes).has_value());
+    CHECK(svc.PurgeLocalAttachmentCache() == 2);
+    smatchet::attachments::LocalAttachment hit;
+    CHECK_FALSE(cache->Lookup("Jira@a.atlassian.net#aaaaaaaaaaaa", "https://a.atlassian.net/1", hit));
 }

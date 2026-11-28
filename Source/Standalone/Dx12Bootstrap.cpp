@@ -9,6 +9,8 @@
 #include <wrl/client.h>
 
 #include "Logger.h"
+#include "Persistence/SrvHeapBudgetPure.h"
+#include "TunableLimits.h"
 #include "imgui_impl_dx12.h"
 
 #include <cstring>
@@ -111,8 +113,8 @@ bool SelectAdapterAndCreateDevice(IDXGIFactory4* factory, ComPtr<ID3D12Device>& 
     }
     ComPtr<IDXGIAdapter> warp;
     if (SUCCEEDED(factory->EnumWarpAdapter(IID_PPV_ARGS(&warp))) &&
-        SUCCEEDED(D3D12CreateDevice(warp.Get(), D3D_FEATURE_LEVEL_11_0,
-                                    IID_PPV_ARGS(outDevice.ReleaseAndGetAddressOf())))) {
+        SUCCEEDED(
+            D3D12CreateDevice(warp.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(outDevice.ReleaseAndGetAddressOf())))) {
         DXGI_ADAPTER_DESC wdesc{};
         warp->GetDesc(&wdesc);
         outDesc = WideToUtf8(wdesc.Description);
@@ -131,7 +133,10 @@ namespace standalone {
 struct Dx12Bootstrap::Impl {
     static const int NUM_FRAMES_IN_FLIGHT = 2;
     static const int NUM_BACK_BUFFERS = 2;
-    static const int SRV_HEAP_SIZE = 64;
+    // One descriptor per live user texture: the icon cache (ImageTextureCacheMaxEntries, default 384) plus
+    // queued destroys and attachment thumbnails. 1024 descriptors cost ~32 KiB; a smaller heap spills
+    // every texture past the cap onto one shared overflow slot, so unrelated icons alias each other.
+    static const int SRV_HEAP_SIZE = smatchet::persistence::kDx12SrvHeapDescriptors;
 
     struct FrameContext {
         ComPtr<ID3D12CommandAllocator> CommandAllocator;
@@ -356,12 +361,19 @@ bool Dx12Bootstrap::Init(void* hwnd, int width, int height, std::string& err) {
         std::lock_guard<std::mutex> lk(gSrvAllocator.Mutex);
         gSrvAllocator.CpuBase = fontCpu;
         gSrvAllocator.GpuBase = fontGpu;
-        gSrvAllocator.IncrementSize = d->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        gSrvAllocator.IncrementSize =
+            d->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         gSrvAllocator.Capacity = Impl::SRV_HEAP_SIZE;
         gSrvAllocator.OverflowSlot = Impl::SRV_HEAP_SIZE - 1;
         gSrvAllocator.NextSlot = 1;
         gSrvAllocator.FreeList.clear();
         gSrvAllocator.bLoggedExhausted = false;
+        const int cacheMaxEntries = smatchet::limits::Get().ImageTextureCacheMaxEntries;
+        if (!smatchet::persistence::SrvHeapCoversTextureCache(gSrvAllocator.Capacity, cacheMaxEntries)) {
+            LOG_WARN("Standalone DX12: SRV heap capacity %d cannot hold image_texture_cache_max_entries=%d plus %d "
+                     "reserved descriptors; textures past the capacity will alias.",
+                     gSrvAllocator.Capacity, cacheMaxEntries, smatchet::persistence::kSrvHeapReservedDescriptors);
+        }
     }
 
     ImGui_ImplDX12_InitInfo initInfo{};
@@ -468,9 +480,9 @@ void Dx12Bootstrap::Resize(int width, int height) {
     }
     d->FlushGpu();
     d->CleanupRenderTargets();
-    const HRESULT hr = d->SwapChain->ResizeBuffers(Impl::NUM_BACK_BUFFERS, static_cast<UINT>(width),
-                                                   static_cast<UINT>(height), DXGI_FORMAT_R8G8B8A8_UNORM,
-                                                   DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT);
+    const HRESULT hr =
+        d->SwapChain->ResizeBuffers(Impl::NUM_BACK_BUFFERS, static_cast<UINT>(width), static_cast<UINT>(height),
+                                    DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT);
     if (FAILED(hr)) {
         LOG_ERROR("Standalone DX12: ResizeBuffers failed (0x%08lx).", static_cast<unsigned long>(hr));
         return;

@@ -30,6 +30,9 @@
 #include "Logger.h"
 #include "imgui_impl_dx12.h"
 #include "SmatchetImGuiFonts.h"
+#include "Persistence/SrvHeapBudgetPure.h"
+#include "SmatchetImageTextureCache.h"
+#include "TunableLimits.h"
 #endif
 
 // Smatchet core components (needed for the pImpl state).
@@ -311,6 +314,12 @@ static bool Smatchet_ImplDX12_InitBackend(const SmatchetRendererInitInfo& render
                      "textures will not render. Pass NumSrvDescriptors>=2 in SmatchetRendererInitInfo.",
                      a.Capacity);
         }
+        const int cacheMaxEntries = smatchet::limits::Get().ImageTextureCacheMaxEntries;
+        if (a.Capacity > 1 && !smatchet::persistence::SrvHeapCoversTextureCache(a.Capacity, cacheMaxEntries)) {
+            LOG_WARN("SmatchetImGuiHost: DX12 SRV heap capacity %d cannot hold image_texture_cache_max_entries=%d "
+                     "plus %d reserved descriptors; textures past the capacity will alias.",
+                     a.Capacity, cacheMaxEntries, smatchet::persistence::kSrvHeapReservedDescriptors);
+        }
     }
 
     ImGui_ImplDX12_InitInfo initInfo{};
@@ -505,6 +514,8 @@ bool SmatchetImGuiHost::initImGuiContextAndBackend(const InitOptions& options, s
     }
     if (!Smatchet_ImplDX12_InitBackend(options.Renderer, outError)) {
         LOG_ERROR("SmatchetImGuiHost::Initialize backend init failed: %s", outError.c_str());
+        // Backend init failed, so no user texture reached the GPU; still drop the cache before the context goes.
+        SmatchetImageTextureCache::DropAllForContextTeardown();
         ImGui::DestroyContext();
         return false;
     }
@@ -633,6 +644,8 @@ void SmatchetImGuiHost::Shutdown() {
             ImGui::SetCurrentContext(ImplData->ImGuiCtx);
         }
         ImGui_ImplDX12_Shutdown();
+        // After the backend Shutdown (it freed the GPU side of every user texture), before the context goes.
+        SmatchetImageTextureCache::DropAllForContextTeardown();
         ImGui::DestroyContext();
         ImplData->ImGuiCtx = nullptr;
     }

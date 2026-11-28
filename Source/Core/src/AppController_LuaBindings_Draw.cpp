@@ -17,6 +17,7 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
+#include "CacheEvictionPolicy.h"
 #include "ConfigManager.h"
 #include "FieldEditAuditSource.h"
 #include "IssueTableSerializer.h"
@@ -52,6 +53,7 @@
 #include "SmatchetLocalizedImGui.h"
 #include "StringUtil.h"
 #include "TicketGridModel.h"
+#include "TunableLimits.h"
 #include "TrackerFieldValueUtils.h"
 #include "UiPerfMonitor.h"
 
@@ -121,7 +123,7 @@ void LuaDrawList::Image(std::string path, float w, float h) {
         return;
     // SECURITY: a Lua-console script must not be able to drive an arbitrary outbound HTTP GET
     // (SSRF / exfil via crafted URL / tracking pixel). The replay path (DrawImagePathOrUrl ->
-    // ResolveFieldIconAssetPath) passes http(s) URLs straight to HttpGetBinary, so explicitly
+    // ResolveFieldIconAssetPath) passes http(s) URLs straight to the icon fetch, so explicitly
     // refuse http(s) here at the binding boundary. Only non-http(s) local asset paths are allowed
     // for imgui.image; internal field-icon-map / priority-icon URL fetches are unaffected (they
     // never route through this Lua binding). Refusal is explicit + logged, not a silent drop.
@@ -540,6 +542,27 @@ void InvokeCachedFieldProvider(sol::state& lua, sol::protected_function& provide
 
 } // namespace
 
+void AppController::Impl::SweepLuaFieldCacheIfOverCap(std::uint64_t frame) {
+    // ~4 s of frames at 144 Hz: a cell scrolled out of view that long is cheap to record again.
+    constexpr std::uint64_t kRecentFrames = 600;
+    // Do not re-walk a map that stays over the cap (a very large live grid) on every miss.
+    constexpr std::uint64_t kMinSweepSpacingFrames = 300;
+    const std::size_t cap = static_cast<std::size_t>(smatchet::limits::Get().LuaFieldCacheMax);
+    if (!smatchet::SweepDue(luaFieldCache_.size(), cap, frame, luaFieldCacheLastSweepFrame_, kMinSweepSpacingFrames)) {
+        return;
+    }
+    luaFieldCacheLastSweepFrame_ = frame;
+    const std::uint64_t cutoff = frame > kRecentFrames ? frame - kRecentFrames : 0;
+    const std::size_t erased = smatchet::EraseUnusedSince(
+        luaFieldCache_, cutoff, [](const LuaFieldCacheEntry& entry) { return entry.lastUsedFrame; });
+    if (luaFieldCache_.size() > cap * 2) {
+        // Every remaining entry is recent, yet the map is far past its cap: bound memory first.
+        LOG_WARN("luaFieldCache_: %zu entries all recently used (cap %zu); clearing", luaFieldCache_.size(), cap);
+        luaFieldCache_.clear();
+    }
+    LOG_DEBUG("luaFieldCache_: swept %zu unused entries, %zu remain (cap %zu)", erased, luaFieldCache_.size(), cap);
+}
+
 sol::protected_function* AppController::Impl::ResolveLuaFieldProvider(const std::string& fieldId,
                                                                       const TrackerField* fieldMeta) {
     const auto itId = fieldDisplayCachedProviders_.find(fieldId);
@@ -578,6 +601,7 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
     const std::string fieldName = fieldMeta ? fieldMeta->Name : std::string();
     const int intAvailWidth = static_cast<int>(std::lround(availWidth));
     const std::uint64_t curProviderGen = luaProviderGen_.load();
+    const std::uint64_t frame = static_cast<std::uint64_t>(ImGui::GetFrameCount());
 
     // 2. Cache key + hit check.
     std::string key = ticket.id;
@@ -590,6 +614,7 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
                                  entry.intAvailWidth == intAvailWidth && entry.isReadOnly == isReadOnly &&
                                  entry.providerGen == curProviderGen;
         if (inputsMatch) {
+            entry.lastUsedFrame = frame;
             if (!entry.handled)
                 return false;
             ReplayCmdList(entry.cmds, *this, lua, ticket.id, fieldId, entry.isReadOnly);
@@ -638,7 +663,9 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
         // Replay the freshly-recorded list immediately so this frame paints.
         ReplayCmdList(entry.cmds, *this, lua, ticket.id, fieldId, entry.isReadOnly);
     }
+    entry.lastUsedFrame = frame;
     impl_->luaFieldCache_[key] = std::move(entry);
+    impl_->SweepLuaFieldCacheIfOverCap(frame);
     return handled;
 }
 
