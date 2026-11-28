@@ -263,19 +263,11 @@ TEST_CASE("tickets_v2 namespacing: same numeric id under two backend keys stays 
     REQUIRE(fix.Ref().TryGetTicket("Plane", "123", got));
     CHECK(got.fieldValues["summary"] == "plane work item");
 
-    // Scoped streaming read sees only its own namespace.
-    int planeCount = 0;
-    fix.Ref().ForEachTicket("Plane", [&](CachedTicket&& t) {
-        ++planeCount;
-        CHECK(t.id == "123");
-    });
-    CHECK(planeCount == 1);
-    int ghCount = 0;
-    fix.Ref().ForEachTicket("GitHub", [&](CachedTicket&& t) {
-        (void)t;
-        ++ghCount;
-    });
-    CHECK(ghCount == 0);
+    // A scoped bulk read sees only its own namespace.
+    const std::vector<CachedTicket> planeAll = fix.Ref().GetAllTickets("Plane");
+    REQUIRE(planeAll.size() == 1);
+    CHECK(planeAll[0].id == "123");
+    CHECK(fix.Ref().GetAllTickets("GitHub").empty());
 }
 
 // ============================================================================
