@@ -36,7 +36,8 @@ class IEditMetaDeps {
 
     /// Spawn `task` on a tracked background thread (never detached) — joined in
     /// `JoinBackgroundTasks` before destruction. Same signature as `IOfflineQueueDeps`; the one
-    /// adapter override satisfies both.
+    /// adapter override satisfies both. The task may be destroyed unrun (shutdown) or the call may
+    /// throw: own any in-flight latch through a `LaunchClaim` (LaunchClaim.h).
     virtual void LaunchBackgroundTask(std::function<void()> task) = 0;
 
     /// True once shutdown has begun — warm workers poll this to bail out of long loops.

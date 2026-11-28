@@ -367,6 +367,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/CommentBlobFormatPure.test.cpp
         Core/PublishedSnapshot.test.cpp
         Core/SerialTaskQueue.test.cpp
+        Core/LaunchClaim.test.cpp
         Core/StringUtilTrim.test.cpp
         Core/TrackerIssueExistsProbe.test.cpp
         Core/Tracker2xxErrorGuard.test.cpp
@@ -1373,6 +1374,7 @@ add_executable(SmatchetTests
     Core/CommentBlobFormatPure.test.cpp
     Core/PublishedSnapshot.test.cpp
     Core/SerialTaskQueue.test.cpp
+    Core/LaunchClaim.test.cpp
     Core/BulkImportStatusPure.test.cpp
     Core/LazyEnrichmentCarryForwardPure.test.cpp
     Core/SmatchetCommentsModalSeedPure.test.cpp

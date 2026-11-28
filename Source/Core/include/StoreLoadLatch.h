@@ -4,14 +4,17 @@
 // services (Quality Pillar 6). A key is claimed once. A failed load releases the claim with a backoff,
 // so a later call retries without launching a worker every frame while the store keeps failing.
 // Thread-safe; the mutex is never held while a load runs. LoadSavedRowsOnce is the one way the
-// services drive it.
+// services drive it. The claim is released exactly once however the launch ends (see LaunchClaim.h):
+// the load ran and failed, the launch threw, or the launcher dropped the task unrun (shutdown).
 
+#include "LaunchClaim.h"
 #include "Logger.h"
 #include "OfflineFirstPure.h"
 #include "ScopeExit.h"
 
 #include <chrono>
 #include <exception>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -69,8 +72,9 @@ class StoreLoadLatch {
 /// Load the saved rows of `kind` for `backendKey` once, on a worker. `deps` supplies LookupCacheShared()
 /// and LaunchBackgroundTask(std::function<void()>). On the worker, `apply(backendKey, rows)` gets the rows
 /// read. No store yet claims nothing, so a later call tries again. A failed read (a throw from the store
-/// or from `apply`) releases the claim with a backoff. A launch that throws releases it too and is
-/// logged under `what` (e.g. "saved components"). Returns false only in that last case.
+/// or from `apply`) releases the claim with a backoff. So does a launch that throws, and a task the
+/// launcher destroys without running it; the claim is released once in each case, never twice. A launch
+/// that throws is logged under `what` (e.g. "saved components") and returns false, the only false return.
 template <typename Deps, typename ApplyFn>
 bool LoadSavedRowsOnce(Deps& deps, StoreLoadLatch& latch, const std::string& backendKey, const char* kind,
                        const char* what, ApplyFn apply) {
@@ -78,8 +82,13 @@ bool LoadSavedRowsOnce(Deps& deps, StoreLoadLatch& latch, const std::string& bac
     if (!store || !latch.TryClaim(backendKey, Clock::now())) {
         return true; // no store yet, or loaded, loading, or backing off after a failed load
     }
+    std::shared_ptr<LaunchClaim> claim;
     try {
-        deps.LaunchBackgroundTask([&latch, store, backendKey, kind, apply]() {
+        claim = std::make_shared<LaunchClaim>([&latch, backendKey]() { latch.MarkFailed(backendKey, Clock::now()); });
+        deps.LaunchBackgroundTask([&latch, store, backendKey, kind, apply, claim]() {
+            if (!claim->TakeForRun()) {
+                return; // already released: the launch failed or this task was dropped
+            }
             bool loaded = false;
             ScopeExit releaseOnFailure([&latch, &backendKey, &loaded]() {
                 if (!loaded) {
@@ -91,7 +100,11 @@ bool LoadSavedRowsOnce(Deps& deps, StoreLoadLatch& latch, const std::string& bac
             latch.MarkLoaded(backendKey);
         });
     } catch (const std::exception& ex) {
-        latch.MarkFailed(backendKey, Clock::now());
+        if (claim) {
+            claim->ReleaseIfUntaken();
+        } else {
+            latch.MarkFailed(backendKey, Clock::now());
+        }
         LOG_WARN("Loading %s did not start: %s", what, ex.what());
         return false;
     }
