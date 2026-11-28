@@ -257,9 +257,15 @@ bool CopyQuietly(const std::string& from, const std::string& to) {
     return !ec;
 }
 
-bool PathExistsQuietly(const std::string& path) {
+/// A regular file (never a symlink or device) no larger than the cap: the only kind worth a working copy.
+bool IsSalvageableFile(const std::string& path) {
     std::error_code ec;
-    return fs::exists(fs::u8path(path), ec) && !ec;
+    const fs::file_status status = fs::symlink_status(fs::u8path(path), ec);
+    if (ec || status.type() != fs::file_type::regular) {
+        return false;
+    }
+    const std::uintmax_t bytes = fs::file_size(fs::u8path(path), ec);
+    return !ec && bytes <= kMaxSalvageBytes;
 }
 
 } // namespace
@@ -301,30 +307,44 @@ bool AttachSalvageCopy(SQLite::Database& db, const std::string& salvagePath, boo
 }
 
 /// Copies every salvage table that can be read, raises the queue sequences and turns salvaged `sending` actions into
-/// `ambiguous`. Names the tables that could not be carried over in `incomplete`; returns the live-queue rows copied.
-std::int64_t CopyAllSalvageTables(SQLite::Database& db, const std::function<bool()>& aborted,
-                                  std::vector<std::string>& incomplete) {
-    std::int64_t queuedRows = 0;
+/// `ambiguous`. Names the tables that could not be carried over in `incomplete`, and adds the live-queue rows copied to
+/// `queuedRows` as it goes, so a failure part-way still reports what did come across.
+void CopyAllSalvageTables(SQLite::Database& db, const std::function<bool()>& aborted,
+                          std::vector<std::string>& incomplete, std::int64_t& queuedRows, std::size_t& attempted) {
     for (std::size_t i = 0; i < kSalvageTableCount; ++i) {
         if (aborted()) {
             throw std::runtime_error("the open was aborted");
         }
         std::int64_t rows = 0;
-        if (!CopyTable(db, kSalvageTables[i], rows)) {
+        const bool whole = CopyTable(db, kSalvageTables[i], rows);
+        attempted = i + 1; // tables copied so far stay committed, whatever fails after them
+        if (!whole) {
             incomplete.push_back(kSalvageTables[i]);
         }
         if (IsLiveQueueTable(kSalvageTables[i])) {
             queuedRows += rows;
         }
     }
-    RaiseQueueSequences(db);
-    // A request that was `sending` when the file broke may or may not have reached the tracker, exactly as one found
-    // `sending` on an ordinary open: it is checked before it is ever resent.
-    SQLite::Statement ambiguous(db, "UPDATE pending_actions SET state = ? WHERE state = ?");
-    ambiguous.bind(1, PendingActionState::kAmbiguous);
-    ambiguous.bind(2, PendingActionState::kSending);
-    ambiguous.exec();
-    return queuedRows;
+    try {
+        RaiseQueueSequences(db);
+        // A request that was `sending` when the file broke may or may not have reached the tracker, exactly as one
+        // found `sending` on an ordinary open: it is checked before it is ever resent.
+        SQLite::Statement ambiguous(
+            db, "UPDATE pending_actions SET state = ?, claimed_by = '', claimed_at = 0 WHERE state = ?");
+        ambiguous.bind(1, PendingActionState::kAmbiguous);
+        ambiguous.bind(2, PendingActionState::kSending);
+        ambiguous.exec();
+    } catch (const SQLite::Exception& ex) {
+        // The rows are in, but their ids may repeat a dead row's original id and a `sending` row still carries the
+        // damaged file's claim: say so, naming the queues it touches, instead of reporting a clean salvage.
+        LOG_ERROR("LocalCacheManager: salvage could not finish the queue fix-ups: %s", ex.what());
+        for (std::size_t i = 0; i < kSalvageTableCount; ++i) {
+            const std::string table = kSalvageTables[i];
+            if (IsLiveQueueTable(table) && std::find(incomplete.begin(), incomplete.end(), table) == incomplete.end()) {
+                incomplete.push_back(table);
+            }
+        }
+    }
 }
 
 } // namespace
@@ -333,6 +353,7 @@ void LocalCacheManager::SalvageFromQuarantine_(const ConnGuard& guard, const std
                                                const std::string& quarantinedWal, const std::string& reason) noexcept {
     std::string salvagePath;
     std::int64_t queuedRows = 0; // rows of the three live queues: what the user is told about
+    std::size_t attemptedTables = 0;
     SQLite::Database* db = nullptr;
     bool attached = false;
     try {
@@ -348,10 +369,7 @@ void LocalCacheManager::SalvageFromQuarantine_(const ConnGuard& guard, const std
 
         // Only a regular file of a believable size is worth a working copy: the copy doubles the disk use and holds the
         // open (and shutdown) for as long as it takes, to read seven small tables.
-        std::error_code ec;
-        const fs::file_status status = fs::symlink_status(fs::u8path(quarantinedMain), ec);
-        const std::uintmax_t bytes = ec ? 0 : fs::file_size(fs::u8path(quarantinedMain), ec);
-        if (ec || status.type() != fs::file_type::regular || bytes > kMaxSalvageBytes) {
+        if (!IsSalvageableFile(quarantinedMain)) {
             throw std::runtime_error("the damaged file is missing, not a regular file or too large to salvage");
         }
         if (OpenAbortRequested_()) {
@@ -362,19 +380,19 @@ void LocalCacheManager::SalvageFromQuarantine_(const ConnGuard& guard, const std
         if (!CopyQuietly(quarantinedMain, salvagePath)) {
             throw std::runtime_error("the damaged file could not be copied for salvage");
         }
-        const bool hadWal = PathExistsQuietly(quarantinedWal) && CopyQuietly(quarantinedWal, salvagePath + "-wal");
+        const bool hadWal = IsSalvageableFile(quarantinedWal) && CopyQuietly(quarantinedWal, salvagePath + "-wal");
         attached = AttachSalvageCopy(*db, salvagePath, hadWal);
         if (!attached) {
             throw std::runtime_error("the damaged file could not be opened");
         }
-        queuedRows = CopyAllSalvageTables(*db, [this]() { return OpenAbortRequested_(); }, recovery_.IncompleteTables);
+        CopyAllSalvageTables(
+            *db, [this]() { return OpenAbortRequested_(); }, recovery_.IncompleteTables, queuedRows, attemptedTables);
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager: salvage from '%s' failed: %s", quarantinedMain.c_str(), ex.what());
         try {
-            if (recovery_.IncompleteTables.empty()) {
-                for (std::size_t i = 0; i < kSalvageTableCount; ++i) {
-                    recovery_.IncompleteTables.push_back(kSalvageTables[i]);
-                }
+            // Tables already copied stay copied (and counted); only those never reached are reported as lost.
+            for (std::size_t i = attemptedTables; i < kSalvageTableCount; ++i) {
+                recovery_.IncompleteTables.push_back(kSalvageTables[i]);
             }
         } catch (...) { // catch-all-ok: out of memory while naming the tables; the record below still says it failed
         }

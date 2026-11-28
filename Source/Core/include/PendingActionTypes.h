@@ -48,8 +48,10 @@ inline bool ParsePendingActionKind(const std::string& wire, PendingActionKind& o
 namespace PendingActionState {
 /// Not sent yet (queued offline, or the send failed before the tracker could act on it).
 constexpr const char* kPending = "pending";
-/// A send is in flight. A row still in this state when the cache opens was interrupted mid-send
-/// and becomes kAmbiguous.
+/// A send is in flight, claimed by one process (`claimed_by`, `claimed_at`). A row still in this state whose claim
+/// is older than its lease (or was never claimed) was interrupted mid-send and is treated as kAmbiguous: on open when
+/// the claim is older than kMaxSendingClaimLeaseSec, and by replay once it is older than the send's own lease. A live
+/// claim by another process is left to that process.
 constexpr const char* kSending = "sending";
 /// The request may have reached the tracker (its response was lost). Replay checks the tracker
 /// before sending again where the kind allows it, so the action is not applied twice.
@@ -57,6 +59,10 @@ constexpr const char* kAmbiguous = "ambiguous";
 /// Ambiguous and not checkable: never resent automatically; the user confirms or discards it.
 constexpr const char* kNeedsReview = "needs_review";
 } // namespace PendingActionState
+
+/// The longest a `sending` claim is honoured, whatever the configured tracker timeout. The cache open turns any
+/// `sending` row claimed longer ago than this into `ambiguous`, since it cannot know another process's timeout.
+constexpr std::int64_t kMaxSendingClaimLeaseSec = 1260;
 
 /// One row of pending_actions.
 struct PendingActionRecord {
@@ -69,6 +75,10 @@ struct PendingActionRecord {
     int Attempts = 0;
     std::string LastError;
     std::int64_t CreatedAtEpochSec = 0;
+    /// While `State` is kSending: when the send was claimed (0 = never, e.g. a row from before claims existed).
+    std::int64_t ClaimedAtEpochSec = 0;
+    /// The claim was made by THIS cache connection's process (the claim token matches). False for a row nobody claimed.
+    bool ClaimIsOwn = false;
 };
 
 /// One row of pending_actions_dead: an action that will not be retried automatically. `Row` is the

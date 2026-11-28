@@ -74,6 +74,21 @@ const char* StateAfterFailedSend(PendingActionKind kind, const TrackerError& err
     return PendingActionState::kAmbiguous;
 }
 
+std::int64_t SendingClaimLeaseSec(std::int64_t trackerOverallTimeoutMs) {
+    constexpr std::int64_t kMinLeaseSec = 120;
+    const std::int64_t seconds = trackerOverallTimeoutMs / 1000;
+    const std::int64_t lease = 2 * seconds + 60;
+    return lease < kMinLeaseSec ? kMinLeaseSec : (lease > kMaxSendingClaimLeaseSec ? kMaxSendingClaimLeaseSec : lease);
+}
+
+bool IsForeignLiveClaim(const PendingActionRecord& record, std::int64_t nowSec, std::int64_t leaseSec) {
+    if (record.State != PendingActionState::kSending || record.ClaimIsOwn || record.ClaimedAtEpochSec <= 0) {
+        return false;
+    }
+    const std::int64_t age = nowSec - record.ClaimedAtEpochSec;
+    return (age < 0 ? -age : age) < leaseSec;
+}
+
 const char* StateAfterFailedDedupeCheck(const TrackerError& error) {
     switch (error.Kind) {
     case TrackerErrorKind::Auth:

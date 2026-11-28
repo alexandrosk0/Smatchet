@@ -153,3 +153,34 @@ TEST_CASE("Worklog action payload — round trip, and a missing time spent is re
     CHECK(out.TimeSpent == "1h");
     CHECK(out.Description.empty());
 }
+
+TEST_CASE("SendingClaimLeaseSec — twice the tracker timeout plus slack, clamped to 120 s .. kMaxSendingClaimLeaseSec") {
+    using smatchet::pendingaction::SendingClaimLeaseSec;
+    CHECK(SendingClaimLeaseSec(0) == 120);
+    CHECK(SendingClaimLeaseSec(-5000) == 120);
+    CHECK(SendingClaimLeaseSec(30000) == 120);   // the default: 2 * 30 + 60
+    CHECK(SendingClaimLeaseSec(60000) == 180);   // 2 * 60 + 60
+    CHECK(SendingClaimLeaseSec(600000) == 1260); // the largest tunable timeout hits the cap exactly
+    CHECK(SendingClaimLeaseSec(1000000) == kMaxSendingClaimLeaseSec);
+}
+
+TEST_CASE("IsForeignLiveClaim — only a fresh claim by another process on a `sending` row") {
+    using smatchet::pendingaction::IsForeignLiveClaim;
+    PendingActionRecord row;
+    row.State = PendingActionState::kSending;
+    row.ClaimedAtEpochSec = 1000;
+    row.ClaimIsOwn = false;
+    CHECK(IsForeignLiveClaim(row, 1050, 120));       // 50 s old, inside the lease
+    CHECK_FALSE(IsForeignLiveClaim(row, 1120, 120)); // exactly the lease: expired
+    CHECK_FALSE(IsForeignLiveClaim(row, 5000, 120)); // long expired
+    CHECK(IsForeignLiveClaim(row, 960, 120));        // a clock set back: the age is taken as an absolute value
+    CHECK_FALSE(IsForeignLiveClaim(row, 100, 120));  // ... but a claim from the far future is not honoured forever
+    row.ClaimIsOwn = true;
+    CHECK_FALSE(IsForeignLiveClaim(row, 1050, 120)); // our own claim is ours to continue
+    row.ClaimIsOwn = false;
+    row.ClaimedAtEpochSec = 0;
+    CHECK_FALSE(IsForeignLiveClaim(row, 1050, 120)); // never claimed
+    row.ClaimedAtEpochSec = 1000;
+    row.State = PendingActionState::kAmbiguous;
+    CHECK_FALSE(IsForeignLiveClaim(row, 1050, 120)); // only `sending` rows are claims
+}

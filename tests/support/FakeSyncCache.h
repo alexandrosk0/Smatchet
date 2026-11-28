@@ -489,6 +489,7 @@ class FakeSyncCache : public ISyncCache {
             row->State = state;
             row->Attempts = attempts;
             row->LastError = lastError;
+            SetClaim(*row, state);
         }
         stateHistory_.push_back(std::make_pair(id, state));
     }
@@ -502,7 +503,21 @@ class FakeSyncCache : public ISyncCache {
         row->State = toState;
         row->Attempts = attempts;
         row->LastError = lastError;
+        SetClaim(*row, toState);
         stateHistory_.push_back(std::make_pair(id, toState));
+        return true;
+    }
+    bool TakeOverPendingActionClaim(std::int64_t id, std::int64_t staleClaimedAtEpochSec, int attempts,
+                                    const std::string& lastError) override {
+        std::lock_guard<std::mutex> lk(m_);
+        PendingActionRecord* row = FindAction(id);
+        if (!row || row->State != PendingActionState::kSending || row->ClaimedAtEpochSec != staleClaimedAtEpochSec) {
+            return false;
+        }
+        row->Attempts = attempts;
+        row->LastError = lastError;
+        SetClaim(*row, PendingActionState::kSending);
+        stateHistory_.push_back(std::make_pair(id, std::string(PendingActionState::kSending)));
         return true;
     }
     void DeletePendingAction(std::int64_t id) override {
@@ -579,6 +594,17 @@ class FakeSyncCache : public ISyncCache {
         std::lock_guard<std::mutex> lk(m_);
         afterNextLoadPendingActions_ = std::move(fn);
     }
+    /// Test knob: marks the action `sending`, claimed by ANOTHER process `ageSec` seconds ago (as a second Smatchet
+    /// sending it right now would leave it).
+    void InjectForeignClaim(std::int64_t id, std::int64_t ageSec) {
+        std::lock_guard<std::mutex> lk(m_);
+        PendingActionRecord* row = FindAction(id);
+        if (row) {
+            row->State = PendingActionState::kSending;
+            row->ClaimedAtEpochSec = NowEpochSec() - ageSec;
+            row->ClaimIsOwn = false;
+        }
+    }
     /// Every (id, state) UpdatePendingAction / TransitionPendingAction wrote, in order — tests assert the `sending`
     /// marker was persisted before a send.
     std::vector<std::pair<std::int64_t, std::string>> PendingActionStateHistory() const {
@@ -614,6 +640,12 @@ class FakeSyncCache : public ISyncCache {
             }
         }
         return nullptr;
+    }
+    // Mirrors LocalCacheManager: moving to `sending` is this connection's claim, any other state releases it.
+    static void SetClaim(PendingActionRecord& row, const std::string& state) {
+        const bool claim = state == PendingActionState::kSending;
+        row.ClaimedAtEpochSec = claim ? NowEpochSec() : 0;
+        row.ClaimIsOwn = claim;
     }
     PendingActionRecord* FindAction(std::int64_t id) {
         for (size_t i = 0; i < actions_.size(); ++i) {

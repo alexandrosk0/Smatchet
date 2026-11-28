@@ -216,6 +216,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # Interruptible open: OpenOptions::Abort ends a wait on a locked file promptly.
         Core/LocalCacheManagerOpenOptions.test.cpp
         Core/LocalCacheManagerSalvage.test.cpp
+        Core/LocalCacheManagerPendingActionsPersist.test.cpp
         # One-time import of a legacy cache into its planned location (read-only source, init-lock, no-replace publish).
         Core/LocalCacheLocationMigration.test.cpp
         # lookup_cache (Pillar 6 offline lookups), in-memory cases — LocalCacheManager_Lookup.cpp

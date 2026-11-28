@@ -14,9 +14,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <exception>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -329,6 +331,25 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath, const OpenOption
         }
     }
     LOG_INFO("LocalCacheManager: schema ready");
+}
+
+std::string LocalCacheManager::MakeClaimToken_() {
+    // Unique per connection, not per process: two caches in one process (a test, a recreate) must not share claims.
+    static std::atomic<unsigned> counter{0};
+    unsigned long long noise = 0;
+    unsigned moreNoise = 0;
+    try {
+        std::random_device entropy; // may throw where the platform has no entropy source: time and the counter remain
+        noise = entropy();
+        moreNoise = entropy();
+    } catch (const std::exception&) {
+        noise = 0;
+    }
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "%llx-%llx-%x-%x",
+                  static_cast<unsigned long long>(std::chrono::system_clock::now().time_since_epoch().count()), noise,
+                  moreNoise, counter.fetch_add(1));
+    return buf;
 }
 
 bool LocalCacheManager::OpenAbortRequested_() const { return openBusy_ != nullptr && openBusy_->AbortRequested(); }

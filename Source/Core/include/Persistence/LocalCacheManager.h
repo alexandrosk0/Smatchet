@@ -188,6 +188,8 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     std::vector<PendingActionRecord> LoadPendingActions() override;
     void UpdatePendingAction(std::int64_t id, const std::string& state, int attempts,
                              const std::string& lastError) override;
+    bool TakeOverPendingActionClaim(std::int64_t id, std::int64_t staleClaimedAtEpochSec, int attempts,
+                                    const std::string& lastError) override;
     bool TransitionPendingAction(std::int64_t id, const std::string& fromState, const std::string& toState,
                                  int attempts, const std::string& lastError) override;
     void DeletePendingAction(std::int64_t id) override;
@@ -358,6 +360,10 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     /// same location after quarantining the bad file. Declared before `db_` so it is
     /// initialised first (the `db_` member's path argument reads it).
     const std::string dbPath_;
+    /// Names this cache connection as the claimer of the `sending` rows it writes, so another process's claims are not
+    /// mistaken for ours (and ours are not flipped by a second Smatchet starting up). Fresh per connection.
+    static std::string MakeClaimToken_();
+    const std::string claimToken_ = MakeClaimToken_();
     /// Busy-wait state of the interruptible open (see OpenOptions); only non-null while the constructor runs.
     lcm_detail::OpenBusyState* openBusy_ = nullptr;
     /// The one connection. Reachable only through `conn(guard)`; opened FULLMUTEX, but SQLite's own mutex only

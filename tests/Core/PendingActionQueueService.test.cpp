@@ -676,3 +676,28 @@ TEST_CASE("an action refused by an enqueue block names the reason and writes not
         CHECK(rig.Cache().LoadPendingActions().empty());
     }
 }
+
+TEST_CASE("PendingActionQueueService replay leaves a row another process is sending right now alone") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    const std::int64_t id = rig.QueueComment("being sent elsewhere", PendingActionState::kPending);
+    rig.Cache().InjectForeignClaim(id, 10); // claimed 10 s ago: well inside the lease
+    rig.ReplayNow();
+    CHECK(rig.Tracker().AddCommentCalls().empty());
+    CHECK(rig.Tracker().FetchIssueCommentsCalls() == 0); // not even checked: it is not ours to touch
+    const std::vector<PendingActionRecord> rows = rig.Cache().LoadPendingActions();
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].State == PendingActionState::kSending);
+}
+
+TEST_CASE("PendingActionQueueService replay takes over a foreign claim once its lease ran out, checking the tracker") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    const std::int64_t id = rig.QueueComment("sender died", PendingActionState::kPending);
+    rig.Cache().InjectForeignClaim(id, 100000); // far older than any lease
+    rig.Tracker().SetIssueComments("ABC-1", {ServerComment("something else", kQueuedAt + 2)});
+    rig.ReplayNow();
+    CHECK(rig.Tracker().FetchIssueCommentsCalls() == 1); // possibly sent: checked before any resend
+    CHECK(rig.Tracker().AddCommentCalls().size() == 1);  // and not found on the tracker, so sent exactly once
+    CHECK(rig.Cache().LoadPendingActions().empty());
+}

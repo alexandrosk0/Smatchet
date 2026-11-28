@@ -131,6 +131,13 @@ class ISyncCache {
     /// row never overrides what happened to it since.
     virtual bool TransitionPendingAction(std::int64_t id, const std::string& fromState, const std::string& toState,
                                          int attempts, const std::string& lastError) = 0;
+    /// Takes over a `sending` row whose claim has run out: moves it to a fresh `sending` claim by this connection, but
+    /// only while the row is still `sending` with the claim this caller read (`staleClaimedAtEpochSec`). A plain
+    /// compare-and-set on the state cannot do this (`sending` to `sending` always matches), so two processes that both
+    /// read the same expired claim would both win and both send. Exactly one caller gets true. False when the row is
+    /// gone, moved on, or was re-claimed since.
+    virtual bool TakeOverPendingActionClaim(std::int64_t id, std::int64_t staleClaimedAtEpochSec, int attempts,
+                                            const std::string& lastError) = 0;
     virtual void DeletePendingAction(std::int64_t id) = 0;
     /// Move the row to the dead-letter table, keeping its state; `terminalError` (when non-empty)
     /// replaces its last error.

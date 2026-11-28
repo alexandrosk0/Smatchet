@@ -316,6 +316,38 @@ TEST_CASE_TEMPLATE("ISyncCache: pending actions are FIFO, keep backend key and s
     CHECK(rows[0].Id == b);
 }
 
+TEST_CASE_TEMPLATE("ISyncCache: only a move to `sending` writes a claim, and a claim is taken over by the claim read",
+                   M, RealCacheMaker, FakeCacheMaker) {
+    auto c = M::Make();
+    const std::int64_t id = c->EnqueuePendingAction("Jira", "comment_add", "PROJ-1", "{}", "pending");
+    CHECK(c->LoadPendingActions()[0].ClaimedAtEpochSec == 0);
+    CHECK_FALSE(c->LoadPendingActions()[0].ClaimIsOwn);
+
+    REQUIRE(c->TransitionPendingAction(id, "pending", "sending", 1, ""));
+    PendingActionRecord row = c->LoadPendingActions()[0];
+    CHECK(row.State == "sending");
+    CHECK(row.ClaimedAtEpochSec > 0);
+    CHECK(row.ClaimIsOwn);
+
+    // A take-over names the claim it read: a stale read (another claim, or none) matches nothing.
+    CHECK_FALSE(c->TakeOverPendingActionClaim(id, row.ClaimedAtEpochSec - 5000, 2, "stale"));
+    CHECK(c->LoadPendingActions()[0].Attempts == 1);
+    CHECK(c->TakeOverPendingActionClaim(id, row.ClaimedAtEpochSec, 2, "taken"));
+    row = c->LoadPendingActions()[0];
+    CHECK(row.State == "sending");
+    CHECK(row.Attempts == 2);
+    CHECK(row.LastError == "taken");
+    CHECK(row.ClaimIsOwn);
+
+    // Any other state releases the claim, and a row that is not `sending` cannot be taken over.
+    c->UpdatePendingAction(id, "ambiguous", 2, "lost");
+    row = c->LoadPendingActions()[0];
+    CHECK(row.ClaimedAtEpochSec == 0);
+    CHECK_FALSE(row.ClaimIsOwn);
+    CHECK_FALSE(c->TakeOverPendingActionClaim(id, 0, 3, "x"));
+    CHECK_FALSE(c->TakeOverPendingActionClaim(id + 99, 0, 3, "x")); // a row that is gone
+}
+
 TEST_CASE_TEMPLATE("ISyncCache: a dead pending action keeps its state and key; restore resumes from it", M,
                    RealCacheMaker, FakeCacheMaker) {
     auto c = M::Make();
