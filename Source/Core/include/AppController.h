@@ -2155,10 +2155,10 @@ class AppController : public IAppThreading,
                               const std::function<void(const smatchet::sync::CacheRecreateOutcome&)>& onDone);
     /// ~AppController, before `shuttingDown_` is set: every serial queue that writes (catalog snapshot, ticket
     /// saves, left-view history) flushes under ONE shared budget (`kShutdownPreFlagBudget`), not one budget each.
+    void FlushQueuesBeforeShutdownFlag_();
     /// ~AppController: a field-catalog snapshot save still queued must reach the file (once the pool is flagged its
     /// drain would be skipped; bounded, a save is one small file write), and the startup restore's std::async read
     /// is waited for (RAII join) rather than left to the member destructor.
-    void FlushQueuesBeforeShutdownFlag_();
     void DrainCatalogWorkBeforeShutdown_(std::chrono::steady_clock::time_point deadline);
     /// ~AppController: flush `ticketSaves_` (bounded) before shutdown makes LaunchBackgroundTask drop its drain.
     void FlushTicketSavesBeforeShutdown_(std::chrono::steady_clock::time_point deadline);
