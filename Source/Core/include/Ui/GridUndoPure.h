@@ -127,6 +127,18 @@ class History {
         return nullptr;
     }
 
+    // Removes every entry of `paneId` for which `stale(entry)` is true. Another pane's entries are not offered to it.
+    // `stale` sees each offered entry once and may update what the caller keeps beside it.
+    template <typename Stale> void DropIf(const std::string& paneId, Stale stale) {
+        for (std::vector<Entry>::iterator e = m_entries.begin(); e != m_entries.end();) {
+            if (e->PaneId == paneId && stale(static_cast<const Entry&>(*e))) {
+                e = m_entries.erase(e);
+            } else {
+                ++e;
+            }
+        }
+    }
+
     std::size_t Size() const { return m_entries.size(); }
 
     // True when `id` is still in the history (the toast's Undo checks before it acts).
@@ -165,6 +177,23 @@ class History {
     std::vector<Entry> m_entries; // oldest first
     std::uint64_t m_lastId = 0;
 };
+
+// What became of the pane an entry's write went through, by comparing the target latched at edit time with the
+// pane's target now. A pane's cache backend key names the tracker site (on Jira, the account too); its backend
+// generation changes whenever the pane gets another client.
+enum class TargetState {
+    Current,  // same tracker, same client: the latched target still applies
+    Rebound,  // same tracker, another client (the pane switched away and back, or was rebuilt): latch it again
+    Switched, // another tracker or site (or Jira account), or the pane is gone: the entry must not be undone
+};
+
+inline TargetState CheckTarget(const std::string& latchedKey, std::uint64_t latchedGeneration,
+                               const std::string& paneKey, std::uint64_t paneGeneration) {
+    if (latchedKey != paneKey) {
+        return TargetState::Switched;
+    }
+    return latchedGeneration == paneGeneration ? TargetState::Current : TargetState::Rebound;
+}
 
 // The inverse edits of an entry, newest change first. Each writes the change's Before values and carries its
 // AfterDisplay (the value we wrote) as the ADR-0016 conflict base in BeforeDisplay, so a field someone else changed

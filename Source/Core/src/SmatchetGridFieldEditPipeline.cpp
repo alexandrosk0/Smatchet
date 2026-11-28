@@ -202,9 +202,37 @@ std::vector<CellChange> FilterUndoConflicts(AppController& app, const GridUndoCo
     return kept;
 }
 
+// An undo writes only to the tracker its edit went to. Entries of `paneId` whose pane shows another tracker or site
+// (on Jira, or another account) since, or is gone, are dropped, so no Ctrl+Z, menu item or toast writes to a tracker
+// the user left. An entry whose pane has the same tracker under another client is bound to that client, so the undo can
+// compare and apply there; while the pane has no client yet, it keeps the one it was written through.
+void ReconcileUndoTargets(AppController& app, UiDrawSession& d, const std::string& paneId) {
+    const PendingActionTarget now = app.LatchPendingActionTargetForPane(paneId);
+    d.gridUndo.DropIf(paneId, [&d, &now](const smatchet::grid::undo::Entry& entry) {
+        const std::map<std::uint64_t, GridUndoContext>::iterator ctx = d.gridUndoContext.find(entry.Id);
+        if (ctx == d.gridUndoContext.end()) {
+            return true; // nothing says where it was written
+        }
+        PendingActionTarget& latched = ctx->second.Target;
+        const smatchet::grid::undo::TargetState state = smatchet::grid::undo::CheckTarget(
+            latched.BackendKey, latched.BackendGeneration, now.BackendKey, now.BackendGeneration);
+        if (state == smatchet::grid::undo::TargetState::Rebound && now.Backend) {
+            latched = now;
+        }
+        if (state != smatchet::grid::undo::TargetState::Switched) {
+            return false;
+        }
+        LOG_INFO("GridUndo: pane '%s' switched tracker; entry %llu is dropped", entry.PaneId.c_str(),
+                 static_cast<unsigned long long>(entry.Id));
+        return true;
+    });
+    PruneUndoContext(d);
+}
+
 // The inverse of a taken entry, queued as ordinary edits: one edit for a single cell, one per-row bulk job for a
-// bulk entry (each row gets its own Before back). Each inverse carries the value we wrote as its conflict base, so a
-// field someone else changed meanwhile reports a conflict instead of being overwritten.
+// bulk entry (each row gets its own Before back). Both go to the entry's own target. Each inverse carries the value we
+// wrote as its conflict base, so a field someone else changed meanwhile reports a conflict instead of being
+// overwritten.
 void RunInverse(AppController& app, UiDrawSession& d, const smatchet::grid::undo::Entry& entry) {
     const std::map<std::uint64_t, GridUndoContext>::iterator ctxIt = d.gridUndoContext.find(entry.Id);
     if (ctxIt == d.gridUndoContext.end()) {
@@ -241,7 +269,7 @@ void RunInverse(AppController& app, UiDrawSession& d, const smatchet::grid::undo
         row.HasConflictBase = true;
         rows.push_back(std::move(row));
     }
-    StartBulkFieldEdit(app, d, entry.PaneId, context.Field, rows, false, true);
+    StartBulkFieldEdit(app, d, entry.PaneId, context.Field, rows, false, &context.Target);
 }
 
 // The save succeeded: for a recorded single edit the toast carries Undo (replacing the plain "saved" toast), for an
@@ -767,9 +795,10 @@ namespace {
 using smatchet::grid::bulk::BulkRowInput;
 
 // The one preparation both forms share: one row per distinct input id, each with its own values.
-BulkFieldEditJob PrepareJobCore(AppController& app, const std::string& paneId, const TrackerField& field,
-                                const std::vector<BulkRowInput>& inputs, const std::vector<std::string>& sharedValues,
-                                smatchet::grid::bulk::BulkMode mode, std::vector<std::vector<std::string>>* rowValues) {
+BulkFieldEditJob PrepareJobCore(AppController& app, const PendingActionTarget& target, const std::string& paneId,
+                                const TrackerField& field, const std::vector<BulkRowInput>& inputs,
+                                const std::vector<std::string>& sharedValues, smatchet::grid::bulk::BulkMode mode,
+                                std::vector<std::vector<std::string>>* rowValues) {
     BulkFieldEditJob job;
     job.PaneId = paneId;
     job.Field = field;
@@ -781,8 +810,7 @@ BulkFieldEditJob PrepareJobCore(AppController& app, const std::string& paneId, c
         rowValues->clear();
     }
 
-    // The pane's own tickets, as they are now. Memory only: no network, no SQLite.
-    const PendingActionTarget target = app.LatchPendingActionTargetForPane(paneId);
+    // The target pane's own tickets, as they are now. Memory only: no network, no SQLite.
     const std::shared_ptr<const std::vector<CachedTicket>> snapshot = app.TicketsSnapshotForTarget(target);
     std::unordered_map<std::string, const CachedTicket*> byId;
     if (snapshot) {
@@ -906,9 +934,12 @@ void KeepJobSelection(UiDrawSession& d, const std::string& paneId, const std::ve
 }
 
 // `sharedSelection`: the shared-value form, whose rows are the selection it was started from.
+// `undoTarget`: non-null for an undo's own job, which writes where its entry was written instead of latching the pane.
 std::uint64_t StartJobCore(AppController& app, UiDrawSession& d, const std::string& paneId, const TrackerField& field,
                            const std::vector<BulkRowInput>& inputs, const std::vector<std::string>& sharedValues,
-                           smatchet::grid::bulk::BulkMode mode, bool readOnlyMode, bool isUndo, bool sharedSelection) {
+                           smatchet::grid::bulk::BulkMode mode, bool readOnlyMode,
+                           const PendingActionTarget* undoTarget, bool sharedSelection) {
+    const bool isUndo = undoTarget != nullptr;
     const std::string fieldName = field.Name.empty() ? field.Id : field.Name;
     const std::string title = SmatchetLocalization::Format("grid.bulk.done_title", "Bulk edit: %s", fieldName.c_str());
     if (readOnlyMode) {
@@ -918,8 +949,10 @@ std::uint64_t StartJobCore(AppController& app, UiDrawSession& d, const std::stri
         return 0;
     }
 
+    // One latch for the whole job: the pre-flight reads the same pane state the rows are sent to.
+    const PendingActionTarget target = isUndo ? *undoTarget : app.LatchPendingActionTargetForPane(paneId);
     std::vector<std::vector<std::string>> rowValues;
-    BulkFieldEditJob job = PrepareJobCore(app, paneId, field, inputs, sharedValues, mode, &rowValues);
+    BulkFieldEditJob job = PrepareJobCore(app, target, paneId, field, inputs, sharedValues, mode, &rowValues);
     const smatchet::grid::bulk::BulkSummary prepared = smatchet::grid::bulk::Summarize(job);
     const int toSend = prepared.Remaining;
     if (toSend == 0) {
@@ -934,7 +967,6 @@ std::uint64_t StartJobCore(AppController& app, UiDrawSession& d, const std::stri
 
     job.Id = d.nextBulkJobId++;
     job.IsUndo = isUndo;
-    const PendingActionTarget target = app.LatchPendingActionTargetForPane(paneId);
     std::unordered_map<std::string, const BulkRowInput*> inputById;
     inputById.reserve(inputs.size());
     for (const BulkRowInput& input : inputs) {
@@ -990,30 +1022,31 @@ std::uint64_t StartBulkFieldEdit(AppController& app, UiDrawSession& d, const std
                                  const TrackerField& field, const std::vector<std::string>& issueIds,
                                  const std::vector<std::string>& values, smatchet::grid::bulk::BulkMode mode,
                                  bool readOnlyMode) {
-    return StartJobCore(app, d, paneId, field, SharedRowInputs(issueIds, values), values, mode, readOnlyMode, false,
+    return StartJobCore(app, d, paneId, field, SharedRowInputs(issueIds, values), values, mode, readOnlyMode, nullptr,
                         true);
 }
 
 std::uint64_t StartBulkFieldEdit(AppController& app, UiDrawSession& d, const std::string& paneId,
                                  const TrackerField& field, const std::vector<smatchet::grid::bulk::BulkRowInput>& rows,
-                                 bool readOnlyMode, bool isUndo) {
+                                 bool readOnlyMode, const PendingActionTarget* undoTarget) {
     return StartJobCore(app, d, paneId, field, rows, std::vector<std::string>(),
-                        smatchet::grid::bulk::BulkMode::Replace, readOnlyMode, isUndo, false);
+                        smatchet::grid::bulk::BulkMode::Replace, readOnlyMode, undoTarget, false);
 }
 
 smatchet::grid::bulk::BulkFieldEditJob
 PrepareBulkFieldEditJob(AppController& app, const std::string& paneId, const TrackerField& field,
                         const std::vector<std::string>& issueIds, const std::vector<std::string>& values,
                         smatchet::grid::bulk::BulkMode mode, std::vector<std::vector<std::string>>* rowValues) {
-    return PrepareJobCore(app, paneId, field, SharedRowInputs(issueIds, values), values, mode, rowValues);
+    return PrepareJobCore(app, app.LatchPendingActionTargetForPane(paneId), paneId, field,
+                          SharedRowInputs(issueIds, values), values, mode, rowValues);
 }
 
 smatchet::grid::bulk::BulkFieldEditJob
 PrepareBulkFieldEditJob(AppController& app, const std::string& paneId, const TrackerField& field,
                         const std::vector<smatchet::grid::bulk::BulkRowInput>& rows,
                         std::vector<std::vector<std::string>>* rowValues) {
-    return PrepareJobCore(app, paneId, field, rows, std::vector<std::string>(), smatchet::grid::bulk::BulkMode::Replace,
-                          rowValues);
+    return PrepareJobCore(app, app.LatchPendingActionTargetForPane(paneId), paneId, field, rows,
+                          std::vector<std::string>(), smatchet::grid::bulk::BulkMode::Replace, rowValues);
 }
 
 bool QueueSingleCellFieldEdit(AppController& app, UiDrawSession& d, const std::string& paneId,
@@ -1068,13 +1101,26 @@ static bool UndoBlockedByReadOnly(const UiDrawSession& d) {
     return true;
 }
 
+static void PushNothingToUndoToast() {
+    SmatchetToastManager::Instance().Push(
+        SmatchetLocalization::T("grid.undo.empty_title", "Nothing to undo"),
+        SmatchetLocalization::T("grid.undo.empty_message", "No grid edit to undo in this pane."), ToastType::Info);
+}
+
 void UndoGridEntryById(AppController& app, UiDrawSession& d, std::uint64_t entryId) {
     if (UndoBlockedByReadOnly(d)) {
         return;
     }
+    const std::map<std::uint64_t, GridUndoContext>::const_iterator ctx = d.gridUndoContext.find(entryId);
+    if (ctx == d.gridUndoContext.end() || !d.gridUndo.Contains(entryId)) {
+        return; // already undone, or pushed out of the bounded history
+    }
+    const std::string paneId = ctx->second.Target.PaneId; // a copy: reconciling may erase the context
+    ReconcileUndoTargets(app, d, paneId);
     smatchet::grid::undo::Entry entry;
     if (!d.gridUndo.Take(entryId, entry)) {
-        return; // already undone, or pushed out of the bounded history
+        PushNothingToUndoToast(); // dropped just now: the pane switched tracker since the edit
+        return;
     }
     RunInverse(app, d, entry);
 }
@@ -1083,6 +1129,7 @@ bool UndoNewestGridEntry(AppController& app, UiDrawSession& d, const std::string
     if (UndoBlockedByReadOnly(d)) {
         return false;
     }
+    ReconcileUndoTargets(app, d, paneId);
     smatchet::grid::undo::Entry entry;
     switch (d.gridUndo.TakeNewest(paneId, entry)) {
     case smatchet::grid::undo::History::TakeResult::Taken:
@@ -1097,9 +1144,7 @@ bool UndoNewestGridEntry(AppController& app, UiDrawSession& d, const std::string
     case smatchet::grid::undo::History::TakeResult::Empty:
         break;
     }
-    SmatchetToastManager::Instance().Push(
-        SmatchetLocalization::T("grid.undo.empty_title", "Nothing to undo"),
-        SmatchetLocalization::T("grid.undo.empty_message", "No grid edit to undo in this pane."), ToastType::Info);
+    PushNothingToUndoToast();
     return false;
 }
 

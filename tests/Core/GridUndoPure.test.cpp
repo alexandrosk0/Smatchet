@@ -7,10 +7,12 @@
 
 using smatchet::grid::undo::CellChange;
 using smatchet::grid::undo::ChangeState;
+using smatchet::grid::undo::CheckTarget;
 using smatchet::grid::undo::Entry;
 using smatchet::grid::undo::History;
 using smatchet::grid::undo::Inverse;
 using smatchet::grid::undo::kMaxEntries;
+using smatchet::grid::undo::TargetState;
 
 namespace {
 CellChange Change(const char* issue, const char* field, const char* before, const char* after) {
@@ -155,4 +157,36 @@ TEST_CASE("Inverse: a cleared field (empty AfterDisplay) is still inverted; pend
     CHECK(inv[0].IssueId == "A-1");
     CHECK(inv[0].BeforeDisplay.empty());
     CHECK(inv[0].After == std::vector<std::string>{"x"});
+}
+
+TEST_CASE("CheckTarget: another site or account is Switched whatever the generation says") {
+    CHECK(CheckTarget("Jira@a.example#111", 3, "Jira@b.example#111", 4) == TargetState::Switched);
+    CHECK(CheckTarget("Jira@a.example#111", 3, "Jira@a.example#222", 3) == TargetState::Switched);
+    CHECK(CheckTarget("GitHub@api.github.com/o/one", 1, "Linear@api.linear.app/t", 1) == TargetState::Switched);
+    CHECK(CheckTarget("Jira@a.example#111", 3, "", 0) == TargetState::Switched); // the pane is gone
+}
+
+TEST_CASE("CheckTarget: the same tracker is Current, or Rebound once the pane has another client") {
+    CHECK(CheckTarget("Jira@a.example#111", 3, "Jira@a.example#111", 3) == TargetState::Current);
+    CHECK(CheckTarget("Jira@a.example#111", 3, "Jira@a.example#111", 5) == TargetState::Rebound);
+}
+
+TEST_CASE("History: DropIf removes only the stale entries of the named pane") {
+    History h;
+    const std::uint64_t a = h.Push(One("left", "A-1", "a", "b"));
+    const std::uint64_t b = h.Push(One("right", "A-2", "c", "d"));
+    const std::uint64_t c = h.Push(One("left", "A-3", "e", "f"));
+    std::size_t offered = 0;
+    h.DropIf("left", [&](const Entry& e) {
+        ++offered;
+        return e.Id == c;
+    });
+    CHECK(offered == 2); // the right pane's entry is never offered
+    CHECK(h.Contains(a));
+    CHECK(h.Contains(b));
+    CHECK_FALSE(h.Contains(c));
+    h.DropIf("left", [](const Entry&) { return true; });
+    CHECK_FALSE(h.Contains(a));
+    CHECK(h.Contains(b));
+    CHECK(h.Size() == 1);
 }
