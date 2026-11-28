@@ -150,21 +150,42 @@ TEST_CASE("LocalCacheManager: GetAllTickets returns all rows joined with their f
     }
 }
 
-TEST_CASE("LocalCacheManager: ForEachTicket streams each ticket once") {
+TEST_CASE("LocalCacheManager: GetAllTickets returns each ticket once with its fields") {
     SqliteMemFixture fix;
     fix.Ref().SaveTicket(kBk, MakeTicket("ABC-1"));
     fix.Ref().SaveTicket(kBk, MakeTicket("ABC-2"));
     fix.Ref().SaveTicket(kBk, MakeTicket("ABC-3"));
 
-    int count = 0;
+    const std::vector<CachedTicket> all = fix.Ref().GetAllTickets(kBk);
     std::vector<std::string> seenIds;
-    fix.Ref().ForEachTicket(kBk, [&](CachedTicket&& t) {
-        ++count;
+    for (const CachedTicket& t : all) {
         seenIds.push_back(t.id);
         CHECK(t.fieldValues.count("summary") == 1);
-    });
-    CHECK(count == 3);
-    CHECK(seenIds.size() == 3);
+    }
+    std::sort(seenIds.begin(), seenIds.end());
+    REQUIRE(seenIds.size() == 3);
+    CHECK(seenIds[0] == "ABC-1");
+    CHECK(seenIds[1] == "ABC-2");
+    CHECK(seenIds[2] == "ABC-3");
+}
+
+TEST_CASE("LocalCacheManager: GetAllTickets round-trips a rich-only field value") {
+    SqliteMemFixture fix;
+    CachedTicket t;
+    t.id = "ABC-9";
+    t.fieldValues["summary"] = "plain";
+    t.fieldValues["description"] = "plain text";
+    t.fieldRichValues["description"] = "{\"type\":\"doc\"}";
+    t.fieldRichValues["comment_body"] = "<p>rich only</p>"; // a key with no plain value at all
+    fix.Ref().SaveTicket(kBk, t);
+
+    const std::vector<CachedTicket> all = fix.Ref().GetAllTickets(kBk);
+    REQUIRE(all.size() == 1);
+    CHECK(all[0].fieldValues.at("description") == "plain text");
+    CHECK(all[0].fieldRichValues.at("description") == "{\"type\":\"doc\"}");
+    CHECK(all[0].fieldRichValues.count("summary") == 0);
+    CHECK(all[0].fieldRichValues.at("comment_body") == "<p>rich only</p>");
+    CHECK(all[0].fieldValues.count("comment_body") == 0);
 }
 
 TEST_CASE("LocalCacheManager: cache_meta flag round-trip") {
