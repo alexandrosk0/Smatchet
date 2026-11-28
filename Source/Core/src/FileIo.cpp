@@ -264,9 +264,10 @@ bool WriteFileAtomically(const std::string& path, const void* data, std::size_t 
                          std::string& errOut) {
     // Building the failure text can itself throw (bad_alloc); the contract is "never throws", so a failed
     // assignment leaves the reason empty rather than escaping.
-    const auto assignErrorNoThrow = [](std::string& out, const std::string& text) noexcept {
+    const auto assignErrorNoThrow = [](std::string& out, const char* prefix, const char* detail) noexcept {
         try {
-            out = text;
+            out = prefix;
+            out += detail;
         } catch (...) {
             out.clear(); // a std::string clear never throws; the reason is simply lost
         }
@@ -285,9 +286,9 @@ bool WriteFileAtomically(const std::string& path, const void* data, std::size_t 
             return true;
         }
     } catch (const std::exception& e) {
-        assignErrorNoThrow(errOut, std::string("exception: ") + e.what());
+        assignErrorNoThrow(errOut, "exception: ", e.what());
     } catch (...) {
-        assignErrorNoThrow(errOut, "unknown exception");
+        assignErrorNoThrow(errOut, "unknown exception", "");
     }
     LOG_ERROR("FileIo: atomic write of '%s' failed: %s", path.c_str(), errOut.c_str());
     return false;

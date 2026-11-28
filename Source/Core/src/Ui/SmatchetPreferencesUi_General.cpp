@@ -327,8 +327,9 @@ void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
     ImGui::SameLine();
     SmatchetHelpMarker::Render("prefs.local_data.recreate_intro.help",
                                "Stored tickets, offline create queues, and pending field edits live in a "
-                               "local SQLite file. Recreating it clears that data only; tracker credentials "
-                               "and views are not removed. A full issue refresh runs afterward.");
+                               "local SQLite file. Recreating it clears that data and the downloaded attachment copies "
+                               "and icons; tracker credentials and views are not removed. A full issue "
+                               "refresh runs afterward.");
     ImGui::Spacing();
     const std::string resolved = sync.GetResolvedLocalCacheDbPath();
     if (!resolved.empty()) {
@@ -345,7 +346,8 @@ void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
         ImGui::OpenPopup("Delete local database?###RecreateSqliteDbConfirm");
     }
     ImGui::EndDisabled();
-    ImGui::SetItemTooltip("Permanently delete the local cache file and start with an empty database.");
+    ImGui::SetItemTooltip("Permanently delete the local cache file and downloaded attachment copies and icons, "
+                          "and start with an empty database.");
     if (recreating) {
         ImGui::SameLine();
         ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.local_db.recreating", "Recreating the database..."));

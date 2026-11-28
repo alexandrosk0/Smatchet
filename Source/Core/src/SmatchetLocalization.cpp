@@ -240,8 +240,11 @@ const TranslationEntry kEntries[] = {
      u8"— pas les identifiants du suivi ni les vues. Une actualisation complète des tickets suit."},
     {"prefs.local_data.file_label", "Cache file:", u8"Fichier de cache :"},
     {"prefs.local_data.recreate", "Recreate database...", u8"Recréer la base..."},
-    {"prefs.local_data.recreate_tooltip", "Permanently delete the local cache file and start with an empty database.",
-     u8"Supprime définitivement le fichier de cache local et repart d'une base vide."},
+    {"prefs.local_data.recreate_tooltip",
+     "Permanently delete the local cache file and downloaded attachment copies and icons, and start with an empty "
+     "database.",
+     u8"Supprime définitivement le fichier de cache local, les pièces jointes et icônes téléchargées, et repart "
+     u8"d'une base vide."},
     {"prefs.local_data.confirm_title", "Delete local database?", u8"Supprimer la base locale ?"},
     {"prefs.local_data.confirm_body",
      "This removes cached issues, downloaded attachment copies and icons, and any queued offline writes "
@@ -394,12 +397,12 @@ const TranslationEntry kEntries[] = {
      u8"Cache SQLite local : tickets, files hors-ligne, modifications en attente."},
     {"prefs.local_data.recreate_intro.help",
      "Stored tickets, offline create queues, and pending field edits live in a "
-     "local SQLite file. Recreating it clears that data only; tracker credentials "
-     "and views are not removed. A full issue refresh runs afterward.",
+     "local SQLite file. Recreating it clears that data and the downloaded attachment copies "
+     "and icons; tracker credentials and views are not removed. A full issue refresh runs afterward.",
      u8"Les tickets stockés, les files de création hors-ligne et les modifications de champs en "
-     u8"attente vivent dans un fichier SQLite local. Le recréer n'efface que ces données ; les "
-     u8"identifiants du tracker et les vues sont conservés. Un rafraîchissement complet des "
-     u8"tickets s'exécute ensuite."},
+     u8"attente vivent dans un fichier SQLite local. Le recréer efface ces données ainsi que les "
+     u8"pièces jointes et icônes téléchargées ; les identifiants du tracker et les vues sont "
+     u8"conservés. Un rafraîchissement complet des tickets s'exécute ensuite."},
     {"prefs.local_data.storage_unreal.help",
      "Plugin default: writable files (config / views / SQLite cache / ImGui "
      "layout) live in <UnrealProject>/Saved next to the runtime cache. Switch to "

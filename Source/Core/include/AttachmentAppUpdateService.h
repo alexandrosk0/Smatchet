@@ -9,14 +9,15 @@
 // app-update surface keeps the same eight signatures but its bodies become thin delegators that
 // forward into this service.
 // One combined service rather than two: the attachment cluster and the app-update cluster share the
-// same tiny dependency surface (the host callbacks + OpenUrl + RequestAppQuit) and neither owns a
-// long-lived mutex, so a single service keeps one interface, one adapter base, one fake, and one
+// same tiny dependency surface (the host callbacks + OpenUrl + RequestAppQuit) and neither holds a
+// mutex across a call, so a single service keeps one interface, one adapter base, one fake, and one
 // test file — splitting would double the wiring for no behavioural or testability gain.
-// Concurrency: the only member state is the attachment disk cache (thread-safe, created on first use).
-// Every other method is a function of its arguments plus the host callbacks read live through the deps
-// interface. The cpr HTTP downloads run synchronously on the calling thread (callers already dispatch
-// the blocking downloads via LaunchBackgroundTask). The file-local download / temp-path /
-// semantic-version helpers live in the service .cpp.
+// Concurrency: the only member state is the attachment disk cache handle, guarded by a mutex and rebound
+// when the user data folder moves (the cache itself is thread-safe). Every other method is a function of
+// its arguments plus the host callbacks read live through the deps interface. The cpr HTTP downloads run
+// synchronously on the calling thread (callers already dispatch the blocking downloads via
+// LaunchBackgroundTask). The file-local download / semantic-version helpers live in the service .cpp; the
+// uncached-copy fallback lives in AttachmentUncachedStore.
 // Lifetime contract mirrors the sibling services: AppController owns the service via std::unique_ptr
 // and outlives it; the IAttachmentAppUpdateDeps& (GridContextDepsAdapter) outlives this service
 // (declared after it, destroyed after it).

@@ -44,7 +44,7 @@ void QueueUserTextureDestroy(ImTextureData* tex);
 /** Advance every queued destroy one frame; call once per UI frame from SmatchetUI::Draw. */
 void TickPendingDestroys();
 
-/** Queued destroys not yet freed (tests, perf.memory). */
+/** Queued destroys not yet freed (tests and diagnostics). */
 std::size_t PendingDestroyCount();
 
 /** Free every texture this cache owns and reset it; call after the backend Shutdown, before ImGui::DestroyContext. */

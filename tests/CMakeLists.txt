@@ -2176,6 +2176,9 @@ target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui"
     "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty/ImGuiColorTextEdit"
+    # SmatchetImageTextureCache.cpp (the texture-teardown test) includes <stb/stb_image.h>, which lives here;
+    # the production targets get this directory from smatchet_configure_core_impl_target.
+    "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty"
     # IconCatalog.test.cpp links SmatchetIconCatalog.cpp, which includes the FA6
     # header + generated catalog (parity with the production SmatchetCoreInterface).
     "${CMAKE_SOURCE_DIR}/Source/Core/ThirdParty/IconsFontAwesome6"

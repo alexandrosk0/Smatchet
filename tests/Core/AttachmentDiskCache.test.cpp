@@ -6,11 +6,11 @@
 #include "AttachmentDiskCache.h"
 
 #include "FileIo.h"
+#include "ScopedTempDir.h"
 
 #include <doctest/doctest.h>
 #include <ghc/filesystem.hpp>
 
-#include <atomic>
 #include <chrono>
 #include <fstream>
 #include <stdexcept>
@@ -31,6 +31,7 @@ using smatchet::attachments::EntryKeyForUrl;
 using smatchet::attachments::FetchedAttachment;
 using smatchet::attachments::LocalAttachment;
 using smatchet::attachments::ResolveAttachment;
+using smatchet_tests::ScopedTempDir;
 
 namespace {
 
@@ -39,29 +40,6 @@ using LocalResult = Result<LocalAttachment, TrackerError>;
 
 const char* const kUrl = "https://site.atlassian.net/rest/api/3/attachment/content/10001";
 const char* const kOfflineText = "Not downloaded yet - available once online";
-
-// A private directory, removed with everything in it when the test ends.
-class ScopedTempDir {
-  public:
-    ScopedTempDir() {
-        static std::atomic<int> counter{0};
-        const long long stamp = static_cast<long long>(std::chrono::steady_clock::now().time_since_epoch().count());
-        path_ = (fs::temp_directory_path() /
-                 ("smatchet_attachment_cache_" + std::to_string(stamp) + "_" + std::to_string(counter.fetch_add(1))))
-                    .string();
-        fs::create_directories(path_);
-    }
-    ~ScopedTempDir() {
-        std::error_code ec;
-        fs::remove_all(path_, ec);
-    }
-    ScopedTempDir(const ScopedTempDir&) = delete;
-    ScopedTempDir& operator=(const ScopedTempDir&) = delete;
-    const std::string& Path() const { return path_; }
-
-  private:
-    std::string path_;
-};
 
 std::string ReadAll(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
