@@ -166,6 +166,11 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueMappingPure.cpp"
         Core/LinearQueryFromJql.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearQueryFromJql.cpp"
+        # The clause editor behind the grid's facet chips (input UX Wave 3). It runs both subset
+        # translators, so the GitHub one rides along; GitHubClientHelpers.cpp is linked below.
+        Core/QueryFacetClausesPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/QueryFacetClausesPure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubQueryFromJql.cpp"
         Core/JiraErrorMessagePure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraErrorMessagePure.cpp"
         # multi-grid-tabs.md Slice 5a — pure hidden-pane LRU eviction decision
@@ -1344,6 +1349,10 @@ add_executable(SmatchetTests
     # PR5 of docs/design/github-tracker-backend.md — JQL → GitHub-search translator.
     Core/GitHubQueryFromJql.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubQueryFromJql.cpp"
+    # The clause editor behind the grid's facet chips (input UX Wave 3); both translators and
+    # TrackerQuerySuggestCommon.cpp are linked in this rig.
+    Core/QueryFacetClausesPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/QueryFacetClausesPure.cpp"
     # PR4 follow-up — pure helper ComputeGitHubFetchPlan deciding repo-scoped vs
     # cross-repo fetch + the empty-config fallback warning. Pure TU (no cpr).
     Core/GitHubFetchPlan.test.cpp

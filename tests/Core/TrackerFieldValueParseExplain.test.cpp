@@ -490,6 +490,13 @@ TEST_CASE("DescribeParseMessage: the text pins what to fix") {
           "The query ends on AND. Add what it should compare to, or remove it.");
     CHECK(say(ParseMessageId::ConflictValueRejectedEstimate, "") ==
           "That estimate cannot be used. Enter a time like 3d or 2h 30m.");
+    // The tracker's own text goes in as it came; its final stop is not doubled.
+    CHECK(say(ParseMessageId::QueryRejectedByTracker, "Field 'nope' does not exist.") ==
+          "The tracker did not run this query: Field 'nope' does not exist.");
+    CHECK(say(ParseMessageId::QueryRejectedByTracker, "Sign-in failed (100%)\r\n") ==
+          "The tracker did not run this query: Sign-in failed (100%).");
+    CHECK(say(ParseMessageId::QueryClausesDropped, "OR is not supported") ==
+          "This tracker will ignore part of the query: OR is not supported.");
 }
 
 TEST_CASE("DescribeParseMessage follows the language, and falls back to English for a missing key") {
