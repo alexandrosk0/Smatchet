@@ -15,7 +15,10 @@
 #   bash scripts/dev/plan-ci-proof-check.sh [--live] [<base-ref>]   # default origin/develop
 #
 # Scope: proof lines this branch ADDS to a plan under docs/plans/{active,shipped}/, vs
-# the merge-base with <base-ref> (committed or not). "This PR" in a plan means the PR
+# the merge-base with <base-ref> (committed or not). A plan is a `*.md` file one level
+# deep there, not a `_*.md` meta-file (_plan-template.md, the _plan-locks*.md mirrors)
+# and not a file in a per-plan subfolder: the same set the merge-time gate reads,
+# through the layer's _mg_planproof_is_plan. "This PR" in a plan means the PR
 # that wrote the line, so an unchanged proof line is not re-checked: a later docs-only
 # edit of the plan, or its git mv to shipped/ (rename detection, -M), does not inherit
 # the original PR's proof. Only the `## Verification` section is read (not
@@ -74,40 +77,31 @@ gate_output_for() {
     esac
 }
 
-# verification_checks <plan-file> <added-lines> — print each check name the
-# `## Verification` section names as proof on the PR, one per line, keeping only lines
-# whose number is in <added-lines> (space-separated; "all" keeps every line).
-# shellcheck disable=SC2016  # awk / sed programs; the backticks are literal
+# The proof parser and the plan-path rule are the layer's own, the ones the
+# merge-time plan CI-proof gate applies (merge-gates.d/30-plan-proof.sh; pure
+# function definitions, safe to source), so this pre-push prediction cannot drift
+# from the merge verdict. A missing module is a broken checkout: refuse, fail
+# closed, rather than predict with no parser.
+# shellcheck source=scripts/dev/project-config.sh
+. "$script_dir/project-config.sh" 2>/dev/null || true
+planproof_module="${AGENT_LAYER_ROOT:-$script_dir/../../agent-layer}/agents/scripts/core/merge-gates.d/30-plan-proof.sh"
+if [ ! -r "$planproof_module" ]; then
+    echo "plan-ci-proof-check: the layer's plan-proof parser is missing ($planproof_module); run git submodule update --init --recursive agent-layer." >&2
+    exit 2
+fi
+# shellcheck source=agent-layer/agents/scripts/core/merge-gates.d/30-plan-proof.sh
+. "$planproof_module"
+for planproof_fn in _mg_planproof_checks _mg_planproof_is_plan; do
+    if ! declare -F "$planproof_fn" >/dev/null; then
+        echo "plan-ci-proof-check: $planproof_module does not define $planproof_fn; the agent-layer pin is too old." >&2
+        exit 2
+    fi
+done
+
+# verification_checks <plan-file> <added-lines|all> — each check name the plan's
+# `## Verification` section names as proof on the PR, one per line.
 verification_checks() {
-    # Every proof on a line counts, not only the last (grep -o, not a greedy sed).
-    # Lines inside a fenced code block are neither headings nor proofs, and a
-    # `<placeholder>` name is a template. Kept in step with the layer's merge-time
-    # gate, agent-layer/agents/scripts/core/merge-gates.d/30-plan-proof.sh.
-    # A fence closes only on its own marker (same character, at least as long);
-    # one that never closes is ignored, so it cannot hide the proofs after it.
-    local fences=1
-    awk '
-        match($0, /^[[:space:]]*(```+|~~~+)/) {
-            m = substr($0, RSTART, RLENGTH); sub(/^[[:space:]]*/, "", m)
-            if (open == "") open = m
-            else if (substr(m, 1, 1) == substr(open, 1, 1) && length(m) >= length(open)) open = ""
-        }
-        END { exit open == "" ? 0 : 1 }
-    ' "$1" || fences=0
-    awk -v added=" $2 " -v fences="$fences" '
-        fences && match($0, /^[[:space:]]*(```+|~~~+)/) {
-            m = substr($0, RSTART, RLENGTH); sub(/^[[:space:]]*/, "", m)
-            if (open == "") open = m
-            else if (substr(m, 1, 1) == substr(open, 1, 1) && length(m) >= length(open)) open = ""
-            next
-        }
-        open != "" { next }
-        /^## / { in_v = ($0 ~ /^## Verification[[:space:]]*$/); next }
-        in_v && (added == " all " || index(added, " " NR " ")) { print }
-    ' "$1" \
-        | grep -oE 'CI:[[:space:]]*["`][^"`]+["`][[:space:]]+green on (this|the) PR' \
-        | sed -E 's/^CI:[[:space:]]*["`]([^"`]+)["`].*/\1/' \
-        | grep -vE '^<[^>]*>$' || true
+    _mg_planproof_checks "$1" "$2"
 }
 
 # added_lines <plan-file> — the head-side line numbers this branch adds to <plan-file>
@@ -138,10 +132,19 @@ fi
 # (color.diff=always, diff.mnemonicPrefix's w/ prefix, an external diff driver): a
 # reshaped patch would match no path and silently pass every plan.
 GIT_DIFF=(git -c core.quotePath=false diff --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ -M --diff-filter=d)
-plans="$("${GIT_DIFF[@]}" --name-only "$merge_base" -- 'docs/plans/active/*.md' 'docs/plans/shipped/*.md' 2>/dev/null || true)"
-plan_diff="$("${GIT_DIFF[@]}" -U0 "$merge_base" -- 'docs/plans/active/*.md' 'docs/plans/shipped/*.md' 2>/dev/null || true)"
-untracked="$(git ls-files --others --exclude-standard -- 'docs/plans/active/*.md' 'docs/plans/shipped/*.md' 2>/dev/null || true)"
+# The plans this check reads: the same set the merge gate reads. The `_*.md`
+# meta-files (_plan-template.md, the _plan-locks*.md mirrors) are excluded here as
+# well as by _mg_planproof_is_plan below, so the exclusion holds even against a
+# layer pin whose is_plan predates it.
+PLAN_PATHSPECS=('docs/plans/active/*.md' 'docs/plans/shipped/*.md'
+    ':(exclude)docs/plans/active/_*' ':(exclude)docs/plans/shipped/_*')
+plans="$("${GIT_DIFF[@]}" --name-only "$merge_base" -- "${PLAN_PATHSPECS[@]}" 2>/dev/null || true)"
+plan_diff="$("${GIT_DIFF[@]}" -U0 "$merge_base" -- "${PLAN_PATHSPECS[@]}" 2>/dev/null || true)"
+untracked="$(git ls-files --others --exclude-standard -- "${PLAN_PATHSPECS[@]}" 2>/dev/null || true)"
 plans="$(printf '%s\n%s\n' "$plans" "$untracked" | sed '/^$/d' | sort -u)"
+plans="$(while IFS= read -r p; do
+    [ -n "$p" ] && _mg_planproof_is_plan "$p" && printf '%s\n' "$p"
+done <<< "$plans")"
 
 if [ -z "$plans" ]; then
     echo "plan-ci-proof-check: no changed plan doc — nothing to check."
