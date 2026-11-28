@@ -213,3 +213,41 @@ deleted, and `test-plan-index.sh --fix` regenerated `docs/plans/INDEX.md`. It we
 waiting on, not as a separate docs PR, so the plan's last open item and its archive land together.
 Status: applied (2026-11-20; was: open)
 Last-reviewed: 2026-11-20
+
+# ConfigSaveConcurrency "flushes on Stop" can fail under the coverage lane
+
+- **Category**: test
+- **Priority**: P3
+- **Date**: 2026-11-26
+- **Observed on**: PR #2496 (input UX Wave 2 leftover), `Coverage (windows-2022 + OpenCppCoverage)`, attempt 1 (job 139447158443, 2026-11-25). The PR does not touch config code. Attempt 2 failed on a Chocolatey 504 while installing OpenCppCoverage; attempt 3 passed.
+- **Status**: applied 2026-11-27: the cause is confirmed from the code; the test now waits for the worker's writes on disk before `Stop()`, and the product exposure is tracked as alexandrosk0/Smatchet#2529
+
+## What happened
+
+`tests/Core/ConfigSaveConcurrency.test.cpp`, case "config_save worker persists both config kinds and flushes on Stop", failed at line 118:
+
+```
+CHECK( ConfigManager::LoadAnnotateAnalysis().ChangelistCacheMaxEntries == 256 ) is NOT correct!
+```
+
+The case enqueues a tracker config and then an annotate config, calls `smatchet::config_save::Stop()`, and expects both on disk. The tracker check on the line before it passed. 4437 of the 4438 cases passed in that run. Locally the case passed 3 runs out of 3.
+
+The likely cause, not confirmed: `Stop()` (`Source/Core/src/ConfigSaveWorker.cpp`) waits at most `kStopDrainBudget` (250 ms) for queued writes. After that it logs `config_save: drain budget exhausted; dropping pending config write(s)` and drops them by design. Under OpenCppCoverage instrumentation two config writes can take longer than 250 ms, so the annotate write is dropped and the test sees the old value. The test treats a best-effort drain as a guarantee.
+
+## Concrete next action
+
+- Confirm it: run the case in a loop under OpenCppCoverage, or with an artificial delay in the worker's write. Check whether the drain-budget warning is logged on the failing run. The failing job's log has no `drain budget exhausted` line, but that does not rule the cause out until it is known whether the test binary's `LOG_WARN` output reaches the job log at all.
+- If confirmed, make the test independent of the budget. For example, wait until the worker has written both configs (poll the files, or add a test-only "queue empty" query) before calling `Stop()`. Or add a test-only override of the budget. Do not raise the shipping budget for the test's sake.
+- If the warning is not logged, the cause is something else, such as write ordering between the two kinds: raise a GitHub Issue instead, since a lost config write is user-observable.
+
+## Resolution
+
+The cause is the `Stop()` drain budget, not write ordering between the two kinds. `Stop()` sets its deadline once, at entry (`Source/Core/src/ConfigSaveWorker.cpp:195`, `kStopDrainBudget` of 250 ms at `:31`), so the time of a write already in flight counts against the budget. The sequence that fits the failing run: the worker took the tracker slot on its own and started the whole-image tracker write (`ConfigManager::FlushPendingTrackerSave`, `:123`); the test thread then queued the annotate config and called `Stop()`. The tracker write ran past 250 ms under OpenCppCoverage, so `Stop()` cleared the still-queued annotate slot (`:210-216`) and the worker returned without writing it (`:157-159`). The value the test saw, 512, is the `AnnotateAnalysisConfig` default that `LoadAnnotateAnalysis` returns when no `annotate_analysis` section is on disk, which confirms the write never happened.
+
+The job log had no `drain budget exhausted` line because the logger has no stdout, stderr or debugger sink (`Source/Core/src/Logger.cpp`). In the unit-test binary no file sink is set either (`SetFileSinkPath` is called only by the Standalone and Android mains), so the warning lands only in the in-memory ring buffer and is never visible in the job log.
+
+Fix: `tests/Core/ConfigSaveConcurrency.test.cpp` no longer treats the bounded drain as a guarantee. A helper, `WaitForConfigOnDisk`, polls until the worker has written what the case expects (30 s deadline, then a clean `REQUIRE` failure), and only then calls `Stop()`. The raw-keys case had the same exposure and gets the same wait. The stale comments that promised `Stop()` flushes everything are corrected, in the test and at `Source/Core/src/Ui/SmatchetUI_Layout.cpp` (the quit-time prefs enqueue). The shipping budget is unchanged.
+
+The same mechanism can drop a settings change made just before quit, when another config write is in flight for longer than the budget at shutdown. That is user-observable, so it is tracked as a GitHub Issue: alexandrosk0/Smatchet#2529.
+Status: applied (2026-11-27; was: open)
+Last-reviewed: 2026-11-27

@@ -238,7 +238,7 @@ struct GridLiveContext {
     /// switch: a drift (view edited after the context synced) re-kicks the sync instead of
     /// rendering stale rows (review MEDIUM-2). Not updated when a view is opened in place, so it is
     /// NOT the query the pane's rows answer: the change monitor polls with
-    /// TicketSyncService::LastSessionQuery and falls back to this only before the first session.
+    /// TicketSyncService::LastSessionConfig and falls back to this only before the first session.
     std::string lastSyncedJql;
 
     /// The pane's OWN ViewDefinition, resolved from ITS backend's views bucket by the
