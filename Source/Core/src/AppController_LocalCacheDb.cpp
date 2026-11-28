@@ -12,6 +12,7 @@
 // clang-format on
 
 #include "ConfigManager.h"
+#include "EditMetaCacheService.h"
 #include "LocalCacheManager.h"
 #include "Logger.h"
 #include "SmatchetLocalization.h"
@@ -40,9 +41,8 @@
 
 namespace {
 
-// ~AppController flush budgets (AGENTS.md § Persistence: SQLite writes must not be lost at quit). The pre-flag budget
-// is shared by every queue flushed before `shuttingDown_` is set; the tail budget by every queue flushed after the
-// pool is joined.
+// ~AppController flush budgets (SQLite writes must not be lost at quit). The pre-flag budget is shared by every queue
+// flushed before `shuttingDown_` is set; the tail budget by every queue flushed after the pool is joined.
 constexpr std::chrono::seconds kShutdownPreFlagBudget{5};
 constexpr std::chrono::seconds kShutdownTailBudget{3};
 
@@ -202,6 +202,14 @@ void AppController::DrainCatalogWorkBeforeShutdown_(std::chrono::steady_clock::t
         LOG_WARN("AppController shutdown: the field-catalog snapshot save did not finish within the %lld s budget.",
                  static_cast<long long>(kShutdownPreFlagBudget.count()));
     }
+    if (!usersRosterIo_.Flush(smatchet::RemainingUntil(deadline))) {
+        LOG_WARN("AppController shutdown: a queued user-roster save did not finish within the %lld s budget.",
+                 static_cast<long long>(kShutdownPreFlagBudget.count()));
+    }
+    if (editMeta_ && !editMeta_->FlushScopeSaves(smatchet::RemainingUntil(deadline))) {
+        LOG_WARN("AppController shutdown: a queued edit-permissions save did not finish within the %lld s budget.",
+                 static_cast<long long>(kShutdownPreFlagBudget.count()));
+    }
     if (startupCatalogRestoreSlot_.valid()) {
         startupCatalogRestoreSlot_.wait();
     }
@@ -227,6 +235,7 @@ void AppController::FlushSerialQueuesOnShutdownThread_() {
         smatchet::SerialTaskQueue* Queue;
     };
     const NamedQueue queues[] = {{"ticket cache saves", &ticketSaves_},
+                                 {"user-roster saves", &usersRosterIo_},
                                  {"field-catalog snapshot saves", &catalogSnapshotIo_}};
     for (const NamedQueue& entry : queues) {
         const std::size_t pending = entry.Queue->PendingCount();
@@ -241,6 +250,10 @@ void AppController::FlushSerialQueuesOnShutdownThread_() {
         LOG_ERROR("AppController shutdown: left-view history writes still pending after the %lld s tail flush.",
                   budgetSec);
     }
+    if (editMeta_ && !editMeta_->FlushScopeSaves(smatchet::RemainingUntil(deadline))) {
+        LOG_ERROR("AppController shutdown: edit-permissions saves still pending after the %lld s tail flush.",
+                  budgetSec);
+    }
 }
 
 bool AppController::FlushPendingCacheWrites(std::chrono::milliseconds budget) {
@@ -249,6 +262,10 @@ bool AppController::FlushPendingCacheWrites(std::chrono::milliseconds budget) {
     bool drained = ticketSaves_.Flush(smatchet::RemainingUntil(deadline));
     if (leftViewHistory_) {
         drained = leftViewHistory_->Flush(smatchet::RemainingUntil(deadline)) && drained;
+    }
+    drained = usersRosterIo_.Flush(smatchet::RemainingUntil(deadline)) && drained;
+    if (editMeta_) {
+        drained = editMeta_->FlushScopeSaves(smatchet::RemainingUntil(deadline)) && drained;
     }
     if (!drained) {
         LOG_WARN("AppController: queued cache writes did not finish within %lld ms.",

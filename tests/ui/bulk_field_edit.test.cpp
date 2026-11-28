@@ -397,8 +397,8 @@ std::string CountText(const char* key, const char* fallback, int count) {
     return SmatchetLocalization::Format(key, fallback, count);
 }
 
-// The first `count` sort-order rows, leaving out SMAT-12: an earlier case marks it not editable (its type is its own,
-// so the editmeta change stays on that one issue), and these cases want every selected row to save.
+// The first `count` sort-order rows, leaving out SMAT-12: an earlier case marks it not editable (an answer with no
+// editable field stays with that one issue, whatever its type), and these cases want every selected row to save.
 std::set<int> EditableRows(int count) {
     std::set<int> rows;
     for (int row = 0; row < kFixtureRows && static_cast<int>(rows.size()) < count; ++row) {
@@ -677,8 +677,8 @@ static void RegisterConfirmStep(ImGuiTestEngine* engine) {
         IM_CHECK_NO_RET(selectedIds.size() == static_cast<std::size_t>(kFixtureRows));
 
         // One row the tracker says is not editable (its editmeta lacks priority), and every row that already
-        // holds "High": none of them is sent. SMAT-12 is the only issue of its type (fixture), because editmeta is
-        // cached per type: marking a Task read-only would make every row read-only.
+        // holds "High": none of them is sent. The read-only answer has no editable field, so it stays with SMAT-12
+        // and never narrows its project and type: the other rows keep saving.
         const std::string uneditableId = "SMAT-12";
         std::set<std::string> expectedSkipped;
         IM_CHECK_NO_RET(selectedIds.count(uneditableId) == 1 && PriorityOf(*env.App, uneditableId) != "High");

@@ -18,6 +18,7 @@
 #include "CachedTicketTypes.h"
 #include "ConfigManager.h"
 #include "LocalCacheManager.h"
+#include "LookupPayloadsPure.h"
 
 #include <atomic>
 #include <chrono>
@@ -139,5 +140,66 @@ TEST_CASE("~AppController's tail flush saves an UpdateTicket posted after the sh
         REQUIRE(reopened.TryGetTicket(backendKey, "TAIL-1", row));
         CHECK(row.GetFieldValue("summary") == "posted after the flag");
     }
+    removeFiles();
+}
+
+// The user roster is saved latest-wins on its own queue: however many rosters are posted before the first write runs,
+// the row that reaches the file is the newest, and ~AppController flushes it before the pool is flagged.
+TEST_CASE("~AppController leaves the newest user roster in the cache file and never an older one") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    const std::string path = ConfigManager::GetUserDataDirectory() + "shutdown_roster_test.sqlite";
+    const auto removeFiles = [&path]() {
+        for (const char* suffix : {"", "-wal", "-shm", "-journal"}) {
+            std::remove((path + suffix).c_str());
+        }
+    };
+    removeFiles();
+    {
+        AppController app;
+        REQUIRE(app.OpenLocalCacheFileForTest(path));
+        for (int i = 0; i < 40; ++i) {
+            app.SaveAvailableUsersForOfflineAsync("Jira", "roster-a-" + std::to_string(i));
+            app.SaveAvailableUsersForOfflineAsync("Jira:other.example", "roster-b-" + std::to_string(i));
+        }
+        app.SaveAvailableUsersForOfflineAsync("Jira", ""); // an empty roster saves nothing
+    } // ~AppController: the pre-flag flush runs the queue
+    {
+        LocalCacheManager reopened(path);
+        LookupCacheRow row;
+        REQUIRE(reopened.TryGetLookup("Jira", smatchet::lookup::kUsersKind, smatchet::lookup::kUsersKey, row));
+        CHECK(row.PayloadJson == "roster-a-39");
+        REQUIRE(reopened.TryGetLookup("Jira:other.example", smatchet::lookup::kUsersKind, smatchet::lookup::kUsersKey,
+                                      row));
+        CHECK(row.PayloadJson == "roster-b-39");
+    }
+    removeFiles();
+}
+
+TEST_CASE("AppController::FlushUsersRosterSaves waits for a queued roster save") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    const std::string path = ConfigManager::GetUserDataDirectory() + "flush_roster_test.sqlite";
+    const auto removeFiles = [&path]() {
+        for (const char* suffix : {"", "-wal", "-shm", "-journal"}) {
+            std::remove((path + suffix).c_str());
+        }
+    };
+    removeFiles();
+    AppController app;
+    REQUIRE(app.OpenLocalCacheFileForTest(path));
+    app.SaveAvailableUsersForOfflineAsync("Jira", "roster-1");
+    REQUIRE(app.FlushUsersRosterSaves(std::chrono::seconds(10)));
+    {
+        LocalCacheManager second(path);
+        LookupCacheRow row;
+        REQUIRE(second.TryGetLookup("Jira", smatchet::lookup::kUsersKind, smatchet::lookup::kUsersKey, row));
+        CHECK(row.PayloadJson == "roster-1");
+    }
+    // A second roster replaces the first.
+    app.SaveAvailableUsersForOfflineAsync("Jira", "roster-2");
+    REQUIRE(app.FlushUsersRosterSaves(std::chrono::seconds(10)));
+    LocalCacheManager third(path);
+    LookupCacheRow row;
+    REQUIRE(third.TryGetLookup("Jira", smatchet::lookup::kUsersKind, smatchet::lookup::kUsersKey, row));
+    CHECK(row.PayloadJson == "roster-2");
     removeFiles();
 }
