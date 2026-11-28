@@ -272,7 +272,7 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
 
     // DR6: publish the initial cache via atomic_store — off-thread workers snapshot with
     // atomic_load, mirroring the ADR-0012 Backend atomic-swap discipline.
-    std::atomic_store(&Cache, std::make_shared<LocalCacheManager>(dbPath));
+    OpenInitialCache_(dbPath);
     initLeftViewHistory_();
 
     // Multi-grid Slice 1b (ADR-0018 decision 4): seed the default context's cache namespace
@@ -321,9 +321,14 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     }
     pendingLogSinks_.clear();
 
+    // No cache at all (even the session-only fallback failed): nothing to sweep, and every other reader null-guards.
+    const std::shared_ptr<LocalCacheManager> sweepCache = std::atomic_load(&Cache);
+    if (!sweepCache) {
+        return;
+    }
     try {
 
-        const size_t dropped = Cache->RunOneTimeLegacyDropPendingAtMaxAttempts();
+        const size_t dropped = sweepCache->RunOneTimeLegacyDropPendingAtMaxAttempts();
 
         if (dropped > 0) {
 

@@ -91,6 +91,13 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     /// Set by a test to model the cache-recreate gate (the test also resets `CacheImpl`, as the withdraw does).
     bool CacheRecreatingImpl = false;
     bool IsCacheRecreating() const override { return CacheRecreatingImpl; }
+    /// Set by a test to model the other reasons an enqueue is refused (opening, session-only); None falls back to the
+    /// recreate gate above, like the production default.
+    smatchet::persistence::CacheEnqueueBlock EnqueueBlockImpl = smatchet::persistence::CacheEnqueueBlock::None;
+    smatchet::persistence::CacheEnqueueBlock EnqueueBlock() const override {
+        return EnqueueBlockImpl != smatchet::persistence::CacheEnqueueBlock::None ? EnqueueBlockImpl
+                                                                                  : IOfflineQueueDeps::EnqueueBlock();
+    }
     std::uint64_t BackendGeneration() const override { return BackendGenerationImpl; }
     std::shared_ptr<const std::vector<TrackerField>> AvailableFields() const override {
         return std::make_shared<std::vector<TrackerField>>(Fields);

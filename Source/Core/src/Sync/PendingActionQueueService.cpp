@@ -138,17 +138,20 @@ PendingActionQueueService::Enqueue(PendingActionKind kind, const std::string& ba
     }
     // Before the cache is latched: the old file is still there for the first moments of a recreate and a row queued
     // into it would be wiped with it.
-    if (deps_.IsCacheRecreating()) {
-        out.Error = smatchet::sync::CacheRecreatingEnqueueMessage();
-        LOG_WARN("PendingActionQueueService: enqueue on %s refused: the local cache is being recreated.",
-                 issueKey.c_str());
+    const smatchet::persistence::CacheEnqueueBlock block = deps_.EnqueueBlock();
+    if (block != smatchet::persistence::CacheEnqueueBlock::None) {
+        out.Error = smatchet::sync::CacheEnqueueBlockedMessage(block);
+        LOG_WARN("PendingActionQueueService: enqueue on %s refused: the local cache cannot take a write (block=%d).",
+                 issueKey.c_str(), static_cast<int>(block));
         return out;
     }
     // Latched once: the UI thread may swap the cache (StartRecreateLocalCacheDatabase) mid-enqueue.
     const std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
     if (!cache) {
-        out.Error = deps_.IsCacheRecreating() ? smatchet::sync::CacheRecreatingEnqueueMessage()
-                                              : "The local cache is unavailable, so this could not be saved offline.";
+        const smatchet::persistence::CacheEnqueueBlock late = deps_.EnqueueBlock();
+        out.Error = late != smatchet::persistence::CacheEnqueueBlock::None
+                        ? smatchet::sync::CacheEnqueueBlockedMessage(late)
+                        : "The local cache is unavailable, so this could not be saved offline.";
         return out;
     }
     const char* wire = PendingActionKindWire(kind);

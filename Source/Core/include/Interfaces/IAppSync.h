@@ -15,13 +15,14 @@
 // Pillar-1 exclusion protects. GetFieldCatalogError is header-inlined but its only callers are
 // command TUs (never a draw loop), so its vtable slot is likewise off the hot path.
 
-#include "OfflineFirstPure.h"             // IsOfflineState (rank-0)
-#include "SmatchetResult.h"               // VoidResult (StartRecreateLocalCacheDatabase)
-#include "Sync/CacheRecreateReportPure.h" // CacheRecreateOutcome (rank-0)
-#include "Sync/SyncMode.h"                // SyncMode (rank-0)
-#include "Sync/SyncSessionStats.h"        // SyncSessionStats (rank-0)
-#include "Sync/SyncTypes.h"               // TrackerIssueFetchPack (rank-0)
-#include "Types/ConnectivityTypes.h"      // TrackerConnectivityState (rank-0)
+#include "OfflineFirstPure.h"                 // IsOfflineState (rank-0)
+#include "Persistence/LocalCacheStatusPure.h" // LocalCacheStatus (rank-0)
+#include "SmatchetResult.h"                   // VoidResult (StartRecreateLocalCacheDatabase)
+#include "Sync/CacheRecreateReportPure.h"     // CacheRecreateOutcome (rank-0)
+#include "Sync/SyncMode.h"                    // SyncMode (rank-0)
+#include "Sync/SyncSessionStats.h"            // SyncSessionStats (rank-0)
+#include "Sync/SyncTypes.h"                   // TrackerIssueFetchPack (rank-0)
+#include "Types/ConnectivityTypes.h"          // TrackerConnectivityState (rank-0)
 
 #include <functional>
 #include <string>
@@ -74,6 +75,13 @@ class IAppSync {
     /// Absolute path of the local cache database, for display; the raw configured path when it
     /// cannot be resolved.
     virtual std::string GetResolvedLocalCacheDbPath() const = 0;
+    /// The cache's state for the user: ready, or memory-only for this session after a failed open (with the reason),
+    /// plus what a corrupt-file rebuild did. A copy; any thread. Non-pure: facet fakes report a default (Ready) status.
+    virtual smatchet::persistence::LocalCacheStatus GetLocalCacheStatus() const {
+        smatchet::persistence::LocalCacheStatus status;
+        status.State = smatchet::persistence::LocalCacheState::Ready;
+        return status;
+    }
     virtual void RefreshLocalData() = 0;
     /// RefreshLocalData whose SQLite read runs on a background task: call on the UI thread, which
     /// resolves the focused context and latches its backend generation; the swap-in is generation

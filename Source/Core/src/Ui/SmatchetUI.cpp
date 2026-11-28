@@ -602,6 +602,13 @@ void SmatchetUI::drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession&
     if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed) {
         d.offlineLegacyStartupBannerConsumed = true;
         d.offlineLegacyStartupBannerText = app.TakeLegacyPendingStartupBanner();
+        // Same seam for the cache: a memory-only session (the open failed) or a rebuilt-after-corruption file was
+        // previously visible only in the log.
+        const std::string cacheNotice = app.TakeLocalCacheStartupNotice();
+        if (!cacheNotice.empty()) {
+            SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.local_cache", "Local database"),
+                                                  cacheNotice, ToastType::Warning, 15000);
+        }
         // One-shot corrupt-config notice (previously log-only: settings reverted to defaults
         // with zero UI signal). Same startup seam as the legacy banner; UI thread only.
         const std::string badConfigName = ConfigManager::TakeStartupConfigWarning();

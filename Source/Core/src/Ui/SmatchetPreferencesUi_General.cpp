@@ -336,16 +336,32 @@ void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
         ImGui::SameLine();
         ::ImGui::TextWrapped("%s", resolved.c_str());
     }
+    // A failed open leaves a memory-only cache for the session: say so here, because the toast is gone after a few
+    // seconds, and keep Recreate off (the app refuses it too; there is no file to recreate).
+    const smatchet::persistence::LocalCacheStatus cacheStatus = sync.GetLocalCacheStatus();
+    const bool sessionOnly = cacheStatus.State == smatchet::persistence::LocalCacheState::SessionOnly;
+    if (sessionOnly) {
+        ImGui::TextWrapped("%s",
+                           SmatchetLocalization::Format(
+                               "prefs.local_db.session_only",
+                               "The database could not be opened (%s). Smatchet is using a temporary cache for this "
+                               "session, so edits cannot be saved offline. Fix the cause and restart Smatchet.",
+                               cacheStatus.LastError.c_str()));
+    }
     ImGui::Spacing();
     // The recreate runs on a worker behind a gate (IAppSync::StartRecreateLocalCacheDatabase); a second one cannot
     // start while it runs, and the cue says why the button is off.
     const bool recreating = sync.IsLocalCacheRecreating();
-    ImGui::BeginDisabled(recreating);
+    ImGui::BeginDisabled(recreating || sessionOnly);
     if (ImGui::Button("Recreate database...")) {
         ImGui::OpenPopup("Delete local database?###RecreateSqliteDbConfirm");
     }
     ImGui::EndDisabled();
-    ImGui::SetItemTooltip("Permanently delete the local cache file and start with an empty database.");
+    ImGui::SetItemTooltip("%s", sessionOnly ? SmatchetLocalization::T("prefs.local_db.recreate_unavailable",
+                                                                      "Unavailable while the database cannot be "
+                                                                      "opened: there is no file to recreate.")
+                                            : "Permanently delete the local cache file and start with an empty "
+                                              "database.");
     if (recreating) {
         ImGui::SameLine();
         ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.local_db.recreating", "Recreating the database..."));

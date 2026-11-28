@@ -430,10 +430,12 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft, co
     }
     // Before the cache is latched: the old file is still there for the first moments of a recreate and a row written
     // into it would be wiped with it.
-    if (deps_.IsCacheRecreating()) {
-        LOG_WARN("OfflineQueueService::QueueCreateOffline refused: the local cache is being recreated.");
+    const smatchet::persistence::CacheEnqueueBlock createBlock = deps_.EnqueueBlock();
+    if (createBlock != smatchet::persistence::CacheEnqueueBlock::None) {
+        LOG_WARN("OfflineQueueService::QueueCreateOffline refused: the local cache cannot take a write (block=%d).",
+                 static_cast<int>(createBlock));
         if (outError != nullptr) {
-            *outError = smatchet::sync::CacheRecreatingEnqueueMessage();
+            *outError = smatchet::sync::CacheEnqueueBlockedMessage(createBlock);
         }
         return 0;
     }
@@ -445,8 +447,9 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft, co
     std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
     if (!cache) {
         LOG_WARN("OfflineQueueService::QueueCreateOffline skipped: cache not initialized.");
-        if (outError != nullptr && deps_.IsCacheRecreating()) {
-            *outError = smatchet::sync::CacheRecreatingEnqueueMessage(); // the recreate began after the check above
+        const smatchet::persistence::CacheEnqueueBlock late = deps_.EnqueueBlock();
+        if (outError != nullptr && late != smatchet::persistence::CacheEnqueueBlock::None) {
+            *outError = smatchet::sync::CacheEnqueueBlockedMessage(late); // the gate went up after the check above
         }
         return 0;
     }
@@ -630,17 +633,19 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
     // reasoning as QueueCreateOffline: the UI thread may swap the cache mid-enqueue.
     // Before the cache is latched: the old file is still there for the first moments of a recreate and an edit queued
     // into it would be wiped with it.
-    if (deps_.IsCacheRecreating()) {
-        outError = smatchet::sync::CacheRecreatingEnqueueMessage();
-        LOG_WARN("OfflineQueueService::QueueFieldEditOffline refused: the local cache is being recreated issue=%s "
-                 "field=%s",
-                 issueKey.c_str(), fieldId.c_str());
+    const smatchet::persistence::CacheEnqueueBlock editBlock = deps_.EnqueueBlock();
+    if (editBlock != smatchet::persistence::CacheEnqueueBlock::None) {
+        outError = smatchet::sync::CacheEnqueueBlockedMessage(editBlock);
+        LOG_WARN("OfflineQueueService::QueueFieldEditOffline refused: the local cache cannot take a write (block=%d) "
+                 "issue=%s field=%s",
+                 static_cast<int>(editBlock), issueKey.c_str(), fieldId.c_str());
         return 0;
     }
     std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
     if (!cache) {
-        outError = deps_.IsCacheRecreating()
-                       ? smatchet::sync::CacheRecreatingEnqueueMessage()
+        const smatchet::persistence::CacheEnqueueBlock late = deps_.EnqueueBlock();
+        outError = late != smatchet::persistence::CacheEnqueueBlock::None
+                       ? smatchet::sync::CacheEnqueueBlockedMessage(late)
                        : SmatchetLocalization::T("offline.cache_unavailable",
                                                  "Local cache is unavailable, so this edit cannot be queued "
                                                  "offline. Restart Smatchet or check Settings -> Preferences -> "

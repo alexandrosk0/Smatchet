@@ -109,6 +109,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/StatusBarRowCountPure.test.cpp
         # Local cache location planner (Persistence/LocalCacheDbPathPure.h) — header-only, lexical, no I/O.
         Core/LocalCacheDbPathPure.test.cpp
+        # Cache status vocabulary + recovery record + startup notice wording (Persistence/LocalCacheStatusPure.h).
+        Core/LocalCacheStatusPure.test.cpp
         # Desktop touchscreen gestures (TouchGesturePure.h: tap / long-press / pan / fling) and
         # touch-sized hit targets (Ui/TouchSizingPure.h) — header-only, ImGui-free, no threads.
         Core/TouchGesturePure.test.cpp
@@ -788,6 +790,8 @@ add_executable(SmatchetTests
     Core/StatusBarRowCountPure.test.cpp
     # Local cache location planner (Persistence/LocalCacheDbPathPure.h) — header-only, lexical, no I/O.
     Core/LocalCacheDbPathPure.test.cpp
+    # Cache status vocabulary + recovery record + startup notice wording (Persistence/LocalCacheStatusPure.h).
+    Core/LocalCacheStatusPure.test.cpp
     # Desktop touchscreen gestures + touch-sized hit targets (TouchGesturePure.h,
     # Ui/TouchSizingPure.h) — header-only, ImGui-free.
     Core/TouchGesturePure.test.cpp

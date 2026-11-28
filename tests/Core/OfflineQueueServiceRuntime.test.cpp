@@ -1406,3 +1406,41 @@ TEST_CASE("OfflineQueueServiceRuntime: a create the tracker provably did not app
     CHECK(svc.GetPendingCreates().front().Attempts == 1);
     CHECK(svc.GetDeadPendingCreateCount() == 0u);
 }
+
+// --- Why an enqueue is refused: each CacheEnqueueBlock names its own reason on every durable enqueue path -----------
+
+TEST_CASE("a create and a field edit refused by an enqueue block say why, and write nothing") {
+    using smatchet::persistence::CacheEnqueueBlock;
+    struct Case {
+        CacheEnqueueBlock Block;
+        const char* Expect;
+    };
+    const Case cases[] = {{CacheEnqueueBlock::Opening, "still opening"},
+                          {CacheEnqueueBlock::SessionOnly, "could not be opened"}};
+    for (const Case& c : cases) {
+        OfflineQueueTestEnvGuard guard;
+        FakeOfflineQueueDeps deps;
+        OfflineQueueService svc(deps);
+        deps.EnqueueBlockImpl = c.Block; // the cache itself is present (session-only keeps a memory cache)
+
+        std::string editErr;
+        CHECK(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", editErr, std::string()) == 0);
+        CHECK(editErr.find(c.Expect) != std::string::npos);
+        CHECK(deps.CacheImpl->LoadPendingFieldEdits().empty());
+
+        std::string createErr;
+        CHECK(svc.QueueCreateOffline(MakeBasicCreateDraft("blocked"), std::string(), &createErr) == 0);
+        CHECK(createErr == editErr); // one wording per reason, on every path
+        CHECK(deps.CacheImpl->LoadPendingCreates().empty());
+    }
+}
+
+TEST_CASE("with no enqueue block a create and a field edit queue as before") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    OfflineQueueService svc(deps);
+    std::string err;
+    CHECK(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", err, std::string()) > 0);
+    CHECK(svc.QueueCreateOffline(MakeBasicCreateDraft("blocked"), std::string(), &err) > 0);
+    CHECK(err.empty());
+}

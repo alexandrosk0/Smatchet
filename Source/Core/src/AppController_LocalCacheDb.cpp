@@ -134,6 +134,93 @@ std::string AppController::GetResolvedLocalCacheDbPath() const {
     return p.string();
 }
 
+void AppController::SetLocalCacheStatus_(const smatchet::persistence::LocalCacheStatus& status, bool notify) {
+    {
+        std::lock_guard<std::mutex> lock(localCacheStatusMutex_);
+        localCacheStatus_ = status;
+        localCacheNoticePending_ = notify;
+    }
+    localCacheState_.store(static_cast<std::uint8_t>(status.State), std::memory_order_release);
+}
+
+smatchet::persistence::LocalCacheStatus AppController::GetLocalCacheStatus() const {
+    std::lock_guard<std::mutex> lock(localCacheStatusMutex_);
+    return localCacheStatus_;
+}
+
+smatchet::persistence::CacheEnqueueBlock AppController::LocalCacheEnqueueBlock() const {
+    using smatchet::persistence::CacheEnqueueBlock;
+    using smatchet::persistence::LocalCacheState;
+    const LocalCacheState state = static_cast<LocalCacheState>(localCacheState_.load(std::memory_order_acquire));
+    if (state == LocalCacheState::Opening) {
+        return CacheEnqueueBlock::Opening;
+    }
+    if (cacheRecreating_.load()) {
+        return CacheEnqueueBlock::Recreating;
+    }
+    return state == LocalCacheState::SessionOnly ? CacheEnqueueBlock::SessionOnly : CacheEnqueueBlock::None;
+}
+
+std::string AppController::TakeLocalCacheStartupNotice() {
+    smatchet::persistence::LocalCacheStatus status;
+    {
+        std::lock_guard<std::mutex> lock(localCacheStatusMutex_);
+        if (!localCacheNoticePending_) {
+            return std::string();
+        }
+        localCacheNoticePending_ = false;
+        status = localCacheStatus_;
+    }
+    smatchet::persistence::LocalCacheNoticeStrings strings;
+    strings.SessionOnly = SmatchetLocalization::T(
+        "cache.notice.session_only",
+        "The local database at {path} could not be opened ({error}). Smatchet is using a temporary cache for this "
+        "session: edits cannot be saved offline until it opens.");
+    strings.Rebuilt = SmatchetLocalization::T(
+        "cache.notice.rebuilt",
+        "The local database was damaged and has been rebuilt. The damaged copy is kept at {quarantined}.");
+    strings.RebuiltSalvaged = SmatchetLocalization::T(
+        "cache.notice.rebuilt_salvaged",
+        "The local database was damaged and has been rebuilt. {rows} queued item(s) were recovered. The damaged copy "
+        "is kept at {quarantined}.");
+    strings.RebuiltSalvageIncomplete = SmatchetLocalization::T(
+        "cache.notice.rebuilt_salvage_incomplete",
+        "The local database was damaged and has been rebuilt. {rows} queued item(s) were recovered, but some queued "
+        "changes could not be. The damaged copy is kept at {quarantined}.");
+    return smatchet::persistence::DescribeLocalCacheStartupNotice(status, strings);
+}
+
+void AppController::OpenInitialCache_(const std::string& dbPath) {
+    smatchet::persistence::LocalCacheStatus status;
+    status.Path = dbPath;
+    try {
+        std::atomic_store(&Cache, std::make_shared<LocalCacheManager>(dbPath));
+        status.State = smatchet::persistence::LocalCacheState::Ready;
+        SetLocalCacheStatus_(status, false);
+        return;
+    } catch (const std::exception& ex) {
+        status.LastError = ex.what();
+    } catch (...) { // catch-all-ok: recorded as the failure reason and degraded to a session-only cache below
+        status.LastError = "unknown exception";
+    }
+    LOG_ERROR("AppController: the local cache '%s' could not be opened (%s); continuing with a session-only cache",
+              dbPath.c_str(), status.LastError.c_str());
+    // A corrupt file is rebuilt inside the constructor, so a throw here is an environment fault: an unwritable or
+    // missing directory, a locked file, or too old an SQLite. Reads and sync still work against a memory-only cache.
+    // Durable enqueues are refused with the reason (CacheEnqueueBlock::SessionOnly) instead of being lost at exit.
+    status.State = smatchet::persistence::LocalCacheState::SessionOnly;
+    try {
+        std::atomic_store(&Cache, std::make_shared<LocalCacheManager>(":memory:"));
+    } catch (const std::exception& ex) {
+        LOG_ERROR("AppController: the session-only cache could not be opened either: %s", ex.what());
+        std::atomic_store(&Cache, std::shared_ptr<LocalCacheManager>());
+    } catch (...) { // catch-all-ok: no cache at all; every reader null-guards
+        LOG_ERROR("AppController: the session-only cache could not be opened either: unknown exception");
+        std::atomic_store(&Cache, std::shared_ptr<LocalCacheManager>());
+    }
+    SetLocalCacheStatus_(status, true);
+}
+
 VoidResult AppController::StartRecreateLocalCacheDatabase(
     std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone) {
     // UI thread. The gate goes up first, so two callers cannot both start; a refusal lowers it again.
@@ -141,8 +228,10 @@ VoidResult AppController::StartRecreateLocalCacheDatabase(
     if (!cacheRecreating_.compare_exchange_strong(expected, true)) {
         return VoidResult::Err(smatchet::sync::CacheRecreateStartRefusal(false, false, true));
     }
-    const std::string refusal =
-        smatchet::sync::CacheRecreateStartRefusal(localCacheDbPath_.empty(), shuttingDown_.load(), false);
+    const std::string refusal = smatchet::sync::CacheRecreateStartRefusal(
+        localCacheDbPath_.empty(), shuttingDown_.load(), false,
+        localCacheState_.load(std::memory_order_acquire) !=
+            static_cast<std::uint8_t>(smatchet::persistence::LocalCacheState::Ready));
     if (!refusal.empty()) {
         cacheRecreating_.store(false);
         return VoidResult::Err(refusal);

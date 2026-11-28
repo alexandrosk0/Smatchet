@@ -654,3 +654,25 @@ TEST_CASE("an action queued during the early recreate window (cache still presen
     CHECK(r.Error.find("Retry in a moment") != std::string::npos);
     CHECK(rig.Cache().LoadPendingActions().empty());
 }
+
+TEST_CASE("an action refused by an enqueue block names the reason and writes nothing") {
+    using smatchet::persistence::CacheEnqueueBlock;
+    struct Case {
+        CacheEnqueueBlock Block;
+        const char* Expect;
+    };
+    const Case cases[] = {{CacheEnqueueBlock::Opening, "still opening"},
+                          {CacheEnqueueBlock::SessionOnly, "could not be opened"}};
+    for (const Case& c : cases) {
+        OfflineQueueTestEnvGuard env;
+        Rig rig;
+        rig.deps.EnqueueBlockImpl = c.Block;
+        const PendingActionSubmitResult r =
+            rig.svc.SubmitOrQueue(PendingActionKind::CommentAdd, rig.Target(TrackerConnectivityState::TransportDown),
+                                  "ABC-1", CommentPayload("hi"));
+        CHECK(r.K != PendingActionSubmitResult::Kind::Queued);
+        CHECK(r.QueueId == 0);
+        CHECK(r.Error.find(c.Expect) != std::string::npos);
+        CHECK(rig.Cache().LoadPendingActions().empty());
+    }
+}

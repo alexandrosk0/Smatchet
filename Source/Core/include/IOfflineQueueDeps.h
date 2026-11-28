@@ -21,8 +21,9 @@
 #include <string>
 #include <vector>
 
-#include "IssueDraft.h"         // for RequiredFieldSet
-#include "TrackerFieldSchema.h" // for TrackerField
+#include "IssueDraft.h"                       // for RequiredFieldSet
+#include "Persistence/LocalCacheStatusPure.h" // for CacheEnqueueBlock
+#include "TrackerFieldSchema.h"               // for TrackerField
 
 class ISyncCache;
 class ITrackerCollaboration;
@@ -71,6 +72,15 @@ class IOfflineQueueDeps {
     /// (`Cache()` is null) and a fresh one is being set up. Lets an enqueue that finds no cache say "try again in a
     /// moment" instead of "restart Smatchet". Any thread. Defaults to false.
     virtual bool IsCacheRecreating() const { return false; }
+
+    /// Why a durable offline enqueue is refused right now (`None` = allowed): the cache is opening, being recreated, or
+    /// running memory-only for this session. Lets an enqueue say the true reason instead of "restart Smatchet". Any
+    /// thread. The default folds in IsCacheRecreating(), so a deps double that only models the recreate gate keeps
+    /// working.
+    virtual smatchet::persistence::CacheEnqueueBlock EnqueueBlock() const {
+        return IsCacheRecreating() ? smatchet::persistence::CacheEnqueueBlock::Recreating
+                                   : smatchet::persistence::CacheEnqueueBlock::None;
+    }
 
     /// Backend-generation token (issue #1081): bumped on every live backend swap and on
     /// pane-context retirement (see GridLiveContext::backendGeneration_). Replay ticks capture

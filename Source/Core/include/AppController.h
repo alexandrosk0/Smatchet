@@ -98,6 +98,8 @@ class AiAssistantController;
 // Leaf pure header (STL-only): supplies smatchet::MembershipRemovalVerdict, named
 // by-value in the membership-reconcile private method decls below (S1c-3, item 10).
 #include "Sync/MembershipDiffPure.h"
+// Leaf pure header: the cache-state vocabulary (LocalCacheState / CacheEnqueueBlock / LocalCacheStatus).
+#include "Persistence/LocalCacheStatusPure.h"
 // Leaf pure header (STL-only): supplies smatchet::PaneOwnedTicketIdStore, held BY VALUE as the
 // per-pane owned-ticket-id member below, so it cannot be forward-declared.
 #include "Sync/PaneOwnedTicketIdStore.h"
@@ -382,6 +384,12 @@ class AppController : public IAppThreading,
     VoidResult
     StartRecreateLocalCacheDatabase(std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone) override;
     bool IsLocalCacheRecreating() const override { return cacheRecreating_.load(); }
+    /// Why a durable offline enqueue is refused right now (`None` = allowed). Any thread; lock-free.
+    smatchet::persistence::CacheEnqueueBlock LocalCacheEnqueueBlock() const;
+    smatchet::persistence::LocalCacheStatus GetLocalCacheStatus() const override;
+    /// One-shot startup notice for the user about the cache (a session-only run, a rebuild); "" when there is none, and
+    /// after it has been taken. UI thread.
+    std::string TakeLocalCacheStartupNotice();
 
     /// Bucket-E (ImGui Test Engine) opt-in: ensure a live LocalCacheManager + the
     /// owned offline-queue service exist so test scenarios that exercise the
@@ -2167,6 +2175,20 @@ class AppController : public IAppThreading,
     std::thread cacheRecreateWorker_;                        ///< joined by the next Start and by ~AppController
 
     std::string localCacheDbPath_;
+
+    /// The cache's state, set at open and by the recreate. `localCacheState_` mirrors `localCacheStatus_.State` so the
+    /// enqueue paths read it without the lock; the rest of the status and the one-shot notice flag are guarded by
+    /// `localCacheStatusMutex_`.
+    mutable std::mutex localCacheStatusMutex_;
+    smatchet::persistence::LocalCacheStatus localCacheStatus_;
+    bool localCacheNoticePending_ = false;
+    std::atomic<std::uint8_t> localCacheState_{
+        static_cast<std::uint8_t>(smatchet::persistence::LocalCacheState::Ready)};
+    /// Publishes `status` as the cache's status and arms the one-shot notice when `notify`.
+    void SetLocalCacheStatus_(const smatchet::persistence::LocalCacheStatus& status, bool notify);
+    /// Opens the cache at `dbPath` and publishes it. A failed open degrades to a memory-only cache for the session
+    /// (state SessionOnly) instead of throwing out of Initialize; with that failing too, `Cache` stays null.
+    void OpenInitialCache_(const std::string& dbPath);
 
     /// Set once in `Initialize` (which runs on the UI thread) and read by `IsOnUiThread`
     /// from any thread. `std::thread::id` is trivially copyable; atomic load via std::atomic
