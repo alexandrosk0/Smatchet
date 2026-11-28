@@ -183,10 +183,11 @@ std::uint64_t StartBulkFieldEdit(AppController& app, UiDrawSession& d, const std
 
 /// Per-row bulk edit: every row gets its own values (a pasted column, or an undo that gives each row its own
 /// before-value back, with the value we wrote as the row's ADR-0016 conflict base). Always Replace mode. An undo job
-/// (`isUndo`) records no history entry and its summary toast reads "Undone".
+/// passes `undoTarget`, the target its history entry was written to: the rows go there instead of to a fresh latch of
+/// the pane, the job records no history entry and its summary toast reads "Undone".
 std::uint64_t StartBulkFieldEdit(AppController& app, UiDrawSession& d, const std::string& paneId,
                                  const TrackerField& field, const std::vector<smatchet::grid::bulk::BulkRowInput>& rows,
-                                 bool readOnlyMode, bool isUndo = false);
+                                 bool readOnlyMode, const PendingActionTarget* undoTarget = nullptr);
 
 // SMATCHET_DEVIATION(rule=duplication; reason=a header declaration mirrors its definition signature; owner=grid-engine; revisit=2027-05-15)
 smatchet::grid::bulk::BulkFieldEditJob
@@ -202,11 +203,13 @@ bool QueueSingleCellFieldEdit(AppController& app, UiDrawSession& d, const std::s
                               bool readOnlyMode);
 
 /// Undo (docs/plans/shipped/input-ux-w3-grid-spreadsheet.md, S3). The toast's Undo button: takes history entry
-/// `entryId` and queues its inverse as ordinary edits. A no-op when the entry is gone.
+/// `entryId` and queues its inverse as ordinary edits. A no-op when the entry is gone. An entry whose pane switched
+/// tracker or site (or Jira account) since is dropped, with the "nothing to undo" toast and no write.
 void UndoGridEntryById(AppController& app, UiDrawSession& d, std::uint64_t entryId);
 
-/// Grid Ctrl+Z: undoes the newest entry of `paneId`. An entry whose save has not landed yet answers with an info
-/// toast and stays; an empty history answers with a quiet info toast. Returns true when an inverse was queued.
+/// Grid Ctrl+Z: undoes the newest entry of `paneId`, after dropping the pane's entries written to a tracker it has
+/// since left (so an older entry of the tracker shown now is next). An entry whose save has not landed yet answers with
+/// an info toast and stays; an empty history answers with a quiet info toast. Returns true when an entry was taken.
 bool UndoNewestGridEntry(AppController& app, UiDrawSession& d, const std::string& paneId);
 
 /// Every keyboard bulk write (Ctrl+Enter, fill-down, a paste) goes through here: one entry per column, each row

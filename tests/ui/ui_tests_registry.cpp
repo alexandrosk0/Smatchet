@@ -56,6 +56,7 @@ extern "C" void SmatchetRegisterTolerantParseInlineErrorTests(ImGuiTestEngine* e
 extern "C" void SmatchetRegisterFilterDropdownTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterBulkFieldEditTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterGridSpreadsheetKeysTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterGridUndoWrongTargetTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileViewsConfirmModalTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileViewQuickSwitcherTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileDesktopLayoutRoundtripTests(ImGuiTestEngine* engine);
@@ -141,6 +142,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterFilterDropdownTests(engine);
     SmatchetRegisterBulkFieldEditTests(engine);
     SmatchetRegisterGridSpreadsheetKeysTests(engine);
+    SmatchetRegisterGridUndoWrongTargetTests(engine); // after the keys tests: it switches the tracker site
     SmatchetRegisterMobileViewsConfirmModalTests(engine);
     SmatchetRegisterMobileViewQuickSwitcherTests(engine);
     SmatchetRegisterMobileDesktopLayoutRoundtripTests(engine);
