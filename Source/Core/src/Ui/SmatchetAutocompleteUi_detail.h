@@ -49,6 +49,33 @@ struct AcpCommitDecision {
 // wantsApplyFromEnter.
 AcpCommitDecision ResolveAcpCommit(int n, int selected, bool enterDown, bool tabDown);
 
+// Where a picked row's text goes, and whether the pick also applies the query.
+struct AcpPick {
+    int replaceStart = 0;
+    int replaceEnd = 0;
+    bool commitAfterReplace = false;
+};
+
+// A plain row replaces the build's span and only inserts. A commit-on-pick row replaces the whole
+// input (the end is INT_MAX; the apply step clamps it to the text length) and then applies it.
+AcpPick ResolveAcpPick(int buildReplaceStart, int buildReplaceEnd, bool commitOnPick);
+
+// When a freshly typed user search becomes due: after the debounce, or at once while offline, so the
+// popup shows no "Searching" footer for a search that will not be sent yet.
+double ResolveUserSearchFireAt(double now, bool trackerOffline);
+
+// What to do this frame with an armed user search.
+enum class AcpUserSearchStep {
+    Hold, // not armed, not due, offline, or already in flight: leave it as it is
+    Drop, // a later request replaced it
+    Send,
+};
+
+//   fireAt     — when it becomes due (<= 0: nothing armed)
+//   superseded — the request id moved on after it was armed
+// Offline holds an armed search (Quality Pillar 6), so it goes out once the tracker is back.
+AcpUserSearchStep ResolveUserSearchStep(double now, double fireAt, bool superseded, bool trackerOffline, bool inFlight);
+
 // Strip the \x7F caret-anchor sentinel from @p text in place (JQL function
 // suggestions like `membersOf("\x7F")` mark where the caret should land on
 // insert). Returns the byte offset the sentinel occupied, or -1 if absent.

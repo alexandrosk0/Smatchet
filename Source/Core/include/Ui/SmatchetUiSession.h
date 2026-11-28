@@ -327,6 +327,11 @@ struct JqlEditorState {
     bool jqlWantsApplyFromEnter = false;
     /** Esc closed suggestion list until focus leaves input. */
     bool jqlAcpListDismissed = false;
+    /** The queued replacement is a whole query: once it is in the buffer, apply it. */
+    bool jqlAcpCommitAfterReplace = false;
+    /** Screen rectangle of the suggestion popup as drawn this frame; both zero while it is closed. */
+    ImVec2 jqlAcpPopupMin;
+    ImVec2 jqlAcpPopupMax;
     /** Debounced Jira user search (hybrid async on main thread). */
     uint64_t jqlAcpUserSearchRequestId = 0;
     double jqlAcpUserSearchFireAt = 0.0;
@@ -334,6 +339,8 @@ struct JqlEditorState {
     std::string jqlAcpUserSearchQuery;
     std::vector<QuerySuggestion> jqlAcpAsyncUserItems;
     std::string jqlAcpAsyncUserError;
+    /** The user search for the typed value is held because the tracker is offline. */
+    bool jqlAcpUserSearchPaused = false;
 
     /// JQL @-mention worker-thread search (Pillar 2 — finding #3). When set, the result of
     /// `SearchUsersByQuery` is pending in `jqlAcpUserSearchFuture`; polled per-frame via
@@ -370,6 +377,8 @@ struct JqlEditorState {
     /// a restored view's ids unnamed all session. Bounded so a genuinely broken config
     /// stops costing an HTTP call: after `kJqlIdResolveMaxFailures` the ids stay attempted.
     std::vector<std::string> jqlIdResolveInFlightIds;
+    /// The lookup in flight was started for an earlier owner of this editor: drop its answer.
+    bool jqlIdResolveDiscard = false;
     double jqlIdResolveRetryAt = 0.0;
     int jqlIdResolveFailures = 0;
 

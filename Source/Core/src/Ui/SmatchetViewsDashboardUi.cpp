@@ -71,27 +71,7 @@ enum ViewsEditorTab : int {
 // mirrors of it. Resets autocomplete state too. See UiDrawSession::viewDraft.
 void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     std::memset(d.fieldSearchBuf, 0, sizeof(d.fieldSearchBuf));
-    d.viewJqlEditor.jqlAcpApplyReplace = false;
-    d.viewJqlEditor.jqlAcpReplaceStart = -1;
-    d.viewJqlEditor.jqlAcpReplaceEnd = -1;
-    d.viewJqlEditor.jqlAcpReplaceText.clear();
-    d.viewJqlEditor.jqlAcpListSelected = -1;
-    d.viewJqlEditor.jqlAcpLastCursor = 0;
-    d.viewJqlEditor.jqlAcpLastSelectionStart = 0;
-    d.viewJqlEditor.jqlAcpLastSelectionEnd = 0;
-    d.viewJqlEditor.jqlAcpWantsJqlInputFocus = false;
-    d.viewJqlEditor.jqlAcpScrollToSelected = false;
-    d.viewJqlEditor.jqlAcpCaretSnapFramesRemaining = 0;
-    d.viewJqlEditor.jqlWantsApplyFromEnter = false;
-    // Reset async user-search state too — otherwise a prior view's in-flight results / pending
-    // dispatch bleed into the freshly loaded view (#5). Mirrors the early-return resets in
-    // TrackerQueryAcp_TickDebouncedUserSearch; the running future (if any) is dropped as stale by
-    // the next poll (armed id moved on) rather than destroyed here (would block the UI thread).
-    d.viewJqlEditor.jqlAcpAsyncUserItems.clear();
-    d.viewJqlEditor.jqlAcpAsyncUserError.clear();
-    d.viewJqlEditor.jqlAcpUserSearchQuery.clear();
-    d.viewJqlEditor.jqlAcpUserSearchFireAt = 0.0;
-    d.viewJqlEditor.jqlAcpUserSearchInFlightId = 0;
+    TrackerQueryAcp_ResetForNewText(d.viewJqlEditor);
 
     d.viewDraft = view;
     d.viewDraftBase = view;

@@ -137,6 +137,7 @@ bool InputTextMultilineStdString(const char* label, std::string& str, const ImVe
 }
 
 TextResult Text(const char* label, std::string& value, const TextOptions& opts) {
+    IM_ASSERT(opts.callback == nullptr && "TextOptions::callback is for TextBuf");
     const char* shownLabel = SmatchetLocalization::LabelFromSource(label);
     TakeFocusOnAppear(ImGui::GetID(shownLabel), opts.focusOnAppear);
 
@@ -163,7 +164,8 @@ TextResult TextBuf(const char* label, char* buf, std::size_t bufSize, const Text
     TakeFocusOnAppear(ImGui::GetID(shownLabel), opts.focusOnAppear);
 
     const bool heldKeyboard = ImGui::GetActiveID() == ImGui::GetID(shownLabel);
-    r.edited = ImGui::InputTextWithHint(shownLabel, TranslatedHint(opts.hint), buf, bufSize, SingleLineFlags(opts));
+    r.edited = ImGui::InputTextWithHint(shownLabel, TranslatedHint(opts.hint), buf, bufSize, SingleLineFlags(opts),
+                                        opts.callback, opts.callbackUserData);
     r.active = ImGui::IsItemActive();
     SmatchetLocalizedImGui::HookDictationOnLastItem(buf, bufSize);
     ApplyEnd(r, ReadSingleLineEnd(heldKeyboard));

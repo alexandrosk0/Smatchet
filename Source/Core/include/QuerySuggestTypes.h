@@ -7,6 +7,8 @@
 struct QuerySuggestion {
     std::string Label;
     std::string Insert;
+    /// Insert is a whole query: picking the row replaces the whole input with it and applies it.
+    bool CommitOnPick = false;
 };
 
 /** Output of a synchronous suggest pass: replace range + ranked items. */

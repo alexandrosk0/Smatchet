@@ -7,14 +7,20 @@
 
 #include <doctest/doctest.h>
 
+#include <climits>
 #include <string>
 
 namespace {
 
 using SmatchetAutocompleteDetail::AcpCommitDecision;
 using SmatchetAutocompleteDetail::AcpHistoryNav;
+using SmatchetAutocompleteDetail::AcpPick;
+using SmatchetAutocompleteDetail::AcpUserSearchStep;
 using SmatchetAutocompleteDetail::ResolveAcpCommit;
 using SmatchetAutocompleteDetail::ResolveAcpHistoryNav;
+using SmatchetAutocompleteDetail::ResolveAcpPick;
+using SmatchetAutocompleteDetail::ResolveUserSearchFireAt;
+using SmatchetAutocompleteDetail::ResolveUserSearchStep;
 using SmatchetAutocompleteDetail::StripCaretAnchorSentinel;
 
 } // namespace
@@ -122,4 +128,37 @@ TEST_CASE("StripCaretAnchorSentinel — removes the \\x7F marker and returns its
     const std::string before = plain;
     CHECK(StripCaretAnchorSentinel(plain) == -1);
     CHECK(plain == before);
+}
+
+TEST_CASE("ResolveAcpPick a plain row replaces the build span and does not apply") {
+    const AcpPick pick = ResolveAcpPick(4, 9, /*commitOnPick=*/false);
+    CHECK(pick.replaceStart == 4);
+    CHECK(pick.replaceEnd == 9);
+    CHECK_FALSE(pick.commitAfterReplace);
+}
+
+TEST_CASE("ResolveAcpPick a commit-on-pick row replaces the whole input and applies it") {
+    // The build's span (the token under the caret) is ignored: the row is a whole query.
+    const AcpPick pick = ResolveAcpPick(4, 9, /*commitOnPick=*/true);
+    CHECK(pick.replaceStart == 0);
+    CHECK(pick.replaceEnd == INT_MAX);
+    CHECK(pick.commitAfterReplace);
+}
+
+TEST_CASE("ResolveUserSearchFireAt debounces online and is due at once offline") {
+    CHECK(ResolveUserSearchFireAt(10.0, /*trackerOffline=*/false) > 10.0);
+    CHECK(ResolveUserSearchFireAt(10.0, /*trackerOffline=*/true) == doctest::Approx(10.0));
+}
+
+TEST_CASE("ResolveUserSearchStep sends a due search only while the tracker is reachable") {
+    CHECK(ResolveUserSearchStep(11.0, 10.0, false, false, false) == AcpUserSearchStep::Send);
+    // Offline holds it armed; the same inputs send it once the tracker is back (the line above).
+    CHECK(ResolveUserSearchStep(11.0, 10.0, false, /*trackerOffline=*/true, false) == AcpUserSearchStep::Hold);
+}
+
+TEST_CASE("ResolveUserSearchStep holds an unarmed, early or in-flight search and drops a superseded one") {
+    CHECK(ResolveUserSearchStep(11.0, 0.0, false, false, false) == AcpUserSearchStep::Hold);
+    CHECK(ResolveUserSearchStep(9.0, 10.0, false, false, false) == AcpUserSearchStep::Hold);
+    CHECK(ResolveUserSearchStep(11.0, 10.0, false, false, /*inFlight=*/true) == AcpUserSearchStep::Hold);
+    CHECK(ResolveUserSearchStep(11.0, 10.0, /*superseded=*/true, false, false) == AcpUserSearchStep::Drop);
 }
