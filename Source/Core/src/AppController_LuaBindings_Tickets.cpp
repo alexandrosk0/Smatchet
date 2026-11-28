@@ -250,6 +250,24 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
     // concurrent UI-thread StartRecreateLocalCacheDatabase swap can't free the cache under us. A null
     // snapshot degrades to a nil return (missing ticket) rather than a crash (Pillar 3). Mirrors
     // the ADR-0012 Backend atomic_load reader pattern.
+    //
+    // On the UI thread (a per-frame Lua draw callback) the SQLite read is off limits: the connection is
+    // serialized, so one worker transaction would stall the frame. Serve only what an open view already
+    // holds in memory; a ticket no view has loaded reads as missing there. Worker and MCP states keep the
+    // cache read.
+    if (app_.IsOnUiThread()) {
+        const std::shared_ptr<const std::vector<CachedTicket>> active = app_.GetActiveTicketsSnapshot();
+        if (active) {
+            for (std::size_t i = 0; i < active->size(); ++i) {
+                if ((*active)[i].id == issueId) {
+                    ticket = (*active)[i];
+                    ticket.EditTarget = target;
+                    return {sol::make_object(sv, ticket), ""};
+                }
+            }
+        }
+        return {sol::make_object(sv, sol::nil), "Ticket not loaded in an open view"};
+    }
     auto cacheSnap = std::atomic_load(&app_.Cache);
     if (cacheSnap && cacheSnap->TryGetTicket(target.BackendKey, issueId, ticket)) {
         ticket.EditTarget = target;
