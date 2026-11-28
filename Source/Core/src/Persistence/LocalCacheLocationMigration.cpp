@@ -203,11 +203,20 @@ int PublishNoReplace(const std::string& from, const std::string& to) {
 int PublishCheckedRename(const std::string& from, const std::string& to) {
 #if !defined(_WIN32)
     // link() fails with EEXIST when `to` exists, so even here a published target is never replaced.
-    if (::link(from.c_str(), to.c_str()) != 0) {
-        return errno != 0 ? errno : EIO;
+    if (::link(from.c_str(), to.c_str()) == 0) {
+        (void)::unlink(from.c_str());
+        return 0;
     }
-    (void)::unlink(from.c_str());
-    return 0;
+    const int error = errno != 0 ? errno : EIO;
+    if (error != EPERM && error != ENOTSUP && error != EOPNOTSUPP && error != ENOSYS) {
+        return error; // EEXIST (a published target), a real failure
+    }
+    // A volume without hard links (exFAT, some network shares): the caller holds the init-lock, so the checked rename
+    // is safe here.
+    if (PathExists(to)) {
+        return EEXIST;
+    }
+    return std::rename(from.c_str(), to.c_str()) == 0 ? 0 : (errno != 0 ? errno : EIO);
 #else
     if (PathExists(to)) {
         return EEXIST;
@@ -532,12 +541,11 @@ LegacyCacheImportResult FinishUnreadable(const std::string& target, const char* 
     return result;
 }
 
-/// Steps 4-7 under the init-lock: pick, copy, verify and publish.
-LegacyCacheImportResult ImportUnderLock(const std::string& target, const std::vector<std::string>& candidates,
-                                        const LegacyCacheImportOptions& options) {
+/// Pick, copy, verify and publish, under the init-lock.
+LegacyCacheImportResult ImportWithProbes(const std::string& target, const ProbeSet& probes,
+                                         const LegacyCacheImportOptions& options) {
     LegacyCacheImportResult result;
     result.OpenPath = target;
-    ProbeSet probes = ProbeAll(candidates, options);
     if (IsAborted(options)) {
         result.Detail = "aborted";
         return result;
@@ -560,12 +568,14 @@ LegacyCacheImportResult ImportUnderLock(const std::string& target, const std::ve
         return FinishUnreadable(target, "every legacy cache is corrupt");
     }
 
-    const std::string tmp = target + ".import-" + std::to_string(static_cast<long long>(std::time(nullptr))) + "-" +
-                            std::to_string(ProcessId());
-    ScopeExit removeTmp([tmp]() { RemoveWithSidecars(tmp); });
+    const std::string tmpBase = target + ".import-" + std::to_string(static_cast<long long>(std::time(nullptr))) + "-" +
+                                std::to_string(ProcessId());
+    std::string tmp = tmpBase;
+    ScopeExit removeTmp([&tmp]() { RemoveWithSidecars(tmp); });
     for (std::size_t i = 0; i < probes.Readable.size(); ++i) {
         const LegacyCandidateInfo& best = probes.Readable[i];
         std::string detail;
+        tmp = tmpBase + "-" + std::to_string(i); // a fresh name per candidate: a leftover cannot block the next copy
         // Pre-created exclusively with owner-only permissions, so the copy never lands in a file someone else made
         // first.
         if (CreateExclusive(tmp, std::string()) != 0) {
@@ -598,15 +608,27 @@ LegacyCacheImportResult ImportUnderLock(const std::string& target, const std::ve
         SyncParentDirBestEffort(target);
         result.Kind = LegacyCacheImportKind::Imported;
         result.LegacyPath = best.Path;
-        result.OtherCandidates = OthersThan(probes.Readable, best.Path);
-        for (std::size_t b = 0; b < probes.Busy.size(); ++b) {
-            result.OtherCandidates.push_back(probes.Busy[b].Path); // unreadable just now: the user is still told
-        }
-        result.OtherCandidates.insert(result.OtherCandidates.end(), probes.Rejected.begin(), probes.Rejected.end());
         LOG_INFO("LocalCacheLocationMigration: imported '%s' into '%s'", best.Path.c_str(), target.c_str());
         return result;
     }
     return FinishUnreadable(target, "every legacy cache failed its copy");
+}
+
+/// Steps 4-7 under the init-lock, then the report of every other candidate the user should hear about: readable ones
+/// that were not used, ones that could not be read just now, and ones that were not eligible. Whatever the outcome.
+LegacyCacheImportResult ImportUnderLock(const std::string& target, const std::vector<std::string>& candidates,
+                                        const LegacyCacheImportOptions& options) {
+    const ProbeSet probes = ProbeAll(candidates, options);
+    LegacyCacheImportResult result = ImportWithProbes(target, probes, options);
+    std::vector<std::string> others = OthersThan(probes.Readable, result.LegacyPath);
+    for (std::size_t i = 0; i < probes.Busy.size(); ++i) {
+        if (probes.Busy[i].Path != result.LegacyPath) {
+            others.push_back(probes.Busy[i].Path);
+        }
+    }
+    others.insert(others.end(), probes.Rejected.begin(), probes.Rejected.end());
+    result.OtherCandidates = others;
+    return result;
 }
 
 } // namespace

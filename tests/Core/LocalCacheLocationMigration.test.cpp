@@ -326,6 +326,8 @@ TEST_CASE("import: a candidate that is not a regular file is ignored and listed,
         ImportLegacyLocalCacheIfNeeded(target2, {notAFile}, LegacyCacheImportOptions());
     CHECK(only.Kind ==
           LegacyCacheImportKind::CreatedEmpty); // nothing usable: a fresh start, not a borrow of a non-file
+    REQUIRE(only.OtherCandidates.size() == 1);  // and the user is still told it exists
+    CHECK(only.OtherCandidates[0] == notAFile);
 }
 
 TEST_CASE("import: a copy holding a trigger, a view or a virtual table is not imported") {
@@ -356,6 +358,8 @@ TEST_CASE("import: a candidate larger than the cap is ignored and listed") {
     const LegacyCacheImportResult r = ImportLegacyLocalCacheIfNeeded(target, {big}, options);
     CHECK(r.Kind == LegacyCacheImportKind::CreatedEmpty);
     CHECK(Exists(target));
+    REQUIRE(r.OtherCandidates.size() == 1);
+    CHECK(r.OtherCandidates[0] == big);
 }
 
 TEST_CASE("import: no readable file and a lock that does not clear is Deferred, and the target is not created") {
