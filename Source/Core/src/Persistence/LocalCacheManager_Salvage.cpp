@@ -67,7 +67,8 @@ bool IsPlainIdentifier(const std::string& name) {
 
 std::string Quoted(const std::string& identifier) { return "\"" + identifier + "\""; }
 
-std::vector<ColumnInfo> ReadColumns(SQLite::Database& db, const char* schema, const std::string& table) {
+std::vector<ColumnInfo> ReadColumns(const LocalCacheManager::ConnGuard& /*guard*/, SQLite::Database& db,
+                                    const char* schema, const std::string& table) {
     std::vector<ColumnInfo> columns;
     SQLite::Statement info(db, std::string("PRAGMA ") + schema + ".table_info(" + Quoted(table) + ")");
     while (info.executeStep()) {
@@ -90,7 +91,7 @@ bool ContainsColumn(const std::vector<ColumnInfo>& columns, const std::string& n
     return false;
 }
 
-bool SalvageHasTable(SQLite::Database& db, const std::string& table) {
+bool SalvageHasTable(const LocalCacheManager::ConnGuard& /*guard*/, SQLite::Database& db, const std::string& table) {
     SQLite::Statement q(db, "SELECT 1 FROM salvage.sqlite_master WHERE type = 'table' AND name = ? AND rootpage > 0");
     q.bind(1, table);
     return q.executeStep();
@@ -98,9 +99,10 @@ bool SalvageHasTable(SQLite::Database& db, const std::string& table) {
 
 /// The columns both files have and the new file can fill in. Empty when the shapes do not match: a column the new file
 /// requires but the old one lacks would make every row fail.
-bool SharedColumns(SQLite::Database& db, const std::string& table, std::vector<std::string>& out) {
-    const std::vector<ColumnInfo> mainColumns = ReadColumns(db, "main", table);
-    const std::vector<ColumnInfo> oldColumns = ReadColumns(db, "salvage", table);
+bool SharedColumns(const LocalCacheManager::ConnGuard& guard, SQLite::Database& db, const std::string& table,
+                   std::vector<std::string>& out) {
+    const std::vector<ColumnInfo> mainColumns = ReadColumns(guard, db, "main", table);
+    const std::vector<ColumnInfo> oldColumns = ReadColumns(guard, db, "salvage", table);
     for (std::size_t i = 0; i < mainColumns.size(); ++i) {
         const ColumnInfo& column = mainColumns[i];
         if (!IsPlainIdentifier(column.Name)) {
@@ -125,8 +127,8 @@ std::string JoinQuoted(const std::vector<std::string>& names) {
 
 /// Row-by-row fallback when the bulk copy failed: copies every row that can be read, and reports whether the whole
 /// table was read. A page that cannot be read ends the walk.
-bool CopyRowsOneByOne(SQLite::Database& db, const std::string& table, const std::vector<std::string>& columns,
-                      std::int64_t& copied) {
+bool CopyRowsOneByOne(const LocalCacheManager::ConnGuard& /*guard*/, SQLite::Database& db, const std::string& table,
+                      const std::vector<std::string>& columns, std::int64_t& copied) {
     std::string placeholders;
     for (std::size_t i = 0; i < columns.size(); ++i) {
         placeholders += i == 0 ? "?" : ", ?";
@@ -167,13 +169,14 @@ bool CopyRowsOneByOne(SQLite::Database& db, const std::string& table, const std:
 }
 
 /// Copies one table. False when any of it could not be carried over.
-bool CopyTable(SQLite::Database& db, const std::string& table, std::int64_t& copied) { // rows copied into `copied`
+bool CopyTable(const LocalCacheManager::ConnGuard& guard, SQLite::Database& db, const std::string& table,
+               std::int64_t& copied) { // rows copied into `copied`
     try {
-        if (!SalvageHasTable(db, table)) {
+        if (!SalvageHasTable(guard, db, table)) {
             return true; // an older file without this table has nothing to carry over
         }
         std::vector<std::string> columns;
-        if (!SharedColumns(db, table, columns)) {
+        if (!SharedColumns(guard, db, table, columns)) {
             return false;
         }
         db.exec("SAVEPOINT salvage_copy");
@@ -187,7 +190,7 @@ bool CopyTable(SQLite::Database& db, const std::string& table, std::int64_t& cop
             db.exec("ROLLBACK TO salvage_copy");
             db.exec("RELEASE salvage_copy");
         }
-        return CopyRowsOneByOne(db, table, columns, copied);
+        return CopyRowsOneByOne(guard, db, table, columns, copied);
     } catch (const SQLite::Exception& ex) {
         LOG_WARN("LocalCacheManager: salvage of table %s failed: %s", table.c_str(), ex.what());
         try {
@@ -202,7 +205,7 @@ bool CopyTable(SQLite::Database& db, const std::string& table, std::int64_t& cop
 /// The live queues are AUTOINCREMENT, and ids already handed out must never be handed out again: a dead-letter row
 /// refers to its live row by `original_id`, and sent rows are deleted, so the old file's sequence is usually higher
 /// than any id still in it. Raises each live table's sequence to the highest id anywhere that names one of its rows.
-void RaiseQueueSequences(SQLite::Database& db) {
+void RaiseQueueSequences(const LocalCacheManager::ConnGuard& /*guard*/, SQLite::Database& db) {
     struct Pair {
         const char* Live;
         const char* Dead;
@@ -280,7 +283,8 @@ bool IsLiveQueueTable(const std::string& table) {
 
 /// Attaches the working copy as `salvage`, retrying once without its WAL (the WAL may be what is damaged). True once a
 /// read proves the file opens; on false nothing stays attached.
-bool AttachSalvageCopy(SQLite::Database& db, const std::string& salvagePath, bool hadWal) {
+bool AttachSalvageCopy(const LocalCacheManager::ConnGuard& /*guard*/, SQLite::Database& db,
+                       const std::string& salvagePath, bool hadWal) {
     for (int attempt = 0; attempt < 2; ++attempt) {
         try {
             SQLite::Statement attach(db, "ATTACH DATABASE ? AS salvage");
@@ -309,14 +313,15 @@ bool AttachSalvageCopy(SQLite::Database& db, const std::string& salvagePath, boo
 /// Copies every salvage table that can be read, raises the queue sequences and turns salvaged `sending` actions into
 /// `ambiguous`. Names the tables that could not be carried over in `incomplete`, and adds the live-queue rows copied to
 /// `queuedRows` as it goes, so a failure part-way still reports what did come across.
-void CopyAllSalvageTables(SQLite::Database& db, const std::function<bool()>& aborted,
-                          std::vector<std::string>& incomplete, std::int64_t& queuedRows, std::size_t& attempted) {
+void CopyAllSalvageTables(const LocalCacheManager::ConnGuard& guard, SQLite::Database& db,
+                          const std::function<bool()>& aborted, std::vector<std::string>& incomplete,
+                          std::int64_t& queuedRows, std::size_t& attempted) {
     for (std::size_t i = 0; i < kSalvageTableCount; ++i) {
         if (aborted()) {
             throw std::runtime_error("the open was aborted");
         }
         std::int64_t rows = 0;
-        const bool whole = CopyTable(db, kSalvageTables[i], rows);
+        const bool whole = CopyTable(guard, db, kSalvageTables[i], rows);
         attempted = i + 1; // tables copied so far stay committed, whatever fails after them
         if (!whole) {
             incomplete.push_back(kSalvageTables[i]);
@@ -326,7 +331,7 @@ void CopyAllSalvageTables(SQLite::Database& db, const std::function<bool()>& abo
         }
     }
     try {
-        RaiseQueueSequences(db);
+        RaiseQueueSequences(guard, db);
         // A request that was `sending` when the file broke may or may not have reached the tracker, exactly as one
         // found `sending` on an ordinary open: it is checked before it is ever resent.
         SQLite::Statement ambiguous(
@@ -381,12 +386,13 @@ void LocalCacheManager::SalvageFromQuarantine_(const ConnGuard& guard, const std
             throw std::runtime_error("the damaged file could not be copied for salvage");
         }
         const bool hadWal = IsSalvageableFile(quarantinedWal) && CopyQuietly(quarantinedWal, salvagePath + "-wal");
-        attached = AttachSalvageCopy(*db, salvagePath, hadWal);
+        attached = AttachSalvageCopy(guard, *db, salvagePath, hadWal);
         if (!attached) {
             throw std::runtime_error("the damaged file could not be opened");
         }
         CopyAllSalvageTables(
-            *db, [this]() { return OpenAbortRequested_(); }, recovery_.IncompleteTables, queuedRows, attemptedTables);
+            guard, *db, [this]() { return OpenAbortRequested_(); }, recovery_.IncompleteTables, queuedRows,
+            attemptedTables);
     } catch (const std::exception& ex) {
         LOG_ERROR("LocalCacheManager: salvage from '%s' failed: %s", quarantinedMain.c_str(), ex.what());
         try {

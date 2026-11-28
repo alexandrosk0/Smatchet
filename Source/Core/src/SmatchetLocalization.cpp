@@ -759,9 +759,10 @@ const TranslationEntry kEntries[] = {
      u8"Réessayer d'ouvrir le fichier de base de données sans redémarrer."},
     {"prefs.local_db.session_only",
      "The database could not be opened (%s). Smatchet is using a temporary cache for this session, so edits cannot "
-     "be saved offline. Fix the cause and restart Smatchet.",
+     "be saved offline. Fix the cause, then use Retry or restart Smatchet.",
      u8"La base de données n'a pas pu être ouverte (%s). Smatchet utilise un cache temporaire pour cette session : "
-     u8"les modifications ne peuvent pas être enregistrées hors ligne. Corrigez la cause et redémarrez Smatchet."},
+     u8"les modifications ne peuvent pas être enregistrées hors ligne. Corrigez la cause, puis utilisez Réessayer ou "
+     u8"redémarrez Smatchet."},
     {"prefs.local_db.recreate_legacy",
      "Unavailable while this session uses a cache file from an older location. Restart Smatchet to move it first.",
      u8"Indisponible tant que cette session utilise un fichier de cache d'un ancien emplacement. Redémarrez "

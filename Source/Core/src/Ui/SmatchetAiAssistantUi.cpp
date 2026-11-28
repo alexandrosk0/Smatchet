@@ -161,19 +161,37 @@ bool s_autoSendCallbackRegistered = false;
 void ScheduleConfigSaveDetached(const TrackerConfig& cfg) { smatchet::config_save::EnqueueTrackerConfig(cfg); }
 
 void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
-    static bool s_hydrated = false;
-    if (s_hydrated) {
+    static bool s_stateInitialised = false;
+    if (!s_stateInitialised) {
+        s_stateInitialised = true;
+        d.assistantPanelOpen = d.cfg.AssistantPanelOpen;
+        if (d.assistantInputBuf.capacity() < static_cast<size_t>(kInputBufCap)) {
+            d.assistantInputBuf.reserve(kInputBufCap);
+        }
+    }
+    // The history lives in the local cache, which opens on a worker: reading it before it is published finds nothing
+    // and would leave the panel without the user's history for the whole session. So the read waits for the open, and
+    // every later open that ends on the file (the Preferences Retry after a session-only start) reads it again. An open
+    // is told apart by the controller's published-open counter, so one that happens while this panel is not drawn
+    // (another page of the mobile shell) is still noticed, and one that ends session-only again changes nothing.
+    static unsigned s_seenOpenGeneration = 0;
+    const unsigned openGeneration = app.LocalCacheOpenGeneration();
+    if (app.IsLocalCacheOpening() || openGeneration == s_seenOpenGeneration) {
         return;
     }
-    s_hydrated = true;
-    d.assistantPanelOpen = d.cfg.AssistantPanelOpen;
-    if (d.assistantInputBuf.capacity() < static_cast<size_t>(kInputBufCap)) {
-        d.assistantInputBuf.reserve(kInputBufCap);
+    const bool firstOpen = s_seenOpenGeneration == 0;
+    s_seenOpenGeneration = openGeneration;
+    if (app.GetLocalCacheStatus().State != smatchet::persistence::LocalCacheState::Ready) {
+        if (firstOpen) {
+            d.assistantHistoryHydrated = true; // a memory-only cache holds nothing to read; the panel is usable
+        }
+        return;
     }
+    d.assistantHistoryHydrated = false; // gates Send and pin-toggle until the file's rows are in
 
     // Load persisted chat history through the AppController wrapper (which forwards to LocalCacheManager).
-    // Until the load completes, `assistantHistoryHydrated = false` gates dispatchSend + pin-toggle so a Send
-    // during the hydrate window doesn't insert a duplicate. Pillar 2: the read always runs on a worker. The
+    // Until the load completes, `assistantHistoryHydrated = false` disables Send and pin-toggle, so no turn is sent
+    // that the loaded rows would replace and never store. Pillar 2: the read always runs on a worker. The
     // cache connection is serialized, so even a small SELECT can wait behind a long worker transaction, and
     // an inline read would hold the frame for that whole wait; the panel shows its not-hydrated state for
     // a frame or more instead.
@@ -350,8 +368,8 @@ void TogglePinAndPersist(UiDrawSession& d, std::size_t messageIndex, bool newPin
         return;
     }
     d.assistantHistory[messageIndex].Pinned = newPinnedState;
-    if (messageIndex >= d.assistantHistoryRowIds.size()) {
-        return;
+    if (!d.assistantHistoryHydrated || messageIndex >= d.assistantHistoryRowIds.size()) {
+        return; // while the history reloads, the row ids belong to a cache that is being replaced
     }
     const std::int64_t rowId = d.assistantHistoryRowIds[messageIndex];
     if (rowId <= 0) {
@@ -1361,8 +1379,8 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
         d.assistantInFlight = false;
     }
 
-    const bool sendDisabled =
-        smatchet::ai::DecideSendDisabled(d.assistantInFlight, d.assistantInputBuf.empty(), ctrl != nullptr);
+    const bool sendDisabled = smatchet::ai::DecideSendDisabled(d.assistantInFlight, d.assistantInputBuf.empty(),
+                                                               ctrl != nullptr, !d.assistantHistoryHydrated);
 
     auto dispatchSend = [&]() { DispatchAiSend(app, d, activeView, ctrl); };
 

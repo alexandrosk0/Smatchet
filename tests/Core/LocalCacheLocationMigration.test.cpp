@@ -400,10 +400,16 @@ TEST_CASE("import: a hostile legacy file's view is never evaluated, and a crashe
         db.exec("CREATE TABLE tickets_v2 (backend_key TEXT, id TEXT)");
         db.exec("INSERT INTO tickets_v2 VALUES ('Jira@t#1', 'A-1')");
     }
+    // Rejected by the probe itself, without the view ever being counted (it would spin): the file is not one of ours,
+    // so it is neither copied nor borrowed.
     const LegacyCandidateInfo info = ProbeLegacyCandidate(hostile, 1000);
-    CHECK(info.Error.empty());
+    CHECK_FALSE(info.Error.empty());
+    CHECK_FALSE(info.Busy);
     CHECK(info.PendingLive == 0);
-    CHECK(info.TicketRows == 1);
+    const std::string onlyHostileTarget = dir.File("only_hostile.sqlite");
+    const LegacyCacheImportResult none =
+        ImportLegacyLocalCacheIfNeeded(onlyHostileTarget, {hostile}, LegacyCacheImportOptions());
+    CHECK(none.Kind == LegacyCacheImportKind::LegacyUnreadable); // a fresh start, not a borrow of the hostile file
 
     const std::string target = dir.File("cache.sqlite");
     WriteFile(target + ".import-1-2", "left by a crash");

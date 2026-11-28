@@ -386,6 +386,9 @@ class AppController : public IAppThreading,
     bool IsLocalCacheRecreating() const override { return cacheRecreating_.load(); }
     /// True from `Initialize` (or a retry) until the cache open has finished and been published. Any thread.
     bool IsLocalCacheOpening() const;
+    /// Counts the opens that have been published (startup, and every Retry): 0 until the first. Any thread. A panel
+    /// that read the cache once compares it with the value it last saw to notice a later open.
+    unsigned LocalCacheOpenGeneration() const { return localCacheOpenGeneration_.load(std::memory_order_acquire); }
     /// UI thread: waits up to `timeout` for the open to finish, running the main-thread completions meanwhile (the
     /// one-shot CLI has no frame loop to do that). True once the cache is open (ready or session-only).
     bool WaitForLocalCacheOpen(std::chrono::milliseconds timeout);
@@ -2188,7 +2191,8 @@ class AppController : public IAppThreading,
     /// ~AppController: a cache recreate still running stops waiting on the UI thread (its posts are dropped once the
     /// dispatcher shut down) and is joined before any member goes: it touches `Cache`, the services and the pool.
     void JoinCacheRecreateWorker_();
-    std::atomic<bool> noFrameLoop_{false};        ///< the one-shot in-process CLI: no frame loop drains the dispatcher
+    std::atomic<bool> noFrameLoop_{false}; ///< the one-shot in-process CLI: no frame loop drains the dispatcher
+    std::atomic<unsigned> localCacheOpenGeneration_{0};
     std::atomic<bool> cacheRecreating_{false};    ///< the "recreating" gate: up from Start until FinishCacheRecreate_
     std::atomic<bool> cacheRecreateAbort_{false}; ///< raised by ~AppController so the worker stops waiting on the UI
     std::atomic<long long> cacheRecreateHolderWaitMs_{5000}; ///< ReleaseWithdrawnCache_'s bounded waits (test seam)

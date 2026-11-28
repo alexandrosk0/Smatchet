@@ -340,6 +340,17 @@ void HardenLegacyConnection(SQLite::Database& db, const std::atomic<bool>* abort
     }
 }
 
+/// True when the file holds a trigger, a view or a virtual table. The cache never has one, and one in a file we would
+/// adopt (copied or borrowed) would run on every later write: a trigger needs no SQL function, so trusted_schema does
+/// not stop it.
+bool HoldsForeignSchema(SQLite::Database& db) {
+    SQLite::Statement foreign(db, "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger', 'view') OR "
+                                  "(type = 'table' AND rootpage = 0)");
+    return foreign.executeStep() && foreign.getColumn(0).getInt64() != 0;
+}
+
+constexpr const char* kForeignSchemaDetail = "it holds triggers, views or virtual tables that Smatchet never creates";
+
 /// True for an ordinary table of that name (not a view, not a virtual table): counting a hostile file's view could run
 /// arbitrary SQL, and a virtual table's module is not ours to drive.
 bool IsPlainTable(SQLite::Database& db, const char* table) {
@@ -406,12 +417,8 @@ CopyOutcome CopyCandidate(const std::string& src, const std::string& tmp, const 
                 detail = "the copy failed its integrity check";
                 return CopyOutcome::Corrupt;
             }
-            // The cache never has a trigger, a view or a virtual table. One in a file we are about to adopt would run
-            // on every later write, so such a file is not imported.
-            SQLite::Statement foreign(destination, "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger', "
-                                                   "'view') OR (type = 'table' AND rootpage = 0)");
-            if (foreign.executeStep() && foreign.getColumn(0).getInt64() != 0) {
-                detail = "it holds triggers, views or virtual tables that Smatchet never creates";
+            if (HoldsForeignSchema(destination)) {
+                detail = kForeignSchemaDetail;
                 return CopyOutcome::Corrupt;
             }
         }
@@ -563,6 +570,9 @@ LegacyCacheImportResult ImportWithProbes(const std::string& target, const ProbeS
     }
     if (probes.Readable.empty()) {
         if (!probes.Busy.empty()) {
+            // Its probe stopped at the lock before the schema check could run; the open of a borrowed file never
+            // rebuilds it, and a file that turns out to hold triggers or views is a risk only a user-owned file can
+            // pose here.
             return UseLegacy(probes.Busy.front(), "every legacy cache is locked by another process");
         }
         return FinishUnreadable(target, "every legacy cache is corrupt");
@@ -645,6 +655,10 @@ LegacyCandidateInfo ProbeLegacyCandidate(const std::string& path, int busyBudget
             // A file that is not a database fails here (NOTADB / CORRUPT), before any table is counted.
             SQLite::Statement schema(db, "SELECT COUNT(*) FROM sqlite_master");
             (void)schema.executeStep();
+        }
+        if (HoldsForeignSchema(db)) {
+            info.Error = kForeignSchemaDetail;
+            return info; // not corrupt as SQLite means it, but not a cache of ours: Busy stays false
         }
         info.PendingLive =
             CountRows(db, "pending_creates") + CountRows(db, "pending_field_edits") + CountRows(db, "pending_actions");

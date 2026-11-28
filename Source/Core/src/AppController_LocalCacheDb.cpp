@@ -470,6 +470,8 @@ void AppController::FinishStartupCacheOpen_(StartupCacheOpenOutcome outcome, boo
     // A session-only start and a rebuild of this launch are told to the user once; a recovery from an earlier launch is
     // only shown in Preferences.
     SetLocalCacheStatus_(status, outcome.SessionOnly || (outcome.Recovery.Rebuilt && outcome.Recovery.FromThisLaunch));
+    localCacheOpenGeneration_.fetch_add(1,
+                                        std::memory_order_acq_rel); // after the status: a reader that sees it sees it
 
     if (outcome.LegacyDropped > 0 && offlineQueue_) {
         char buf[384];
@@ -496,8 +498,12 @@ void AppController::FinishStartupCacheOpen_(StartupCacheOpenOutcome outcome, boo
     if (pendingActions_) {
         pendingActions_->RequestSnapshotRefresh();
     }
-    if (leftViewHistory_ && isReopen) {
-        leftViewHistory_->ResetForCacheRecreate(); // the rows on screen came from the memory-only cache
+    if (leftViewHistory_) {
+        if (isReopen) {
+            leftViewHistory_->ResetForCacheRecreate(); // the rows on screen came from the memory-only cache
+        } else {
+            leftViewHistory_->Load(); // the load at init found no cache yet: read the history now that it is there
+        }
     }
     RefreshLocalDataAsync();
     RereadOtherPanesFromCache_();
@@ -546,6 +552,7 @@ void AppController::StartStartupCacheOpenForTest(const std::string& dbPath, cons
     localCacheDbPath_ = dbPath;
     legacyCacheCandidates_ = legacyCandidates;
     WireCoreServices();
+    initLeftViewHistory_(); // as InitConfig does: its first load runs while the cache is still opening
     StartupCacheOpenRequest request;
     request.TargetPath = dbPath;
     request.LegacyCandidates = legacyCandidates;

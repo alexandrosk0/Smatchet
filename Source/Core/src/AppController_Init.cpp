@@ -315,8 +315,8 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
 
     // Multi-grid Slice 1b (ADR-0018 decision 4): seed the default context's cache namespace
     // from the Initialize parameter so nothing observes an empty key during this phase.
-    // The one-time legacy→v2 ticket copy + pending-queue key stamp run in InitBackends AFTER
-    // the authoritative key is resolved from cfg.TrackerType + env hooks (CR-948-1: the
+    // The one-time legacy→v2 ticket copy + pending-queue key stamp run on the cache-open worker (started from
+    // InitBackends) AFTER the authoritative key is resolved from cfg.TrackerType + env hooks (CR-948-1: the
     // Initialize parameter can diverge from the live key — embedded host / standalone CLI —
     // and stamping legacy rows with the parameter's key would orphan them from every read
     // the live path performs). Nothing reads the ticket tables before InitBackends (first
@@ -326,8 +326,8 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
 
 #if defined(SMATCHET_WITH_AI)
     // Phase 3 of ai-chat-claude-desktop-parity. Start the single coalescing
-    // chat-persist worker now that the LCM is live; Stop() runs in ~AppController
-    // BEFORE any member destructs so the worker thread is joined while LCM, the
+    // chat-persist worker. It reads the cache through the controller and retries while the open is still running.
+    // Stop() runs in ~AppController BEFORE any member destructs so the worker thread is joined while LCM, the
     // dispatcher, and `g_ui` are still valid. The on-append callback runs on the
     // UI thread via `mainThreadDispatcher.PostToMainThread`; it backfills the
     // parallel `assistantHistoryRowIds` so subsequent pin-toggle ops have a row
@@ -338,7 +338,10 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     // `Cache` at runtime and frees the old manager, which a held `*Cache` would dangle on.
     smatchet::ai::chat_persist::Start([this]() { return std::atomic_load(&Cache); }, mainThreadDispatcher,
                                       [](std::size_t idx, std::int64_t rowId) {
-                                          if (idx < g_ui.assistantHistoryRowIds.size()) {
+                                          // Only an unfilled slot: a late reply for a message of a history that has
+                                          // since been replaced (a reopened cache) must not land on a loaded row.
+                                          if (idx < g_ui.assistantHistoryRowIds.size() &&
+                                              g_ui.assistantHistoryRowIds[idx] == -1) {
                                               g_ui.assistantHistoryRowIds[idx] = rowId;
                                           }
                                       });

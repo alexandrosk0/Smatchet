@@ -12,6 +12,7 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "GridContextDepsAdapter.h"
+#include "LeftViewHistoryService.h"
 #include "LocalCacheManager.h"
 #include "Persistence/LocalCacheStatusPure.h"
 #include "Tracker/IssueDraft.h"
@@ -265,4 +266,30 @@ TEST_CASE("startup cache open: a damaged file is rebuilt, and the user is told o
     CHECK(app.TakeLocalCacheStartupNotice().empty()); // once
     CHECK(app.LocalCacheEnqueueBlock() == CacheEnqueueBlock::None);
     std::remove(quarantined.c_str());
+}
+
+TEST_CASE("startup cache open: the left-view history saved by an earlier run shows after a normal launch") {
+    smatchet_tests::OfflineQueueTestEnvGuard env;
+    TempDb db("startup_left_view.sqlite");
+    {
+        LocalCacheManager seed(db.Path);
+        smatchet::LeftViewRecord row;
+        row.backendKey = kKey;
+        row.paneId = "pane";
+        row.viewId = "view";
+        row.viewName = "My view";
+        row.issueKey = "ABC-1";
+        row.summary = "left the view";
+        row.leftAtUnixSec = 1700000000;
+        std::vector<smatchet::LeftViewRecord> rows;
+        rows.push_back(row);
+        REQUIRE(seed.CommitLeftViewDepartures(rows, 100, kKey, "view", "[]", 1700000000));
+    }
+    AppController app;
+    app.StartStartupCacheOpenForTest(db.Path, kKey); // the history's first load runs before the cache is published
+    REQUIRE(app.WaitForLocalCacheOpen(std::chrono::seconds(20)));
+    REQUIRE(app.LeftViewHistory() != nullptr);
+    CHECK(PumpUntil(app, [&]() { return !app.LeftViewHistory()->Rows().empty(); }));
+    REQUIRE(app.LeftViewHistory()->Rows().size() == 1);
+    CHECK(app.LeftViewHistory()->Rows()[0].issueKey == "ABC-1");
 }

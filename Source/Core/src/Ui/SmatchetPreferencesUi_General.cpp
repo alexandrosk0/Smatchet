@@ -373,12 +373,12 @@ void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
     // seconds, and keep Recreate off (the app refuses it too; there is no file to recreate).
     const bool sessionOnly = cacheStatus.State == smatchet::persistence::LocalCacheState::SessionOnly;
     if (sessionOnly) {
-        ImGui::TextWrapped("%s",
-                           SmatchetLocalization::Format(
-                               "prefs.local_db.session_only",
-                               "The database could not be opened (%s). Smatchet is using a temporary cache for this "
-                               "session, so edits cannot be saved offline. Fix the cause and restart Smatchet.",
-                               cacheStatus.LastError.c_str()));
+        ImGui::TextWrapped(
+            "%s", SmatchetLocalization::Format(
+                      "prefs.local_db.session_only",
+                      "The database could not be opened (%s). Smatchet is using a temporary cache for this "
+                      "session, so edits cannot be saved offline. Fix the cause, then use Retry or restart Smatchet.",
+                      cacheStatus.LastError.c_str()));
     }
     if (sessionOnly) {
         // The retry runs on a worker behind the same gate as the first open, so the button is off while it runs.
