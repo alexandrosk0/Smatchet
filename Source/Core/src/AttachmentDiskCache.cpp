@@ -231,8 +231,8 @@ void AttachmentDiskCache::Prune() {
             if (entry.StaleFiles.empty()) {
                 continue;
             }
-            // Deleting a file bumps the directory's mtime, which is the LRU age of an entry without files;
-            // put it back so a sweep never makes an old entry look recently used.
+            // Removing a file bumps the directory's mtime, the LRU age of an entry holding no files. Put it
+            // back, so a sweep never makes an old entry look recently used.
             const fs::path entryDir = root / entry.Key;
             std::error_code timeEc;
             const fs::file_time_type dirTime = fs::last_write_time(entryDir, timeEc);
