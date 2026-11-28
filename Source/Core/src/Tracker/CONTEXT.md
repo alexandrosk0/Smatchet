@@ -99,10 +99,16 @@ The helper set that reads or rewrites the `project = …` clause of a JQL string
 The per-query-language autocomplete (`JqlSuggestEngine` for Jira JQL, `PlaneQuerySuggestEngine` for Plane filters) producing a `QuerySuggestBuild`.
 
 **GitHubQueryFromJql**:
-The translator that maps a JQL query into GitHub search qualifiers, since GitHub has no JQL.
+The translator that maps a JQL query into GitHub search qualifiers, since GitHub has no JQL. A GitHub or Linear (`LinearQueryFromJql`) view query is written as JQL, and only a translated subset of it reaches the tracker; the rest is dropped with a warning.
 
 **Key clause**:
-The per-language query clause naming explicit issue keys. Jira JQL (`key in (…)`) filters server-side; Plane (`key:PROJ-123`) and GitHub (`key = "owner/repo#N"`) filter client-side as a post-fetch step — the **only** clauses Plane evaluates locally (see Flagged ambiguities).
+The per-language query clause naming explicit issue keys. Jira JQL (`key in (…)`) filters server-side; Plane (`key:PROJ-123`) and GitHub (`key = "owner/repo#N"`) filter client-side as a post-fetch step — the **only** clauses Plane evaluates locally (see Flagged ambiguities). A Plane view query filters by key only.
+
+**Facet clause**:
+One condition of a view query on a field a filter chip can show (status, assignee, labels and a few more, per dialect), which the tracker applies as written: `query_facets::FacetClause`, with the canonical field id, the operator, the values and the span in the query. A condition the tracker drops, changes or applies in part is not a facet clause; it is kept byte for byte, and in a GitHub or Linear query it locks its field.
+
+**Chippable query**:
+A query whose top level is a list of clauses joined by `AND` (a trailing `ORDER BY` aside), so each clause can be read, added, replaced or removed on its own. A parenthesized group is one opaque clause in Jql and makes a GitHub or Linear query not chippable, as does a second clause on one field in Linear.
 
 ### Change monitoring
 
