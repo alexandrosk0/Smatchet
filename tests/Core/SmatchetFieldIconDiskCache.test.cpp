@@ -11,6 +11,7 @@
 #include <ghc/filesystem.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -77,6 +78,14 @@ std::vector<std::string> Names(const std::string& dir) {
 std::string CacheFile(const std::string& dir) {
     return dir + SmatchetFieldIconRender::detail::UrlToCacheFileName(kUrl);
 }
+
+// Ages one file so it looks last written `secondsAgo` seconds ago.
+void SetAge(const std::string& path, std::int64_t secondsAgo) {
+    std::error_code ec;
+    fs::last_write_time(fs::path(path), fs::file_time_type::clock::now() - std::chrono::seconds(secondsAgo), ec);
+}
+
+constexpr std::int64_t kEightDays = 8 * 24 * 3600;
 
 } // namespace
 
@@ -261,4 +270,119 @@ TEST_SUITE("SmatchetFieldIconDiskCache") {
         CHECK((st.st_mode & 0777) == (S_IRUSR | S_IWUSR));
     }
 #endif
+
+    TEST_CASE("RevalidateUrlIcon: a recent file is left alone and nothing is fetched") {
+        ScopedTempDir dir;
+        std::string cacheDir, err;
+        REQUIRE(EnsureCacheDir(dir.Path() + "/", cacheDir, err));
+        Write(CacheFile(cacheDir), "OKold");
+        SetAge(CacheFile(cacheDir), 6 * 24 * 3600); // 6 days: inside the 7-day window
+        CountingFetch fetch;
+        CHECK(RevalidateUrlIcon(cacheDir, kUrl, fetch.Fn(), FakeDecode) == RevalidateResult::Fresh);
+        CHECK(fetch.Calls == 0);
+        CHECK(ReadAll(CacheFile(cacheDir)) == "OKold");
+    }
+
+    TEST_CASE("RevalidateUrlIcon: a missing file has nothing to refresh") {
+        ScopedTempDir dir;
+        std::string cacheDir, err;
+        REQUIRE(EnsureCacheDir(dir.Path() + "/", cacheDir, err));
+        CountingFetch fetch;
+        CHECK(RevalidateUrlIcon(cacheDir, kUrl, fetch.Fn(), FakeDecode) == RevalidateResult::Fresh);
+        CHECK(fetch.Calls == 0);
+        CHECK(Names(cacheDir).empty());
+    }
+
+    TEST_CASE("RevalidateUrlIcon: a stale file is replaced by a decodable fetch and is fresh afterwards") {
+        ScopedTempDir dir;
+        std::string cacheDir, err;
+        REQUIRE(EnsureCacheDir(dir.Path() + "/", cacheDir, err));
+        Write(CacheFile(cacheDir), "OKold");
+        SetAge(CacheFile(cacheDir), kEightDays);
+        CountingFetch fetch;
+        fetch.Reply = Result<IconBytes>::Ok(Bytes("OKnew"));
+        CHECK(RevalidateUrlIcon(cacheDir, kUrl, fetch.Fn(), FakeDecode) == RevalidateResult::Refreshed);
+        CHECK(ReadAll(CacheFile(cacheDir)) == "OKnew");
+        CHECK(Names(cacheDir).size() == 1); // no temp left behind
+        CHECK(RevalidateUrlIcon(cacheDir, kUrl, fetch.Fn(), FakeDecode) == RevalidateResult::Fresh);
+        CHECK(fetch.Calls == 1);
+    }
+
+    TEST_CASE("RevalidateUrlIcon: a failed, oversized or undecodable refresh keeps the old file") {
+        ScopedTempDir dir;
+        std::string cacheDir, err;
+        REQUIRE(EnsureCacheDir(dir.Path() + "/", cacheDir, err));
+        Write(CacheFile(cacheDir), "OKold");
+        SetAge(CacheFile(cacheDir), kEightDays);
+        CountingFetch fetch;
+
+        fetch.Reply = Result<IconBytes>::Err("offline");
+        CHECK(RevalidateUrlIcon(cacheDir, kUrl, fetch.Fn(), FakeDecode) == RevalidateResult::Failed);
+        fetch.Reply = Result<IconBytes>::Ok(IconBytes());
+        CHECK(RevalidateUrlIcon(cacheDir, kUrl, fetch.Fn(), FakeDecode) == RevalidateResult::Failed);
+        fetch.Reply = Result<IconBytes>::Ok(IconBytes(kMaxIconFileBytes + 1, 'O'));
+        CHECK(RevalidateUrlIcon(cacheDir, kUrl, fetch.Fn(), FakeDecode) == RevalidateResult::Failed);
+        fetch.Reply = Result<IconBytes>::Ok(Bytes("<html>login</html>"));
+        CHECK(RevalidateUrlIcon(cacheDir, kUrl, fetch.Fn(), FakeDecode) == RevalidateResult::Failed);
+
+        CHECK(ReadAll(CacheFile(cacheDir)) == "OKold");
+        CHECK(Names(cacheDir).size() == 1);
+        // Still stale, so a later success can refresh it.
+        fetch.Reply = Result<IconBytes>::Ok(Bytes("OKnew"));
+        CHECK(RevalidateUrlIcon(cacheDir, kUrl, fetch.Fn(), FakeDecode) == RevalidateResult::Refreshed);
+    }
+
+    TEST_CASE("PruneCacheDir: legacy names, old temps and the oldest icons over the cap go; foreign files stay") {
+        ScopedTempDir dir;
+        std::string cacheDir, err;
+        REQUIRE(EnsureCacheDir(dir.Path() + "/", cacheDir, err));
+        const auto name = [](int n) {
+            return SmatchetFieldIconRender::detail::UrlToCacheFileName("https://x/" + std::to_string(n));
+        };
+        const std::string legacy = cacheDir + "icon_1a2b3c4d5e6f7a8b.bin";
+        const std::string oldIcon = cacheDir + name(1);
+        const std::string midIcon = cacheDir + name(2);
+        const std::string newIcon = cacheDir + name(3);
+        const std::string oldTemp = cacheDir + name(3) + ".part-7-1";
+        const std::string youngTemp = cacheDir + name(3) + ".part-7-2";
+        const std::string foreign = cacheDir + "notes.txt";
+        Write(legacy, std::string(10, 'l'));
+        Write(oldIcon, std::string(100, 'a'));
+        Write(midIcon, std::string(100, 'b'));
+        Write(newIcon, std::string(100, 'c'));
+        Write(oldTemp, "junk");
+        Write(youngTemp, "junk");
+        Write(foreign, std::string(5000, 'f'));
+        SetAge(oldIcon, 3000);
+        SetAge(midIcon, 2000);
+        SetAge(newIcon, 1000);
+        SetAge(oldTemp, 3600);
+        SetAge(foreign, 99999);
+
+        // Cap 250 bytes: three 100-byte icons total 300, so the oldest one goes.
+        CHECK(PruneCacheDir(cacheDir, 250) == 3); // legacy + old temp + oldest icon
+        CHECK_FALSE(fs::exists(legacy));
+        CHECK_FALSE(fs::exists(oldTemp));
+        CHECK_FALSE(fs::exists(oldIcon));
+        CHECK(fs::exists(midIcon));
+        CHECK(fs::exists(newIcon));
+        CHECK(fs::exists(youngTemp));             // may still be being written
+        CHECK(fs::exists(foreign));               // not an icon cache name: never touched
+        CHECK(PruneCacheDir(cacheDir, 250) == 0); // idempotent
+        CHECK(PruneCacheDir("", 250) == 0);
+    }
+
+    TEST_CASE("PurgeCacheDir removes every icon cache file and nothing else") {
+        ScopedTempDir dir;
+        std::string cacheDir, err;
+        REQUIRE(EnsureCacheDir(dir.Path() + "/", cacheDir, err));
+        CountingFetch fetch;
+        REQUIRE(ResolveUrlIcon(cacheDir, kUrl, fetch.Fn(), FakeDecode).Ok);
+        Write(cacheDir + "icon_abc.bin", "legacy");
+        Write(cacheDir + SmatchetFieldIconRender::detail::UrlToCacheFileName(kUrl) + ".part-1-1", "temp");
+        Write(cacheDir + "empty-current-shape-is-not-this", "keep");
+        Write(cacheDir + SmatchetFieldIconRender::detail::UrlToCacheFileName("https://x/empty"), "");
+        CHECK(PurgeCacheDir(cacheDir) == 4);
+        CHECK(Names(cacheDir) == std::vector<std::string>{"empty-current-shape-is-not-this"});
+    }
 }

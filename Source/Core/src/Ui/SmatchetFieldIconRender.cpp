@@ -201,19 +201,60 @@ void ClearIconFailure(const std::string& key) {
     IconNegativeMap().erase(key);
 }
 
+// The icon cache directory is pruned (legacy names, orphaned temps, the size cap) once per process: the first
+// resolve worker to reach a directory does it, every later one skips it. Worker only.
+void PruneCacheDirOncePerSession(const std::string& cacheDir) {
+    static std::mutex m;
+    static std::unordered_set<std::string> done;
+    {
+        std::lock_guard<std::mutex> lock(m);
+        if (!done.insert(cacheDir).second) {
+            return;
+        }
+    }
+    const std::uint64_t capBytes =
+        static_cast<std::uint64_t>(smatchet::limits::MiB(smatchet::limits::Get().FieldIconDiskCacheMaxMiB));
+    (void)SmatchetFieldIconDiskCache::PruneCacheDir(cacheDir, capBytes);
+}
+
+// Re-fetches a stale cached icon (RevalidateUrlIcon). A failure backs off like any other resolve failure, under
+// a key of its own, so an unreachable server is asked once per backoff window, not once per eviction. One
+// revalidation per URL runs at a time. Worker only.
+void RevalidateIconOnWorker(const std::string& url) {
+    const std::string key = std::string("revalidate:") + url;
+    if (IconInBackoff(key) || !MarkIconInFlight(key)) {
+        return;
+    }
+    const InFlightClaim claim(key);
+    std::string cacheDir;
+    std::string error;
+    if (!SmatchetFieldIconDiskCache::EnsureCacheDir(ConfigManager::GetUserDataDirectory(), cacheDir, error)) {
+        return;
+    }
+    const SmatchetFieldIconDiskCache::RevalidateResult result = SmatchetFieldIconDiskCache::RevalidateUrlIcon(
+        cacheDir, url, CurrentIconFetchFn(), &SmatchetImageTextureCache::DecodeIconBytesAnyThread);
+    if (result == SmatchetFieldIconDiskCache::RevalidateResult::Failed) {
+        RecordIconFailure(key);
+    } else {
+        ClearIconFailure(key);
+    }
+}
+
 /// Runs `resolve` on a worker and uploads the decoded pixels on the UI thread. UI thread only.
 /// The caller has already checked the texture cache, the backoff and the in-flight set. The key is marked
 /// in flight BEFORE the launch and released exactly once by InFlightClaim: after the upload, after a failed
 /// resolve, if the launch throws, or if the task is destroyed unrun at shutdown. A failure is recorded in
 /// the backoff map; a success posts exactly one completion (non-droppable, so the mark always clears).
 void LaunchIconResolve(AppController& app, const std::string& key,
-                       std::function<SmatchetFieldIconDiskCache::IconResolveOutcome()> resolve) {
+                       std::function<SmatchetFieldIconDiskCache::IconResolveOutcome()> resolve,
+                       std::function<void(const SmatchetFieldIconDiskCache::IconResolveOutcome&)> afterShown =
+                           std::function<void(const SmatchetFieldIconDiskCache::IconResolveOutcome&)>()) {
     if (!MarkIconInFlight(key)) {
         return; // another call won the race; its worker will warm the cache
     }
     const std::shared_ptr<InFlightClaim> claim = std::make_shared<InFlightClaim>(key);
     try {
-        app.LaunchBackgroundTask([&app, key, resolve, claim]() {
+        app.LaunchBackgroundTask([&app, key, resolve, afterShown, claim]() {
             SmatchetFieldIconDiskCache::IconResolveOutcome outcome;
             try {
                 outcome = resolve();
@@ -234,6 +275,10 @@ void LaunchIconResolve(AppController& app, const std::string& key,
                 claim->Release();
                 return;
             }
+            // The pixels move to the UI thread; keep what `afterShown` needs (the source) before they go.
+            SmatchetFieldIconDiskCache::IconResolveOutcome shown;
+            shown.Ok = true;
+            shown.Source = outcome.Source;
             const std::shared_ptr<DecodedIcon> icon = std::make_shared<DecodedIcon>(std::move(outcome.Icon));
             app.mainThreadDispatcher.PostCompletionToMainThread([key, icon, claim]() {
                 const Result<SmatchetLoadedIconTexture> uploaded =
@@ -241,14 +286,25 @@ void LaunchIconResolve(AppController& app, const std::string& key,
                 if (uploaded.has_value()) {
                     ClearIconFailure(key);
                 } else {
-                    LOG_WARN("FieldIcon: texture upload failed for '%s': %s", key.c_str(), uploaded.error().c_str());
+                    LOG_WARN("FieldIcon: texture upload failed for '%s': %s", key.substr(0, key.find('?')).c_str(),
+                             uploaded.error().c_str());
                     RecordIconFailure(key);
                 }
                 claim->Release();
             });
+            // Housekeeping runs after the icon is on its way, so it never delays the first draw.
+            if (afterShown) {
+                try {
+                    afterShown(shown);
+                } catch (const std::exception& ex) {
+                    LOG_WARN("FieldIcon: follow-up for '%s' failed: %s", key.substr(0, key.find('?')).c_str(),
+                             ex.what());
+                }
+            }
         });
     } catch (const std::exception& ex) {
-        LOG_WARN("FieldIcon: could not start the resolve worker for '%s': %s", key.c_str(), ex.what());
+        LOG_WARN("FieldIcon: could not start the resolve worker for '%s': %s", key.substr(0, key.find('?')).c_str(),
+                 ex.what());
         RecordIconFailure(key);
         claim->Release();
     }
@@ -283,17 +339,28 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
         return false;
     }
     const std::string capturedUrl = url;
-    LaunchIconResolve(app, urlKey, [capturedUrl]() {
-        /* PILLAR2_WORKER_ONLY */ // est-latency: ~10ms cache read, up to ~3000ms fetch — runs on the resolve worker.
-        SmatchetFieldIconDiskCache::IconResolveOutcome failure;
-        std::string cacheDir;
-        if (!SmatchetFieldIconDiskCache::EnsureCacheDir(ConfigManager::GetUserDataDirectory(), cacheDir,
-                                                        failure.Error)) {
-            return failure;
-        }
-        return SmatchetFieldIconDiskCache::ResolveUrlIcon(cacheDir, capturedUrl, CurrentIconFetchFn(),
-                                                          &SmatchetImageTextureCache::DecodeIconBytesAnyThread);
-    });
+    LaunchIconResolve(
+        app, urlKey,
+        [capturedUrl]() {
+            /* PILLAR2_WORKER_ONLY */ // est-latency: ~10ms cache read, up to ~3000ms fetch — resolve worker.
+            SmatchetFieldIconDiskCache::IconResolveOutcome failure;
+            std::string cacheDir;
+            if (!SmatchetFieldIconDiskCache::EnsureCacheDir(ConfigManager::GetUserDataDirectory(), cacheDir,
+                                                            failure.Error)) {
+                return failure;
+            }
+            PruneCacheDirOncePerSession(cacheDir);
+            return SmatchetFieldIconDiskCache::ResolveUrlIcon(cacheDir, capturedUrl, CurrentIconFetchFn(),
+                                                              &SmatchetImageTextureCache::DecodeIconBytesAnyThread);
+        },
+        [capturedUrl](const SmatchetFieldIconDiskCache::IconResolveOutcome& shown) {
+            // A copy that came from disk may be old: re-fetch it once a week, after it has been drawn.
+            if (shown.Source != SmatchetFieldIconDiskCache::IconSource::Disk) {
+                return;
+            }
+            /* PILLAR2_WORKER_ONLY */ // est-latency: ~3000ms — runs on the resolve worker after the upload post.
+            RevalidateIconOnWorker(capturedUrl);
+        });
     outDeferred = true;
     return false;
 }

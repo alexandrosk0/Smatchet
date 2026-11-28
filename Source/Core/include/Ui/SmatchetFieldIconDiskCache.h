@@ -12,9 +12,11 @@
 // no longer decodes is deleted and fetched again, and bytes are never cached until they decode.
 
 #include "Persistence/DecodedIcon.h"
+#include "SmatchetFieldIconPrunePure.h"
 #include "SmatchetResult.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -60,5 +62,28 @@ IconResolveOutcome ResolveUrlIcon(const std::string& cacheDir, const std::string
 /// The decoded icon for a local file: a bounded read, then the decode. The file is never modified or
 /// deleted (it is not ours).
 IconResolveOutcome ResolveFileIcon(const std::string& path, const DecodeFn& decode);
+
+enum class RevalidateResult {
+    Fresh,     ///< no cache file, or it was written less than kRevalidateAfterSeconds ago: nothing done
+    Refreshed, ///< the file was stale; a fetched, decodable copy replaced it
+    Failed,    ///< the file was stale but the fetch or decode failed; the old file is untouched
+};
+
+/// Re-fetch `url` when its cache file is at least kRevalidateAfterSeconds old, so a changed server icon is
+/// picked up within a week. The old file is replaced only by bytes that fetch within the size cap and decode;
+/// any failure leaves it in place (an offline start never loses a good icon). Never throws. The decoded pixels
+/// are not returned: the caller already showed the old copy, and the new one is used from the next launch.
+RevalidateResult RevalidateUrlIcon(const std::string& cacheDir, const std::string& url, const FetchFn& fetch,
+                                   const DecodeFn& decode);
+
+/// Housekeeping of `cacheDir` (SelectIconPruneVictims): deletes legacy-named files, orphaned temps older than
+/// `tempGraceSeconds`, and the oldest current icons until they total at most `capBytes`. Files whose names are
+/// not icon cache names are never touched. Best-effort per file; returns how many files were removed.
+std::size_t PruneCacheDir(const std::string& cacheDir, std::uint64_t capBytes,
+                          std::int64_t tempGraceSeconds = kTempGraceSeconds);
+
+/// Deletes every icon cache file in `cacheDir` (current and legacy names and temps); other files stay.
+/// Returns how many files were removed.
+std::size_t PurgeCacheDir(const std::string& cacheDir);
 
 } // namespace SmatchetFieldIconDiskCache

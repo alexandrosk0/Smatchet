@@ -2,6 +2,7 @@
 
 #include "AttachmentMimeUtils.h"
 #include "FileIo.h"
+#include "FileTimeSeconds.h"
 #include "Commands/PathConfinement.h"
 #include "Logger.h"
 
@@ -25,11 +26,9 @@ namespace fs = ghc::filesystem;
 constexpr std::uintmax_t kMaxEntryMetaBytes = 16u * 1024u;
 constexpr const char* kDefaultMime = "application/octet-stream";
 
-std::int64_t ToEpochSeconds(const fs::file_time_type& t) {
-    return static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count());
-}
+using smatchet::filetime::ToEpochSeconds;
 
-std::int64_t NowEpochSeconds() { return ToEpochSeconds(fs::file_time_type::clock::now()); }
+std::int64_t NowEpochSeconds() { return smatchet::filetime::NowEpochSeconds<fs::file_time_type::clock>(); }
 
 // Atomic temp-then-rename through the shared writer (FileIo.h): a reader never sees a half-written file, the
 // temp is a unique exclusive sibling created owner-only, and a failure removes it. No fsync: a cache entry

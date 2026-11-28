@@ -520,6 +520,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconRender_detail.cpp"
         Core/SmatchetFieldIconDiskCache.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconDiskCache.cpp"
+        # Pure prune / revalidation rules of the icon cache directory.
+        Core/SmatchetFieldIconPrunePure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconPrunePure.cpp"
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -711,6 +714,9 @@ add_executable(SmatchetTests
     # FI-5 — worker-side field-icon disk cache (fake fetch + decoder; also in the Linux subset).
     Core/SmatchetFieldIconDiskCache.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconDiskCache.cpp"
+    # FI-6 — prune / revalidation planning for the icon cache directory (also in the Linux subset).
+    Core/SmatchetFieldIconPrunePure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconPrunePure.cpp"
     # Pure cached-project filter extracted from DrawJqlQueryEditorEmbedded's project pill. The
     # _detail TU reads only CachedProjectEntry struct fields — no ImGui, no FieldCatalogCache call.
     Core/JqlProjectPillFilter.test.cpp

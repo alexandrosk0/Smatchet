@@ -1,14 +1,17 @@
 #include "SmatchetFieldIconDiskCache.h"
 
 #include "FileIo.h"
+#include "FileTimeSeconds.h"
 #include "Logger.h"
 #include "SmatchetFieldIconRender_detail.h"
 
 #include <ghc/filesystem.hpp>
 
+#include <chrono>
 #include <exception>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace SmatchetFieldIconDiskCache {
 
@@ -57,6 +60,11 @@ Result<DecodedIcon> SafeDecode(const DecodeFn& decode, const IconBytes& bytes) {
         return Result<DecodedIcon>::Err(std::string("decoder threw: ") + ex.what());
     }
 }
+
+using smatchet::filetime::ToEpochSeconds;
+
+// "Now" on the same clock as file modification times, so the two compare whatever the platform's file epoch.
+std::int64_t NowFileClockSeconds() { return smatchet::filetime::NowEpochSeconds<fs::file_time_type::clock>(); }
 
 } // namespace
 
@@ -182,5 +190,83 @@ IconResolveOutcome ResolveUrlIcon(const std::string& cacheDir, const std::string
     outcome.RemovedBadFile = removedBad;
     return outcome;
 }
+
+RevalidateResult RevalidateUrlIcon(const std::string& cacheDir, const std::string& url, const FetchFn& fetch,
+                                   const DecodeFn& decode) {
+    if (cacheDir.empty() || url.empty() || !fetch || !decode) {
+        return RevalidateResult::Fresh;
+    }
+    try {
+        const std::string cachePath = cacheDir + SmatchetFieldIconRender::detail::UrlToCacheFileName(url);
+        std::error_code ec;
+        const fs::file_time_type modified = fs::last_write_time(fs::path(cachePath), ec);
+        if (ec || !IsStale(ToEpochSeconds(modified), NowFileClockSeconds(), kRevalidateAfterSeconds)) {
+            return RevalidateResult::Fresh; // no file to refresh, or it is recent
+        }
+        Result<IconBytes> fetched = fetch(url);
+        if (!fetched.has_value() || fetched.value().empty() || fetched.value().size() > kMaxIconFileBytes) {
+            return RevalidateResult::Failed;
+        }
+        const IconBytes& body = fetched.value();
+        if (!SafeDecode(decode, body).has_value()) {
+            return RevalidateResult::Failed;
+        }
+        smatchet::fileio::AtomicWriteOptions options;
+        options.OwnerOnly = true;
+        options.Durable = false;
+        std::string writeError;
+        if (!smatchet::fileio::WriteFileAtomically(cachePath, body.data(), body.size(), options, writeError)) {
+            LOG_WARN("FieldIconDiskCache: could not refresh icon '%s': %s", cachePath.c_str(), writeError.c_str());
+            return RevalidateResult::Failed;
+        }
+        return RevalidateResult::Refreshed;
+    } catch (const std::exception& ex) {
+        LOG_WARN("FieldIconDiskCache: revalidation failed: %s", ex.what());
+        return RevalidateResult::Failed;
+    }
+}
+
+std::size_t PruneCacheDir(const std::string& cacheDir, std::uint64_t capBytes, std::int64_t tempGraceSeconds) {
+    if (cacheDir.empty()) {
+        return 0;
+    }
+    std::size_t removed = 0;
+    try {
+        std::error_code ec;
+        std::vector<IconCacheFile> files;
+        for (fs::directory_iterator it(fs::path(cacheDir), ec), end; !ec && it != end; it.increment(ec)) {
+            std::error_code fileEc;
+            if (!it->is_regular_file(fileEc) || fileEc) {
+                continue;
+            }
+            IconCacheFile f;
+            f.Name = it->path().filename().string();
+            const std::uintmax_t size = it->file_size(fileEc);
+            f.SizeBytes = fileEc ? 0u : static_cast<std::uint64_t>(size);
+            const fs::file_time_type modified = it->last_write_time(fileEc);
+            // An unreadable time counts as "now": a file of unknown age is never aged out by the temp rule.
+            f.ModifiedEpochSec = fileEc ? NowFileClockSeconds() : ToEpochSeconds(modified);
+            files.push_back(std::move(f));
+        }
+        const std::vector<std::string> victims =
+            SelectIconPruneVictims(files, capBytes, NowFileClockSeconds(), tempGraceSeconds);
+        for (const std::string& name : victims) {
+            std::error_code rmEc;
+            if (fs::remove(fs::path(cacheDir) / name, rmEc) && !rmEc) {
+                ++removed;
+            } else if (rmEc) {
+                LOG_WARN("FieldIconDiskCache: could not delete '%s': %s", name.c_str(), rmEc.message().c_str());
+            }
+        }
+        if (removed > 0) {
+            LOG_INFO("FieldIconDiskCache: removed %zu file(s) from '%s'", removed, cacheDir.c_str());
+        }
+    } catch (const std::exception& ex) {
+        LOG_WARN("FieldIconDiskCache: prune of '%s' failed: %s", cacheDir.c_str(), ex.what());
+    }
+    return removed;
+}
+
+std::size_t PurgeCacheDir(const std::string& cacheDir) { return PruneCacheDir(cacheDir, 0, 0); }
 
 } // namespace SmatchetFieldIconDiskCache
