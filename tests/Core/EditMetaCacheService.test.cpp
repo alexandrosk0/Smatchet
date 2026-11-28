@@ -1037,3 +1037,21 @@ TEST_CASE("EditMetaCacheService: a warm a Refresh retired makes no request when 
     deps.Parked[0]();
     CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u); // the retired warm asked nobody
 }
+
+TEST_CASE(
+    "EditMetaCacheService: a startup fetch retired while in flight does not start the no-representative backoff") {
+    FakeEditMetaDeps deps;
+    deps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1", "story")); // the scope's only candidate
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+    deps.Fake()->SetFetchIssueEditMetaHook(
+        [&](const std::string& id) { svc.InvalidateIssueEditMeta(id); }); // the issue changed under the fetch
+
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u); // fetched, but the answer was dropped as stale
+
+    deps.Fake()->SetFetchIssueEditMetaHook(nullptr);
+    svc.WarmIssueTypeEditMetaAtStartAsync(TrackerConfig()); // not backed off for 30 minutes: tried again at once
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
+    CHECK_FALSE(svc.CanEditFieldForIssueWithType("Jira", "ABC-9", "labels", nullptr, "story"));
+}

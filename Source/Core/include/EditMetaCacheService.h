@@ -125,7 +125,7 @@ class EditMetaCacheService {
     using EditMetaByBackend = std::unordered_map<std::string, EditMetaById>;
     /// Lower-cased issue type -> editmeta, for one project.
     using ScopeByType = std::unordered_map<std::string, IssueEditMetaCache>;
-    /// Project ("" for a backend whose answer does not depend on the issue) -> ScopeByType.
+    /// Project (ProjectOfIssue of the issue; "" when its id carries none) -> ScopeByType.
     using ScopeByProject = std::unordered_map<std::string, ScopeByType>;
     /// Backend namespace -> ScopeByProject.
     using ScopeByBackend = std::unordered_map<std::string, ScopeByProject>;
@@ -155,8 +155,9 @@ class EditMetaCacheService {
     /// The loaded entry for the scope, or null. Caller holds editMetaMutex_.
     static const IssueEditMetaCache* FindScopeLoaded(const ScopeByBackend& maps, const std::string& backendKey,
                                                      const std::string& project, const std::string& issueTypeKey);
-    /// True and `project` set when an issue's result may be kept under a scope: it needs an issue type, and a
-    /// project unless the backend's answer does not vary per issue (then the project is "": one scope per type).
+    /// True and `project` set (ProjectOfIssue; "" when the id carries none) when an issue's result may be kept under
+    /// a scope: it needs an issue type, and a project unless the backend's answer does not vary per issue (then an
+    /// id without a project, such as a GitHub issue, gets one scope per type).
     static bool ScopeProjectFor(const std::string& issueId, const std::string& issueTypeKey, bool variesPerIssue,
                                 std::string& project);
     static std::string InFlightKey(const std::string& backendKey, const std::string& issueId);
@@ -173,11 +174,12 @@ class EditMetaCacheService {
     static FetchResult FetchEditMeta(ITrackerFieldCatalog* catalog, const TrackerConfig& cfg,
                                      const std::string& issueId);
     /// Keep `fetched` per the rules of LoadIssueEditMeta (own entry, scope promotion, failure keeps loaded data) and
-    /// retire `ticket`. True when the fetch was no longer current (nothing stored). `scopeUnchanged` is set when a
-    /// promoted scope entry equals the live one. Takes editMetaMutex_.
+    /// retire `ticket`. True when the fetch was no longer current (nothing stored). `scopeSeq` is the number of the
+    /// save the caller must now post (PostScopeSave), or 0 when none is due (not promoted, or the live scope entry
+    /// already says the same). Takes editMetaMutex_.
     bool StoreFetchResult(const FetchTicket& ticket, const std::string& backendKey, const std::string& issueId,
                           const std::string* project, const std::string& issueTypeKey, bool variesPerIssue,
-                          const FetchResult& fetched, bool promote, bool& scopeUnchanged);
+                          const FetchResult& fetched, bool promote, std::uint64_t& scopeSeq);
     /// Register a new fetch of `key` and return its ticket. False (nothing registered) when a fetch of `key` is
     /// already running and `mode` is not Refresh: a Refresh always begins and supersedes the running one.
     /// Caller holds editMetaMutex_.
@@ -206,10 +208,11 @@ class EditMetaCacheService {
     void EnsureSavedTypesLoaded(const std::string& backendKey);
     /// Worker only: delete the backend's legacy per-type rows (once per backend per session).
     void PurgeLegacyTypeRows(const std::string& backendKey);
-    /// Queue the save of one scope's permissions (a representative result). Never blocks on SQLite: the write
-    /// runs on `scopeSaveIo_`, in order, and a save superseded by a newer one for the same scope is skipped.
+    /// Queue the save of one scope's permissions (a representative result) under the number StoreFetchResult gave
+    /// it. Never blocks on SQLite: the write runs on `scopeSaveIo_`, in order, and a save superseded by a newer
+    /// number for the same scope is skipped.
     void PostScopeSave(const std::string& backendKey, const std::string& project, const std::string& issueTypeKey,
-                       const std::unordered_map<std::string, bool>& fieldCanEdit);
+                       const std::unordered_map<std::string, bool>& fieldCanEdit, std::uint64_t seq);
     std::string ResolveIssueTypeKeyForIssue(const std::string& issueId) const;
     void InvalidateIssueEditMetaFor(const std::string& backendKey, const std::string& issueId);
     /// CanEditFieldForIssue body. `explicitTypeKey` null → the issue type is resolved from the focused pane.

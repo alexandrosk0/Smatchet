@@ -295,18 +295,17 @@ void EditMetaCacheService::PurgeLegacyTypeRows(const std::string& backendKey) {
 
 void EditMetaCacheService::PostScopeSave(const std::string& backendKey, const std::string& project,
                                          const std::string& issueTypeKey,
-                                         const std::unordered_map<std::string, bool>& fieldCanEdit) {
+                                         const std::unordered_map<std::string, bool>& fieldCanEdit, std::uint64_t seq) {
     const std::shared_ptr<ILookupCache> store = deps_.LookupCacheShared();
     const std::string storeKey = smatchet::editmeta::BuildScopeStoreKey(project, issueTypeKey);
-    if (!store || storeKey.empty()) {
-        return;
-    }
     const std::string seqKey = InFlightKey(backendKey, storeKey);
-    std::uint64_t seq = 0;
-    {
+    if (!store || storeKey.empty()) {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
-        seq = ++nextScopeSeq_;
-        latestScopeSeq_[seqKey] = seq;
+        const auto it = latestScopeSeq_.find(seqKey);
+        if (it != latestScopeSeq_.end() && it->second == seq) {
+            latestScopeSeq_.erase(it); // nothing will run for this number: do not leave it registered
+        }
+        return;
     }
     std::string payload = smatchet::lookup::SerializeEditPermissions(fieldCanEdit);
     const std::string launchError =
@@ -493,7 +492,8 @@ EditMetaCacheService::FetchResult EditMetaCacheService::FetchEditMeta(ITrackerFi
 bool EditMetaCacheService::StoreFetchResult(const FetchTicket& ticket, const std::string& backendKey,
                                             const std::string& issueId, const std::string* project,
                                             const std::string& issueTypeKey, bool variesPerIssue,
-                                            const FetchResult& fetched, bool promote, bool& scopeUnchanged) {
+                                            const FetchResult& fetched, bool promote, std::uint64_t& scopeSeq) {
+    scopeSeq = 0;
     std::lock_guard<std::mutex> lock(editMetaMutex_);
     if (!IssueFetchCurrentLocked(ticket)) {
         // A newer fetch (Refresh) or an Invalidate retired this one: its answer is not stored, so it can neither
@@ -522,8 +522,16 @@ bool EditMetaCacheService::StoreFetchResult(const FetchTicket& ticket, const std
     if (promote && project != nullptr) {
         IssueEditMetaCache& scopeEntry = scopeEditMeta_[backendKey][*project][issueTypeKey];
         // A live entry that already says the same needs no new save (arrowing through rows of one scope).
-        scopeUnchanged = scopeEntry.loaded && scopeEntry.live && scopeEntry.fieldCanEdit == fetched.Cache.fieldCanEdit;
+        const bool unchanged =
+            scopeEntry.loaded && scopeEntry.live && scopeEntry.fieldCanEdit == fetched.Cache.fieldCanEdit;
         scopeEntry = fetched.Cache;
+        if (!unchanged) {
+            // The save's number is taken under the same hold as the in-memory write, so the order of the numbers is
+            // the order of the writes and the newest promotion is the one that reaches the store last.
+            scopeSeq = ++nextScopeSeq_;
+            latestScopeSeq_[InFlightKey(backendKey, smatchet::editmeta::BuildScopeStoreKey(*project, issueTypeKey))] =
+                scopeSeq;
+        }
     }
     return false;
 }
@@ -588,9 +596,9 @@ VoidResult EditMetaCacheService::LoadIssueEditMeta(const std::shared_ptr<ITracke
     // narrow its siblings. The others keep their own entry.
     const bool promote =
         ok && hasScope && smatchet::editmeta::IsRepresentativeEditPermissions(fetched.Cache.fieldCanEdit);
-    bool scopeUnchanged = false;
+    std::uint64_t scopeSeq = 0;
     const bool stale = StoreFetchResult(ticket, backendKey, issueId, hasScope ? &project : nullptr, issueTypeKey,
-                                        variesPerIssue, fetched, promote, scopeUnchanged);
+                                        variesPerIssue, fetched, promote, scopeSeq);
     const std::string& fetchError = fetched.Error;
     const IssueEditMetaCache& cache = fetched.Cache;
 
@@ -599,10 +607,13 @@ VoidResult EditMetaCacheService::LoadIssueEditMeta(const std::shared_ptr<ITracke
         return VoidResult::Err(fetchError);
     }
     if (stale) {
-        return VoidOk(); // retired while in flight: not a failure, and nothing to store or announce
+        if (refused != nullptr) {
+            *refused = true; // retired while in flight: no answer was kept, so no evidence for the caller either
+        }
+        return VoidOk();
     }
-    if (promote && !scopeUnchanged) {
-        PostScopeSave(backendKey, project, issueTypeKey, cache.fieldCanEdit); // queued: no SQLite on this thread
+    if (scopeSeq != 0) {
+        PostScopeSave(backendKey, project, issueTypeKey, cache.fieldCanEdit, scopeSeq); // queued: no SQLite here
     }
     deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
     return VoidOk();

@@ -32,8 +32,8 @@ constexpr int kNoRepresentativeBackoffSec = 1800;
 /// a UUID, a GitHub "owner/repo#3" id).
 std::string ProjectOfIssue(const std::string& issueId);
 
-/// `lookup_cache` row key of a scope, "" when `issueTypeKey` is empty. `project` may be empty (a backend whose
-/// permissions do not depend on the issue, so one scope per issue type serves every project).
+/// `lookup_cache` row key of a scope, "" when `issueTypeKey` is empty. `project` may be empty (an id that carries
+/// none, on a backend whose answer does not vary per issue: one scope per issue type).
 std::string BuildScopeStoreKey(const std::string& project, const std::string& issueTypeKey);
 
 /// Inverse of BuildScopeStoreKey. False for a malformed key (no separator, trailing escape, empty type).
