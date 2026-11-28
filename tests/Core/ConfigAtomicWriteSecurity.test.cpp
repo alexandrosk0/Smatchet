@@ -27,16 +27,14 @@ namespace {
 
 // A unique-ish temp path in the test's working directory (ctest runs in a writable build dir),
 // so the test needs no /tmp assumptions and no shared fixtures.
-std::string TempBase(const char* tag) {
-    return std::string("./atomicwrite_") + tag + ".cfgtest";
-}
+std::string TempBase(const char* tag) { return std::string("./atomicwrite_") + tag + ".cfgtest"; }
 
 std::string ReadAll(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("AtomicWriteTextFile: round-trips content and overwrites (all platforms)") {
     const std::string path = TempBase("roundtrip");
@@ -146,4 +144,4 @@ TEST_CASE("AtomicWriteTextFile: POSIX leaves no temp sibling behind, success or 
     ::rmdir(blocked.c_str());
     std::remove(path.c_str());
 }
-#endif  // !_WIN32
+#endif // !_WIN32

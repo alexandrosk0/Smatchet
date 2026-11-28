@@ -113,8 +113,8 @@ bool SelectAdapterAndCreateDevice(IDXGIFactory4* factory, ComPtr<ID3D12Device>& 
     }
     ComPtr<IDXGIAdapter> warp;
     if (SUCCEEDED(factory->EnumWarpAdapter(IID_PPV_ARGS(&warp))) &&
-        SUCCEEDED(D3D12CreateDevice(warp.Get(), D3D_FEATURE_LEVEL_11_0,
-                                    IID_PPV_ARGS(outDevice.ReleaseAndGetAddressOf())))) {
+        SUCCEEDED(
+            D3D12CreateDevice(warp.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(outDevice.ReleaseAndGetAddressOf())))) {
         DXGI_ADAPTER_DESC wdesc{};
         warp->GetDesc(&wdesc);
         outDesc = WideToUtf8(wdesc.Description);
@@ -361,7 +361,8 @@ bool Dx12Bootstrap::Init(void* hwnd, int width, int height, std::string& err) {
         std::lock_guard<std::mutex> lk(gSrvAllocator.Mutex);
         gSrvAllocator.CpuBase = fontCpu;
         gSrvAllocator.GpuBase = fontGpu;
-        gSrvAllocator.IncrementSize = d->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        gSrvAllocator.IncrementSize =
+            d->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         gSrvAllocator.Capacity = Impl::SRV_HEAP_SIZE;
         gSrvAllocator.OverflowSlot = Impl::SRV_HEAP_SIZE - 1;
         gSrvAllocator.NextSlot = 1;
@@ -479,9 +480,9 @@ void Dx12Bootstrap::Resize(int width, int height) {
     }
     d->FlushGpu();
     d->CleanupRenderTargets();
-    const HRESULT hr = d->SwapChain->ResizeBuffers(Impl::NUM_BACK_BUFFERS, static_cast<UINT>(width),
-                                                   static_cast<UINT>(height), DXGI_FORMAT_R8G8B8A8_UNORM,
-                                                   DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT);
+    const HRESULT hr =
+        d->SwapChain->ResizeBuffers(Impl::NUM_BACK_BUFFERS, static_cast<UINT>(width), static_cast<UINT>(height),
+                                    DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT);
     if (FAILED(hr)) {
         LOG_ERROR("Standalone DX12: ResizeBuffers failed (0x%08lx).", static_cast<unsigned long>(hr));
         return;

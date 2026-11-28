@@ -61,8 +61,8 @@ void smatchet::ui::GuardImGuiDynamicTextures(ImDrawData* drawData) {
     // only costs a redundant upload (the following tick promotes it again).
     if (drawData->Textures != nullptr) {
         for (ImTextureData* tex : *drawData->Textures) {
-            if (tex != nullptr && tex->GetTexID() == ImTextureID_Invalid &&
-                tex->Status != ImTextureStatus_WantCreate && tex->Pixels != nullptr) {
+            if (tex != nullptr && tex->GetTexID() == ImTextureID_Invalid && tex->Status != ImTextureStatus_WantCreate &&
+                tex->Pixels != nullptr) {
                 tex->SetStatus(ImTextureStatus_WantCreate); // backend re-uploads it this same frame
             }
         }
@@ -85,9 +85,8 @@ void smatchet::ui::GuardImGuiDynamicTextures(ImDrawData* drawData) {
             if (td == nullptr || td == liveAtlas) {
                 continue; // no per-texture id to resolve, or already the live atlas the pass validates
             }
-            if (!smatchet::ui::SmatchetDrawCmdTextureNeedsRebind(
-                    static_cast<int>(td->Status), td->Pixels != nullptr,
-                    td->GetTexID() == ImTextureID_Invalid)) {
+            if (!smatchet::ui::SmatchetDrawCmdTextureNeedsRebind(static_cast<int>(td->Status), td->Pixels != nullptr,
+                                                                 td->GetTexID() == ImTextureID_Invalid)) {
                 continue;
             }
             cmd.TexRef = liveAtlas->GetTexRef(); // GetTexRef() (not ImTextureRef(td)) wires _TexData
@@ -104,6 +103,4 @@ void smatchet::ui::GuardImGuiDynamicTextures(ImDrawData* drawData) {
     }
 }
 
-void smatchet::ui::ResetTextureGuardLogLatch() {
-    g_textureGuardLogged = false;
-}
+void smatchet::ui::ResetTextureGuardLogLatch() { g_textureGuardLogged = false; }

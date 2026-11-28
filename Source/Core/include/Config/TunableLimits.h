@@ -113,7 +113,7 @@ struct LimitsConfig {
 /// One row of the table, for the JSON load/save loop and the unit test.
 struct LimitDescriptor {
     const char* key;
-    int LimitsConfig::* member;
+    int LimitsConfig::*member;
     int defaultValue;
     int minValue;
     int maxValue;
