@@ -5,9 +5,20 @@
 
 namespace TrackerParseExplain {
 
+namespace {
+
+// A tracker's own text often ends in a full stop; the sentence around it adds one.
+std::string WithoutFinalStop(const std::string& text) {
+    const std::size_t last = text.find_last_not_of(". \r\n");
+    return last == std::string::npos ? std::string() : text.substr(0, last + 1);
+}
+
+} // namespace
+
 // The only place the parse layer turns a message into words. Every case is one literal
 // SmatchetLocalization call, so each string has its call-site English and a French row in kEntries[]
 // (INPUT_UX_AUDIT.md § 4.5). Each text names the part that is wrong and says how to fix it.
+// SMATCHET_DEVIATION(rule=function-too-branchy; reason=one case per message id; owner=input-ux; revisit=2027-05-31)
 std::string DescribeParseMessage(const ParseMessage& msg) {
     using SmatchetLocalization::Format;
     using SmatchetLocalization::T;
@@ -82,6 +93,12 @@ std::string DescribeParseMessage(const ParseMessage& msg) {
         return Format("parse.query.unknown_field",
                       "\"%s\" is not a field this tracker lists. Check the spelling, or pick one from the suggestions.",
                       arg);
+    case ParseMessageId::QueryRejectedByTracker:
+        return Format("parse.query.rejected_by_tracker", "The tracker did not run this query: %s.",
+                      WithoutFinalStop(msg.Arg).c_str());
+    case ParseMessageId::QueryClausesDropped:
+        return Format("parse.query.clauses_dropped", "This tracker will ignore part of the query: %s.",
+                      WithoutFinalStop(msg.Arg).c_str());
 
     case ParseMessageId::ConflictValueRejectedSprint:
         return T("parse.conflict.sprint", "That sprint was not found. Enter a sprint's name or its id.");
