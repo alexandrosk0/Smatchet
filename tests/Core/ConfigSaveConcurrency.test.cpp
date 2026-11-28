@@ -7,7 +7,8 @@
 // WriteConfigJson holds internally).
 //
 // Item 2 (coalescing worker): smatchet::config_save Start/Enqueue*/Stop runs writes on a
-// single background thread, coalescing per kind, flushing pending on Stop.
+// single background thread, coalescing per kind; Stop() joins after a best-effort,
+// budget-bounded drain, so a test that needs a queued write on disk waits for it first.
 //
 // Driven through TestEnvGuard which redirects ConfigManager at a private temp config dir.
 
@@ -27,6 +28,34 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+namespace {
+// Stop()'s drain is best-effort: it waits at most kStopDrainBudget (ConfigSaveWorker.cpp), counted
+// from Stop() entry and including a write already in flight, then drops what is still queued. A
+// test that needs a queued write on disk waits for it here instead of relying on Stop().
+template <class Probe> bool WaitForConfigOnDisk(Probe probe) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    for (;;) {
+        ConfigManager::InvalidateCache();
+        if (probe()) {
+            return true;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+// Stops the worker on every way out of a test case, so a failed REQUIRE does not leave it running
+// into the next case. Stop() returns at once when the worker is already stopped.
+struct StopWorkerOnExit {
+    StopWorkerOnExit() = default;
+    StopWorkerOnExit(const StopWorkerOnExit&) = delete;
+    StopWorkerOnExit& operator=(const StopWorkerOnExit&) = delete;
+    ~StopWorkerOnExit() { smatchet::config_save::Stop(); }
+};
+} // namespace
 
 TEST_CASE("concurrent mixed config saves stay valid + terminate (no tear, no deadlock)" *
           doctest::test_suite("[high-risk]")) {
@@ -96,10 +125,11 @@ TEST_CASE("concurrent mixed config saves stay valid + terminate (no tear, no dea
     CHECK(ac.ChangelistCacheMaxEntries <= 111);
 }
 
-TEST_CASE("config_save worker persists both config kinds and flushes on Stop") {
+TEST_CASE("config_save worker persists both config kinds and joins on Stop") {
     smatchet_tests::TestEnvGuard env;
 
     smatchet::config_save::Start();
+    StopWorkerOnExit stopGuard;
 
     TrackerConfig tc;
     tc.TrackerType = "Plane";
@@ -110,8 +140,13 @@ TEST_CASE("config_save worker persists both config kinds and flushes on Stop") {
     ac.ChangelistCacheMaxEntries = 256;
     smatchet::config_save::EnqueueAnnotateConfig(ac);
 
-    // Stop flushes pending writes within the bounded budget, then joins.
-    smatchet::config_save::Stop();
+    // Wait for the worker to land both writes: Stop()'s drain is bounded, and under coverage
+    // instrumentation one tracker write can outlast the whole budget.
+    REQUIRE(WaitForConfigOnDisk([]() {
+        return ConfigManager::Load().TrackerType == "Plane" &&
+               ConfigManager::LoadAnnotateAnalysis().ChangelistCacheMaxEntries == 256;
+    }));
+    smatchet::config_save::Stop(); // nothing pending: joins the idle worker
     ConfigManager::InvalidateCache();
 
     CHECK(ConfigManager::Load().TrackerType == "Plane");
@@ -135,9 +170,16 @@ TEST_CASE("config_save worker writes queued raw config keys, latest value per ke
     ConfigManager::Save(seed);
 
     smatchet::config_save::Start();
+    StopWorkerOnExit stopGuard;
     smatchet::config_save::EnqueueConfigJsonKey("lua_scripts_panel_height_px", 120.0);
     smatchet::config_save::EnqueueConfigJsonKey("lua_scripts_panel_height_px", 240.0);
     smatchet::config_save::EnqueueConfigJsonKey("selftest_raw_key", "kept");
+    // Wait for the keys on disk before Stop(): its drain is bounded and drops what is still queued.
+    REQUIRE(WaitForConfigOnDisk([]() {
+        const nlohmann::json j = ConfigManager::LoadMergedConfigJson();
+        return j.value("lua_scripts_panel_height_px", 0.0) == 240.0 &&
+               j.value("selftest_raw_key", std::string()) == "kept";
+    }));
     smatchet::config_save::Stop();
     ConfigManager::InvalidateCache();
 
@@ -153,7 +195,7 @@ TEST_CASE("config_save worker writes queued raw config keys, latest value per ke
 // #2026 — the persistent-views slot. Views::Save used to do this whole read-merge-write inline on
 // the UI thread on every view activation (i.e. every pane show/hide); it now enqueues here. Two
 // properties matter and both are asserted through the production symbol:
-//   1. the snapshot reaches disk (worker path, flushed by Stop);
+//   1. the snapshot reaches disk through the worker (the test waits for it, then stops the worker), and
 //   2. the DR13a out-of-band ToolbarAppend merge still happens — it moved onto the worker with
 //      the write, so a toolbar button written straight to disk must survive the rewrite.
 TEST_CASE("config_save worker persists the views file and keeps the out-of-band ToolbarAppend") {
@@ -170,6 +212,7 @@ TEST_CASE("config_save worker persists the views file and keeps the out-of-band 
     }
 
     smatchet::config_save::Start();
+    StopWorkerOnExit stopGuard;
 
     // The Views wrapper's snapshot: owns Views / ActiveViewId, and knows nothing about the
     // toolbar write above (its in-memory Disk predates it).
@@ -183,7 +226,13 @@ TEST_CASE("config_save worker persists the views file and keeps the out-of-band 
     snapshot.Backends["Jira"].Views.push_back(v);
     smatchet::config_save::EnqueuePersistentViews(snapshot);
 
-    smatchet::config_save::Stop(); // flush pending within budget, then join
+    // Wait for the worker to write the views file before Stop(): its drain is bounded and drops what
+    // is still queued.
+    REQUIRE(WaitForConfigOnDisk([]() {
+        const PersistentViewsFile f = ConfigManager::LoadPersistentViewsFromDisk();
+        return f.Backends.count("Jira") == 1 && f.Backends.at("Jira").ActiveViewId == "worker-view";
+    }));
+    smatchet::config_save::Stop(); // nothing pending: joins the idle worker
 
     const PersistentViewsFile reloaded = ConfigManager::LoadPersistentViewsFromDisk();
     REQUIRE(reloaded.Backends.count("Jira") == 1);
@@ -415,6 +464,7 @@ TEST_CASE("a worker-queued snapshot cannot revert a synchronous Save that follow
     smatchet_tests::TestEnvGuard env;
 
     smatchet::config_save::Start();
+    StopWorkerOnExit stopGuard;
 
     // Repeat: the two writers genuinely race for the write lock, and the assertion has to hold for
     // BOTH orders (worker first, then the sync save; or the sync save draining the slot itself).
@@ -452,6 +502,7 @@ TEST_CASE("Update folds a queued snapshot in rather than clobbering it") {
     smatchet_tests::TestEnvGuard env;
 
     smatchet::config_save::Start();
+    StopWorkerOnExit stopGuard;
 
     TrackerConfig fromUi;
     fromUi.TrackerType = "Jira";

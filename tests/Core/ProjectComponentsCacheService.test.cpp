@@ -6,6 +6,7 @@
 #include "../support/FakeEditMetaDeps.h"
 #include "../support/FakeLookupCache.h"
 #include "../support/FakeTrackerClient.h"
+#include "../support/ScopedLimits.h"
 #include "../support/TestEnvGuard.h"
 
 #include "CachedTicketTypes.h"
@@ -19,6 +20,7 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -401,6 +403,196 @@ TEST_SUITE("ProjectComponentsCacheService") {
         CHECK(lookup.freshness == DataFreshness::UnavailableNoCache);
         CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 0u);
         CHECK_FALSE(svc.EnsureComponentsLoaded("ABC")); // backing off, not relaunching every frame
+    }
+}
+
+TEST_SUITE("ProjectComponentsCacheService live max age") {
+    constexpr std::chrono::seconds kMaxAge(1800); // limits default lookup_live_max_age_sec
+
+    TEST_CASE(
+        "Refresh on a live list revalidates: the list stays on screen as Refreshing, then Fresh with the new one") {
+        DeferredLaunchDeps deps;
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("100", "Backend")});
+        ProjectComponentsCacheService svc(deps);
+        REQUIRE(svc.EnsureComponentsLoaded("ABC"));
+        deps.RunFront();
+        REQUIRE(svc.GetComponentOptions("ABC").freshness == DataFreshness::Fresh);
+
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("200", "Platform")});
+        CHECK(svc.RefreshComponents("ABC"));
+        CHECK_FALSE(svc.RefreshComponents("ABC")); // one winner while it runs
+        const ProjectComponentsLookup during = svc.GetComponentOptions("ABC");
+        CHECK(during.freshness == DataFreshness::Refreshing);
+        REQUIRE(during.options != nullptr);
+        CHECK(during.options->at(0).Value == "Backend");
+
+        deps.RunFront();
+        const ProjectComponentsLookup after = svc.GetComponentOptions("ABC");
+        CHECK(after.freshness == DataFreshness::Fresh);
+        CHECK(after.options->at(0).Value == "Platform");
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 2u);
+    }
+
+    TEST_CASE("a failed Refresh of a live list keeps it, reads CachedStale, and Refresh may try again") {
+        FakeEditMetaDeps deps;
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("100", "Backend")});
+        ProjectComponentsCacheService svc(deps);
+        REQUIRE(svc.EnsureComponentsLoaded("ABC"));
+
+        deps.Fake()->SetProjectComponentsFailure("ABC", "HTTP 503");
+        CHECK(svc.RefreshComponents("ABC"));
+        const ProjectComponentsLookup failed = svc.GetComponentOptions("ABC");
+        CHECK(failed.freshness == DataFreshness::CachedStale);
+        CHECK(failed.lastAttemptFailed);
+        REQUIRE(failed.options != nullptr);
+        CHECK(failed.options->at(0).Value == "Backend");
+
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("200", "Platform")});
+        CHECK(svc.RefreshComponents("ABC")); // the user's retry clears the backoff
+        CHECK(svc.GetComponentOptions("ABC").options->at(0).Value == "Platform");
+        CHECK(svc.GetComponentOptions("ABC").freshness == DataFreshness::Fresh);
+    }
+
+    TEST_CASE("Refresh while offline keeps a live list and starts nothing") {
+        FakeEditMetaDeps deps;
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("100", "Backend")});
+        ProjectComponentsCacheService svc(deps);
+        REQUIRE(svc.EnsureComponentsLoaded("ABC"));
+        deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+
+        CHECK_FALSE(svc.RefreshComponents("ABC"));
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 1u);
+        const ProjectComponentsLookup lookup = svc.GetComponentOptions("ABC");
+        CHECK(lookup.freshness == DataFreshness::CachedOffline);
+        CHECK(lookup.options->at(0).Value == "Backend");
+    }
+
+    TEST_CASE("the warm fetches a live list again once it is older than the max age, not before") {
+        FakeEditMetaDeps deps;
+        deps.ActiveTicketsImpl = {Ticket("ABC-1")};
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("100", "Backend")});
+        deps.AdvanceNow(std::chrono::seconds(0)); // start the fake clock at the real now
+        ProjectComponentsCacheService svc(deps);
+        TrackerConfig cfg;
+
+        svc.WarmForActiveTicketsAsync(cfg);
+        REQUIRE(deps.Fake()->FetchProjectComponentsCallCount() == 1u);
+
+        deps.AdvanceNow(kMaxAge - std::chrono::seconds(1));
+        svc.WarmForActiveTicketsAsync(cfg);
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 1u);
+
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("200", "Platform")});
+        deps.AdvanceNow(std::chrono::seconds(1));
+        svc.WarmForActiveTicketsAsync(cfg);
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 2u);
+        CHECK(svc.GetComponentOptions("ABC").options->at(0).Value == "Platform");
+        CHECK(svc.GetComponentOptions("ABC").freshness == DataFreshness::Fresh);
+
+        // the new fetch restarted the age: another warm right away is a no-op
+        svc.WarmForActiveTicketsAsync(cfg);
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 2u);
+    }
+
+    TEST_CASE("a max age of 0 disables the warm's revalidation") {
+        smatchet_tests::ScopedLimits limits([](smatchet::limits::LimitsConfig& l) { l.LookupLiveMaxAgeSec = 0; });
+        FakeEditMetaDeps deps;
+        deps.ActiveTicketsImpl = {Ticket("ABC-1")};
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("100", "Backend")});
+        deps.AdvanceNow(std::chrono::seconds(0));
+        ProjectComponentsCacheService svc(deps);
+        TrackerConfig cfg;
+
+        svc.WarmForActiveTicketsAsync(cfg);
+        deps.AdvanceNow(std::chrono::hours(48));
+        svc.WarmForActiveTicketsAsync(cfg);
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 1u);
+    }
+
+    TEST_CASE("the lazy Ensure past the max age starts nothing: only Refresh and the warm revalidate") {
+        DeferredLaunchDeps deps;
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("100", "Backend")});
+        deps.AdvanceNow(std::chrono::seconds(0));
+        ProjectComponentsCacheService svc(deps);
+        REQUIRE(svc.EnsureComponentsLoaded("ABC"));
+        deps.RunFront();
+
+        deps.AdvanceNow(std::chrono::hours(24));
+        const int launches = deps.LaunchBackgroundTaskCalls;
+        for (int i = 0; i < 5; ++i) {
+            CHECK_FALSE(svc.EnsureComponentsLoaded("ABC"));
+        }
+        CHECK(deps.LaunchBackgroundTaskCalls == launches);
+        CHECK(svc.GetComponentOptions("ABC").freshness == DataFreshness::Fresh);
+    }
+
+    TEST_CASE("a revalidation ignores a fresh saved list even when the saved-list lifetime is on") {
+        FakeEditMetaDeps deps;
+        const auto store = std::make_shared<FakeLookupCache>();
+        deps.LookupCacheImpl = store;
+        deps.ActiveTicketsImpl = {Ticket("ABC-1")};
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("100", "Live-1")});
+        deps.AdvanceNow(std::chrono::seconds(0));
+        ProjectComponentsCacheService svc(deps);
+        TrackerConfig cfg;
+        cfg.LookupCacheTtlSec = 86400;
+
+        svc.WarmForActiveTicketsAsync(cfg); // the saved row is absent, so this is a live fetch
+        REQUIRE(svc.GetComponentOptions("ABC").freshness == DataFreshness::Fresh);
+        // A fresh saved row that differs from the live list: a revalidation must not take it.
+        SaveComponents(*store, "Jira", "ABC", {Component("999", "Saved-copy")});
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("200", "Live-2")});
+
+        deps.AdvanceNow(kMaxAge);
+        svc.WarmForActiveTicketsAsync(cfg);
+
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 2u);
+        const ProjectComponentsLookup lookup = svc.GetComponentOptions("ABC");
+        CHECK(lookup.freshness == DataFreshness::Fresh);
+        CHECK(lookup.options->at(0).Value == "Live-2");
+    }
+
+    TEST_CASE("a failed warm revalidation keeps the live list and backs off") {
+        FakeEditMetaDeps deps;
+        deps.ActiveTicketsImpl = {Ticket("ABC-1")};
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("100", "Backend")});
+        deps.AdvanceNow(std::chrono::seconds(0));
+        ProjectComponentsCacheService svc(deps);
+        TrackerConfig cfg;
+        svc.WarmForActiveTicketsAsync(cfg);
+
+        deps.Fake()->SetProjectComponentsFailure("ABC", "HTTP 503");
+        deps.AdvanceNow(kMaxAge);
+        svc.WarmForActiveTicketsAsync(cfg);
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 2u);
+        const ProjectComponentsLookup lookup = svc.GetComponentOptions("ABC");
+        CHECK(lookup.freshness == DataFreshness::CachedStale);
+        CHECK(lookup.options->at(0).Value == "Backend");
+
+        svc.WarmForActiveTicketsAsync(cfg); // inside the 30 s failure backoff
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 2u);
+        deps.AdvanceNow(std::chrono::seconds(30));
+        svc.WarmForActiveTicketsAsync(cfg);
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 3u);
+    }
+
+    TEST_CASE("the warm skips a project whose revalidation is already in flight") {
+        DeferredLaunchDeps deps;
+        deps.ActiveTicketsImpl = {Ticket("ABC-1")};
+        deps.Fake()->SetProjectComponentsSuccess("ABC", {Component("100", "Backend")});
+        deps.AdvanceNow(std::chrono::seconds(0));
+        ProjectComponentsCacheService svc(deps);
+        TrackerConfig cfg;
+        svc.WarmForActiveTicketsAsync(cfg);
+        deps.RunFront();
+
+        deps.AdvanceNow(kMaxAge);
+        REQUIRE(svc.RefreshComponents("ABC"));
+        const int launches = deps.LaunchBackgroundTaskCalls;
+        svc.WarmForActiveTicketsAsync(cfg);
+        CHECK(deps.LaunchBackgroundTaskCalls == launches);
+        deps.RunFront();
+        CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 2u);
     }
 }
 

@@ -968,6 +968,8 @@ TEST_CASE("Limits: defaults equal the constants they replaced (pinned to literal
     CHECK(d.ImageTextureCacheMaxMiB == 96);
     CHECK(d.LookupMaxStoredUsers == 50000);
     CHECK(d.LookupMaxStoredProjects == 10000);
+    CHECK(d.LookupLiveMaxAgeSec == 1800);
+    CHECK(d.TransitionsLiveCacheMax == 512);
     CHECK(d.AiMaxCachedPlans == 256);
     CHECK(d.AiPlanCacheMaxMiB == 4);
     CHECK(d.NavigationHistoryMax == 200);

@@ -24,6 +24,7 @@
 #include "ITicketSyncDeps.h"
 #include "TicketSyncService.h"
 #include "Sync/ChangeMonitorRosterProbe.h"
+#include "Sync/MonitorProbeConfigPure.h"
 #include "Sync/WalkOwnedKeysPure.h"
 #include "Sync/DeltaSyncPure.h"
 #include "Sync/RemoteChangeInvalidationPure.h"
@@ -1531,38 +1532,67 @@ TEST_CASE("TicketSyncService::SessionEpoch moves once per started streaming sess
     svc.CancelAndJoinActiveStreamingSync();
 }
 
-TEST_CASE("TicketSyncService::LastSessionQuery names the query the latest started session ran") {
+TEST_CASE("TicketSyncService::LastSessionConfig names the config and views the latest started session ran") {
     FakeTicketSyncDeps deps;
     auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
     fake->SetFetchIssuesResult({MakeTicket("ABC-1")}, /*fullSyncCompleted=*/true);
 
     TicketSyncService svc(deps);
-    std::string jql = "untouched";
-    CHECK_FALSE(svc.LastSessionQuery(jql)); // no session yet
-    CHECK(jql == "untouched");
+    TrackerConfig got;
+    got.JqlQuery = "untouched";
+    std::shared_ptr<const ViewsStore> gotViews;
+    CHECK_FALSE(svc.LastSessionConfig(got, gotViews)); // no session yet: outputs untouched
+    CHECK(got.JqlQuery == "untouched");
+    CHECK(gotViews == nullptr);
 
     TrackerConfig cfg;
     cfg.TrackerType = "fake";
     cfg.JqlQuery = "creator=currentUser()";
+    cfg.GitHubOwner = "owner-a";
+    cfg.GitHubRepo = "repo-x";
+    cfg.SelectedFields = {"summary", "status"};
     ViewsStore views;
+    ViewDefinition view;
+    view.Id = "view-a";
+    view.Fields = {"summary", "status"};
+    views.Views.push_back(view);
+    views.ActiveViewId = "view-a";
     svc.SyncWithBackend(&cfg, &views);
     REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
-    REQUIRE(svc.LastSessionQuery(jql));
-    CHECK(jql == "creator=currentUser()");
+    REQUIRE(svc.LastSessionConfig(got, gotViews));
+    CHECK(got.JqlQuery == "creator=currentUser()");
+    CHECK(got.GitHubOwner == "owner-a");
+    CHECK(got.GitHubRepo == "repo-x");
+    CHECK(got.SelectedFields == std::vector<std::string>{"summary", "status"});
+    REQUIRE(gotViews != nullptr);
+    CHECK(gotViews->ActiveViewId == "view-a");
+    REQUIRE(gotViews->Views.size() == 1);
+    CHECK(gotViews->Views[0].Fields == std::vector<std::string>{"summary", "status"});
 
-    // A view opened in the same pane syncs with its own query: that is the one the pane's rows now answer.
+    // A view opened in the same pane syncs with its own query and views: those are what the pane's rows now answer.
+    // The store handed out earlier is immutable - a probe still holding it reads the session it was issued for.
+    const std::shared_ptr<const ViewsStore> earlierViews = gotViews;
     cfg.JqlQuery = "textfields ~ \"okr2*\"";
+    view.Id = "view-b";
+    view.Fields = {"summary", "assignee"};
+    views.Views.push_back(view);
+    views.ActiveViewId = "view-b";
     svc.SyncWithBackend(&cfg, &views);
     REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
-    REQUIRE(svc.LastSessionQuery(jql));
-    CHECK(jql == "textfields ~ \"okr2*\"");
+    REQUIRE(svc.LastSessionConfig(got, gotViews));
+    CHECK(got.JqlQuery == "textfields ~ \"okr2*\"");
+    REQUIRE(gotViews != nullptr);
+    CHECK(gotViews != earlierViews);
+    CHECK(gotViews->ActiveViewId == "view-b");
+    CHECK(earlierViews->ActiveViewId == "view-a");
+    CHECK(earlierViews->Views.size() == 1);
 
     // An empty query is the backend's default query, still a known one.
     cfg.JqlQuery.clear();
     svc.SyncWithBackend(&cfg, &views);
     REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
-    REQUIRE(svc.LastSessionQuery(jql));
-    CHECK(jql.empty());
+    REQUIRE(svc.LastSessionConfig(got, gotViews));
+    CHECK(got.JqlQuery.empty());
 
     svc.CancelAndJoinActiveStreamingSync();
 }
@@ -2813,28 +2843,136 @@ TEST_CASE("Monitor pane state: an incomplete roster is skipped until the pane re
     CHECK(state.RefusedKeys.empty());
 }
 
-TEST_CASE("Monitor probe query: the pane's latest session query wins over the kick stamp") {
-    using smatchet::sync::ChooseMonitorProbeQuery;
-    using smatchet::sync::MonitorProbeQuery;
-    // A view opened in place: the session ran the new query, the kick stamp still names the previous view.
-    MonitorProbeQuery q = ChooseMonitorProbeQuery(true, "textfields ~ \"okr2*\"", "creator=currentUser()");
-    CHECK(q.Known);
-    CHECK(q.Jql == "textfields ~ \"okr2*\"");
+namespace {
+// The focused pane's config: GitHub repo Y, its own query and fields, the monitor settings the user chose.
+TrackerConfig FocusedPaneConfigForProbe() {
+    TrackerConfig cfg;
+    cfg.TrackerType = "GitHub";
+    cfg.GitHubOwner = "owner";
+    cfg.GitHubRepo = "repo-y";
+    cfg.JqlQuery = "is:open label:focused";
+    cfg.SelectedFields = {"summary", "labels"};
+    cfg.TicketChangeMonitorEnabled = true;
+    cfg.TicketChangeMonitorIntervalSec = 45;
+    cfg.DeltaSyncEnabled = false;
+    return cfg;
+}
 
-    // An empty session query is the backend's default query: known, never replaced by the stamp or the focused cfg.
-    q = ChooseMonitorProbeQuery(true, "", "creator=currentUser()");
-    CHECK(q.Known);
-    CHECK(q.Jql.empty());
+// An unfocused pane's session config: GitHub repo X, its own query and fields, stale monitor settings.
+TrackerConfig UnfocusedPaneSessionConfigForProbe() {
+    TrackerConfig cfg;
+    cfg.TrackerType = "GitHub";
+    cfg.GitHubOwner = "owner";
+    cfg.GitHubRepo = "repo-x";
+    cfg.JqlQuery = "is:open label:pane-a";
+    cfg.SelectedFields = {"summary", "assignee"};
+    cfg.TicketChangeMonitorEnabled = false;
+    cfg.TicketChangeMonitorIntervalSec = 600;
+    cfg.DeltaSyncEnabled = true;
+    return cfg;
+}
+} // namespace
 
-    // No session yet: the kick stamp is the only thing known about the pane.
-    q = ChooseMonitorProbeQuery(false, "", "creator=currentUser()");
-    CHECK(q.Known);
-    CHECK(q.Jql == "creator=currentUser()");
+TEST_CASE("Monitor probe config: an unfocused pane is probed with its own session's repository, query and fields") {
+    using smatchet::sync::ChooseMonitorProbeConfig;
+    const TrackerConfig focused = FocusedPaneConfigForProbe();
+    // GitHub pane A (repo X) is unfocused while pane B (repo Y) has focus: A's probe must run against repo X,
+    // or the membership reconcile reads A's rows as having left the view and drops them.
+    const TrackerConfig probed =
+        ChooseMonitorProbeConfig(focused, /*sessionStarted=*/true, UnfocusedPaneSessionConfigForProbe(), "stale-kick");
+    CHECK(probed.GitHubOwner == "owner");
+    CHECK(probed.GitHubRepo == "repo-x");
+    CHECK(probed.JqlQuery == "is:open label:pane-a"); // the session's query, never the kick stamp's
+    CHECK(probed.SelectedFields == std::vector<std::string>{"summary", "assignee"});
+    // The monitor's own settings stay global.
+    CHECK(probed.TicketChangeMonitorEnabled);
+    CHECK(probed.TicketChangeMonitorIntervalSec == 45);
+    CHECK_FALSE(probed.DeltaSyncEnabled);
+}
 
-    // Nothing known: the cycle keeps the focused config's query.
-    q = ChooseMonitorProbeQuery(false, "", "");
-    CHECK_FALSE(q.Known);
-    CHECK(q.Jql.empty());
+TEST_CASE("Monitor probe config: an empty session query is the backend's default query, not unknown") {
+    using smatchet::sync::ChooseMonitorProbeConfig;
+    TrackerConfig session = UnfocusedPaneSessionConfigForProbe();
+    session.JqlQuery.clear();
+    const TrackerConfig probed =
+        ChooseMonitorProbeConfig(FocusedPaneConfigForProbe(), true, session, "creator=currentUser()");
+    CHECK(probed.JqlQuery.empty());
+    CHECK(probed.GitHubRepo == "repo-x");
+}
+
+TEST_CASE("Monitor probe config: before a session the focused config is kept, its query from the kick stamp") {
+    using smatchet::sync::ChooseMonitorProbeConfig;
+    const TrackerConfig focused = FocusedPaneConfigForProbe();
+    // The session config is ignored when no session started (the service hands out an untouched default).
+    TrackerConfig probed =
+        ChooseMonitorProbeConfig(focused, /*sessionStarted=*/false, UnfocusedPaneSessionConfigForProbe(), "kicked");
+    CHECK(probed.JqlQuery == "kicked");
+    CHECK(probed.GitHubRepo == "repo-y");
+    CHECK(probed.SelectedFields == focused.SelectedFields);
+    CHECK(probed.TicketChangeMonitorIntervalSec == 45);
+
+    // Nothing known about the pane: the focused config's query stands.
+    probed = ChooseMonitorProbeConfig(focused, false, TrackerConfig(), "");
+    CHECK(probed.JqlQuery == "is:open label:focused");
+    CHECK(probed.GitHubRepo == "repo-y");
+}
+
+TEST_CASE("Monitor probe config: a token saved after the pane's sync reaches its probes on the same site") {
+    using smatchet::sync::ChooseMonitorProbeConfig;
+    TrackerConfig session;
+    session.TrackerType = "Jira";
+    session.Domain = "acme.atlassian.net";
+    session.Email = "dev@acme.test";
+    session.ApiToken = "revoked-token";
+    session.JqlQuery = "project = A";
+    TrackerConfig global = session;
+    global.ApiToken = "fresh-token"; // the user saved a new token; only the focused pane re-synced
+    global.JqlQuery = "project = B";
+
+    const TrackerConfig probed = ChooseMonitorProbeConfig(global, true, session, "");
+    CHECK(probed.ApiToken == "fresh-token");
+    CHECK(probed.Email == "dev@acme.test");
+    CHECK(probed.JqlQuery == "project = A"); // the pane's own query still wins
+
+    // A Plane pane on the focused workspace takes the fresh key the same way.
+    TrackerConfig planeSession;
+    planeSession.TrackerType = "Plane";
+    planeSession.PlaneUrl = "https://api.plane.so";
+    planeSession.PlaneWorkspaceSlug = "ws";
+    planeSession.PlaneApiKey = "old-key";
+    TrackerConfig planeGlobal = planeSession;
+    planeGlobal.PlaneApiKey = "new-key";
+    CHECK(ChooseMonitorProbeConfig(planeGlobal, true, planeSession, "").PlaneApiKey == "new-key");
+}
+
+TEST_CASE("Monitor probe config: a pane on another site or account keeps its own secrets") {
+    using smatchet::sync::ChooseMonitorProbeConfig;
+    TrackerConfig session;
+    session.TrackerType = "Jira";
+    session.Domain = "acme.atlassian.net";
+    session.Email = "dev@acme.test";
+    session.ApiToken = "acme-token";
+
+    TrackerConfig otherSite = session;
+    otherSite.Domain = "other.atlassian.net";
+    otherSite.ApiToken = "other-token";
+    TrackerConfig probed = ChooseMonitorProbeConfig(otherSite, true, session, "");
+    CHECK(probed.Domain == "acme.atlassian.net");
+    CHECK(probed.ApiToken == "acme-token"); // never the other site's token against this host
+
+    TrackerConfig otherAccount = session;
+    otherAccount.Email = "someone-else@acme.test";
+    otherAccount.ApiToken = "someone-else-token";
+    probed = ChooseMonitorProbeConfig(otherAccount, true, session, "");
+    CHECK(probed.Email == "dev@acme.test");
+    CHECK(probed.ApiToken == "acme-token");
+
+    // The GitHub pane on repo X keeps its PAT while repo Y has focus.
+    TrackerConfig repoX = UnfocusedPaneSessionConfigForProbe();
+    repoX.GitHubPat = "pat-x";
+    TrackerConfig repoY = FocusedPaneConfigForProbe();
+    repoY.GitHubPat = "pat-y";
+    CHECK(ChooseMonitorProbeConfig(repoY, true, repoX, "").GitHubPat == "pat-x");
 }
 
 TEST_CASE("Monitor pane state: the remembered refusals are bounded") {
