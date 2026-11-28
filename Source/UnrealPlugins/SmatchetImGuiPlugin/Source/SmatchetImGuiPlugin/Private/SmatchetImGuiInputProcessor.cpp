@@ -63,15 +63,37 @@ class FSmatchetPenPointerTracker final : public IWindowsMessageHandler {
 };
 
 static FSmatchetPenPointerTracker GSmatchetPenPointerTracker;
-static bool GSmatchetPenTrackerRegistered = false;
 
-static FWindowsApplication* GetSlateWindowsApplication() {
+/**
+ * The platform application the pen tracker was added to. DetachPlatformHooks removes the handler from this
+ * object, not from whatever Slate reports at shutdown: Pixel Streaming and the automation driver swap Slate's
+ * platform application at runtime. Weak, so the module never keeps the application alive past
+ * FSlateApplication::Shutdown.
+ */
+static TWeakPtr<GenericApplication> GSmatchetPenTrackerApp;
+
+/**
+ * Returns App as the native FWindowsApplication, or nullptr when it is anything else. Engine modules build
+ * without RTTI and GenericApplication has no type tag, so the check is by identity:
+ * FWindowsApplication::GetInputInterface() returns the application itself, while the wrappers that replace
+ * Slate's platform application (Pixel Streaming's application wrappers, the automation driver's
+ * FAutomatedApplication) forward the call to the application they wrap, so for them the result is a different
+ * object. The cast is a pointer adjustment only; nothing is dereferenced before the identity compare. The
+ * compare is not a full type test: an application that derives from GenericApplication and then
+ * IInputInterface in that order and returns itself would pass it. No engine class on Windows does except
+ * FNullApplication, which the -RenderOffScreen guard rejects first (and whose extra base shifts its offsets).
+ */
+static FWindowsApplication* AsNativeWindowsApplication(GenericApplication* App) {
     // -RenderOffScreen runs Slate on an FNullApplication (FWindowsPlatformApplicationMisc::CreateApplication).
-    if (!FSlateApplication::IsInitialized() || FParse::Param(FCommandLine::Get(), TEXT("RenderOffScreen"))) {
+    if (!App || FParse::Param(FCommandLine::Get(), TEXT("RenderOffScreen"))) {
         return nullptr;
     }
-    const TSharedPtr<GenericApplication> PlatformApp = FSlateApplication::Get().GetPlatformApplication();
-    return static_cast<FWindowsApplication*>(PlatformApp.Get());
+    IInputInterface* const Input = App->GetInputInterface();
+    if (!Input) {
+        return nullptr;
+    }
+    FWindowsApplication* const Candidate = static_cast<FWindowsApplication*>(Input);
+    return static_cast<GenericApplication*>(Candidate) == App ? Candidate : nullptr;
 }
 #endif
 
@@ -105,10 +127,15 @@ FVector2f MapPointerToClientLocal(FSlateApplication& SlateApp, const FPointerEve
 
 FSmatchetImGuiInputProcessor::FSmatchetImGuiInputProcessor(SmatchetImGuiHostHandle InHost) : Host(InHost) {
 #if PLATFORM_WINDOWS
-    if (!GSmatchetPenTrackerRegistered) {
-        if (FWindowsApplication* WindowsApp = GetSlateWindowsApplication()) {
+    if (!GSmatchetPenTrackerApp.IsValid() && FSlateApplication::IsInitialized()) {
+        const TSharedPtr<GenericApplication> PlatformApp = FSlateApplication::Get().GetPlatformApplication();
+        if (FWindowsApplication* WindowsApp = AsNativeWindowsApplication(PlatformApp.Get())) {
             WindowsApp->AddMessageHandler(GSmatchetPenPointerTracker);
-            GSmatchetPenTrackerRegistered = true;
+            GSmatchetPenTrackerApp = PlatformApp;
+        } else {
+            UE_LOG(LogSmatchetImGuiInputProcessor, Log,
+                   TEXT("Smatchet: Slate's platform application is not the native Windows application - pen "
+                        "contacts are handled as touch."));
         }
     }
 #endif
@@ -116,13 +143,12 @@ FSmatchetImGuiInputProcessor::FSmatchetImGuiInputProcessor(SmatchetImGuiHostHand
 
 void FSmatchetImGuiInputProcessor::DetachPlatformHooks() {
 #if PLATFORM_WINDOWS
-    if (GSmatchetPenTrackerRegistered) {
-        if (FWindowsApplication* WindowsApp = GetSlateWindowsApplication()) {
-            WindowsApp->RemoveMessageHandler(GSmatchetPenPointerTracker);
-        }
-        GSmatchetPenTrackerRegistered = false;
-        GSmatchetPenPointerTracker.bPenActive = false;
+    if (const TSharedPtr<GenericApplication> TrackedApp = GSmatchetPenTrackerApp.Pin()) {
+        // Only ever set to a native FWindowsApplication (see the constructor), so this downcast is exact.
+        static_cast<FWindowsApplication*>(TrackedApp.Get())->RemoveMessageHandler(GSmatchetPenPointerTracker);
     }
+    GSmatchetPenTrackerApp.Reset();
+    GSmatchetPenPointerTracker.bPenActive = false;
 #endif
 }
 
