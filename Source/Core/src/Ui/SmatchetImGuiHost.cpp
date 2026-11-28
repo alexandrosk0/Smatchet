@@ -30,6 +30,7 @@
 #include "Logger.h"
 #include "imgui_impl_dx12.h"
 #include "SmatchetImGuiFonts.h"
+#include "SmatchetImageTextureCache.h"
 #endif
 
 // Smatchet core components (needed for the pImpl state).
@@ -505,6 +506,8 @@ bool SmatchetImGuiHost::initImGuiContextAndBackend(const InitOptions& options, s
     }
     if (!Smatchet_ImplDX12_InitBackend(options.Renderer, outError)) {
         LOG_ERROR("SmatchetImGuiHost::Initialize backend init failed: %s", outError.c_str());
+        // Backend init failed, so no user texture reached the GPU; still drop the cache before the context goes.
+        SmatchetImageTextureCache::DropAllForContextTeardown();
         ImGui::DestroyContext();
         return false;
     }
@@ -633,6 +636,8 @@ void SmatchetImGuiHost::Shutdown() {
             ImGui::SetCurrentContext(ImplData->ImGuiCtx);
         }
         ImGui_ImplDX12_Shutdown();
+        // After the backend Shutdown (it freed the GPU side of every user texture), before the context goes.
+        SmatchetImageTextureCache::DropAllForContextTeardown();
         ImGui::DestroyContext();
         ImplData->ImGuiCtx = nullptr;
     }

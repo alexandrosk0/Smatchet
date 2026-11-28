@@ -498,6 +498,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # the JQL project-scope parser it delegates to. ImGui-free, no threads.
         Core/PaneCatalogScopePure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlProjectScope.cpp"
+        # User-texture destroy state machine (Persistence/UserTextureDestroyPolicy.h) — header-only,
+        # ImGui-free, no threads; walks the policy against simulated GL3 / DX12 destroy gates.
+        Core/UserTextureDestroyPolicy.test.cpp
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -580,6 +583,9 @@ add_executable(SmatchetTests
     # SmatchetImageTextureCache's stbi_info pre-check. Header-only
     # (Source/Core/include/Persistence/IconDimensionsPolicy.h); no production .cpp to link.
     Core/IconDimensionsPolicy.test.cpp
+    # User-texture destroy state machine (UserTextureDestroyPolicy.h): header-only and ImGui-free,
+    # also in the Linux subset above.
+    Core/UserTextureDestroyPolicy.test.cpp
     # mobile P1.4 — pure area-average RGBA32 downscale behind the non-Windows attachment-thumbnail
     # decode arm (stb_image cannot decode-scale; WIC does on Windows). Header-only
     # (Source/Core/include/Ui/RgbaDownscalePure.h); no production .cpp to link.
@@ -1329,6 +1335,11 @@ add_executable(SmatchetTests
     # not linked here), so the truncation/malformed-header cases run headless.
     Core/IcoDecode.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/SmatchetIcoDecode.cpp"
+    # FI-1 — SmatchetImageTextureCache destroy lifecycle against a headless ImGui context (eviction
+    # queue, per-frame tick with a simulated backend, DropAllForContextTeardown). This is the one rig TU
+    # that holds the single STB_IMAGE_IMPLEMENTATION; ASan/LSan lanes catch a texture the cache leaks.
+    Core/SmatchetImageTextureCacheTeardown.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/SmatchetImageTextureCache.cpp"
     # log-a-bug-github Phase 2 — crash marker survival + next-launch consume.
     Core/CrashSink.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/CrashSink.cpp"

@@ -54,6 +54,11 @@ void smatchet::ui::GuardImGuiDynamicTextures(ImDrawData* drawData) {
         return;
     }
     // (1) context-loss re-arm: resurrect any in-list texture left Invalid with its CPU pixels intact.
+    // A user texture the renderer destroyed for an app-requested destroy sits at Destroyed (Invalid id,
+    // pixels intact) until SmatchetImageTextureCache::TickPendingDestroys() frees it at the start of the
+    // NEXT frame, i.e. before ImGui::Render() and so before this pass. The tick therefore must run on
+    // every frame that reaches this guard; a frame that skipped it would re-arm such a texture here, which
+    // only costs a redundant upload (the following tick promotes it again).
     if (drawData->Textures != nullptr) {
         for (ImTextureData* tex : *drawData->Textures) {
             if (tex != nullptr && tex->GetTexID() == ImTextureID_Invalid &&

@@ -21,6 +21,7 @@
 #include "Logger.h"
 #include "PluginHost.h"
 #include "SmatchetImGuiFonts.h"
+#include "SmatchetImageTextureCache.h"
 #include "SmatchetTheme.h"
 #include "SmatchetUI.h"
 #include "SmatchetUiModeIds.h"
@@ -620,6 +621,8 @@ bool RecreateAfterContextLoss(android_app* app, AndroidHostState& s) {
     if (hadImgui) {
         s.ime.Shutdown();
         ImGui_ImplAndroid_Shutdown();
+        // After the backend Shutdown (it freed the GPU side of every user texture), before the context goes.
+        SmatchetImageTextureCache::DropAllForContextTeardown();
         ImGui::DestroyContext();
     }
     s.imguiReady = false;
@@ -720,6 +723,8 @@ void TeardownAll(AndroidHostState& s) {
     ConfigManager::SetAndroidSecretProvider(nullptr, nullptr);
     s.secret.Shutdown();
     if (s.imguiReady) {
+        // After the backend Shutdown (it freed the GPU side of every user texture), before the context goes.
+        SmatchetImageTextureCache::DropAllForContextTeardown();
         ImGui::DestroyContext();
     }
     // Free the boot-panel GL objects only while the context is still current (a surface is bound);

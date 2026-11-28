@@ -30,6 +30,7 @@
 #include "Ui/SmatchetImGuiTextureGuardRuntime.h"
 #include "Ui/SmatchetTooltipWheelRouter.h"
 #include "SmatchetImGuiFonts.h"
+#include "SmatchetImageTextureCache.h"
 #include "SmatchetUI.h"
 #include "SmatchetUiSession.h"
 #include "VsyncControl.h"
@@ -458,6 +459,8 @@ void TeardownPartialBoot(BootstrapContext& ctx, GLFWwindow* window, const bool u
     if (glfwBackendInitialized) {
         ImGui_ImplGlfw_Shutdown();
     }
+    // After the backend Shutdown (it freed the GPU side of every user texture), before the context goes.
+    SmatchetImageTextureCache::DropAllForContextTeardown();
     ImGui::DestroyContext();
     if (window != NULL) {
         glfwDestroyWindow(window);
@@ -765,6 +768,8 @@ void Shutdown(BootstrapContext& ctx) {
         }
         UninstallStandaloneInputBridges(ctx.window);
         ImGui_ImplGlfw_Shutdown();
+        // After the backend Shutdown (it freed the GPU side of every user texture), before the context goes.
+        SmatchetImageTextureCache::DropAllForContextTeardown();
         ImGui::DestroyContext();
         glfwDestroyWindow(ctx.window);
         ctx.window = nullptr;

@@ -6,6 +6,7 @@
 #include "AsyncLoadGatePure.h"
 #include "AttachmentPreviewLayoutPure.h"
 #include "ImageDimensionsPure.h"
+#include "SmatchetImageTextureCache.h"
 #include "SmatchetAttachmentPreviewUi.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
@@ -399,71 +400,15 @@ static bool DecodeImageFileToRgba32(const std::string& path, std::vector<unsigne
 #endif // SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS
 
 #if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
-// Pending-destroy bookkeeping: once we flip Status to ImTextureStatus_WantDestroy the renderer backend
-// will free the GPU-side resource on a later frame and set Status to Destroyed; only then is it safe to
-// ImGui::UnregisterUserTexture + IM_DELETE. User textures must use RegisterUserTexture — ImGui rebuilds
-// PlatformIO.Textures each frame from font atlases + UserTextures only (manual push_back is dropped).
-static std::vector<ImTextureData*>& AttachmentPendingDestroyTextures() {
-    static std::vector<ImTextureData*> list;
-    return list;
-}
-
-static void TickAttachmentPendingTextureDestroys() {
-    auto& pending = AttachmentPendingDestroyTextures();
-    if (pending.empty()) {
-        return;
-    }
-    for (auto it = pending.begin(); it != pending.end();) {
-        ImTextureData* tex = *it;
-        if (tex && tex->Status == ImTextureStatus_Destroyed) {
-            ImGui::UnregisterUserTexture(tex);
-            IM_DELETE(tex);
-            it = pending.erase(it);
-        } else {
-            ++it;
-        }
-    }
-}
-
-static bool CreateAttachmentTextureFromRgba(const std::vector<unsigned char>& pixels, int width, int height,
-                                            ImTextureData*& outTextureData, std::string& outError) {
-    outTextureData = nullptr;
-    outError.clear();
-    if (pixels.empty() || width <= 0 || height <= 0) {
-        outError = "Image pixels are empty.";
-        return false;
-    }
-    const size_t expected = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
-    if (pixels.size() < expected) {
-        outError = "Image pixel buffer smaller than width*height*4.";
-        return false;
-    }
-    ImTextureData* tex = IM_NEW(ImTextureData)();
-    if (!tex) {
-        outError = "Failed to allocate ImTextureData.";
-        return false;
-    }
-    tex->Create(ImTextureFormat_RGBA32, width, height);
-    if (tex->Pixels == nullptr) {
-        IM_DELETE(tex);
-        outError = "ImTextureData::Create failed to allocate pixel storage.";
-        return false;
-    }
-    memcpy(tex->Pixels, pixels.data(), expected);
-    tex->UseColors = true;
-    tex->Status = ImTextureStatus_WantCreate;
-    ImGui::RegisterUserTexture(tex);
-    outTextureData = tex;
-    return true;
-}
-
+// Hands the texture to the shared destroy queue (SmatchetImageTextureCache): one state machine, ticked
+// once per frame from SmatchetUI::Draw, walks it through WantDestroy -> Destroyed and frees it. User
+// textures must use RegisterUserTexture; ImGui rebuilds PlatformIO.Textures each frame from font atlases
+// + UserTextures only (manual push_back is dropped).
 static void DestroyAttachmentTexture(ImTextureData*& textureData) {
     if (!textureData) {
         return;
     }
-    textureData->Status = ImTextureStatus_WantDestroy;
-    textureData->WantDestroyNextFrame = true;
-    AttachmentPendingDestroyTextures().push_back(textureData);
+    SmatchetImageTextureCache::QueueUserTextureDestroy(textureData);
     textureData = nullptr;
 }
 #endif
@@ -717,8 +662,8 @@ static void MaybeKickThumbnailDecode(AppController& app, AttachmentWindowEntry& 
             }
             DestroyAttachmentTexture(target->ThumbnailTextureData);
             std::string upErr;
-            if (!CreateAttachmentTextureFromRgba(rgba, target->ImageWidth, target->ImageHeight,
-                                                 target->ThumbnailTextureData, upErr)) {
+            if (!SmatchetImageTextureCache::CreateUserTexture(rgba, target->ImageWidth, target->ImageHeight,
+                                                              target->ThumbnailTextureData, upErr)) {
                 target->PreviewError = upErr;
                 LOG_WARN("SmatchetUI: thumbnail upload failed url=%s err=%s", urlKey.c_str(), upErr.c_str());
             } else {
@@ -819,10 +764,6 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
     bool hasCollection = false;
     std::deque<AttachmentPreviewUpdate> previewUpdates;
     const AttachmentThumbnailSupport thumbnailSupport = GetAttachmentThumbnailSupport();
-#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
-    // Reclaim textures whose renderer backend has finished the WantDestroy round-trip.
-    TickAttachmentPendingTextureDestroys();
-#endif
     {
         std::lock_guard<std::mutex> lock(d.attachmentPreviewMutex);
         if (!d.attachmentCollectionQueue.empty()) {

@@ -4,6 +4,7 @@
 #include "TunableLimits.h"
 #include "Logger.h"
 #include "Persistence/IconDimensionsPolicy.h"
+#include "Persistence/UserTextureDestroyPolicy.h"
 #include "imgui_internal.h"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -61,18 +62,58 @@ static std::size_t EntryBytes(int width, int height) {
     return static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
 }
 
+// UserTextureDestroyPolicy.h works on plain ints so it needs no imgui.h; pin them to ImGui's enum so a
+// pinned-ImGui bump that reorders ImTextureStatus fails the build instead of freeing the wrong state.
+constexpr bool StatusPinned(int policyValue, ImTextureStatus imguiValue) {
+    return policyValue == static_cast<int>(imguiValue);
+}
+static_assert(StatusPinned(smatchet::persistence::kUserTextureStatus_OK, ImTextureStatus_OK), "status drift: OK");
+static_assert(StatusPinned(smatchet::persistence::kUserTextureStatus_Destroyed, ImTextureStatus_Destroyed),
+              "status drift: Destroyed");
+static_assert(StatusPinned(smatchet::persistence::kUserTextureStatus_WantCreate, ImTextureStatus_WantCreate),
+              "status drift: WantCreate");
+static_assert(StatusPinned(smatchet::persistence::kUserTextureStatus_WantUpdates, ImTextureStatus_WantUpdates),
+              "status drift: WantUpdates");
+static_assert(StatusPinned(smatchet::persistence::kUserTextureStatus_WantDestroy, ImTextureStatus_WantDestroy),
+              "status drift: WantDestroy");
+
+// Textures whose destroy was requested and that the per-frame tick has not freed yet. Guarded by its own
+// mutex (lock order: g_mutex -> g_pendingMutex; the tick takes only g_pendingMutex). ImGui itself is
+// UI-thread-only, so the lock only protects the vector against an eviction racing a tick if a caller ever
+// strays; it is uncontended in practice.
+static std::mutex g_pendingMutex;
+
 static std::vector<ImTextureData*>& PendingDestroyTextures() {
     static std::vector<ImTextureData*> list;
     return list;
 }
 
+// Marks `tex` for destruction. Sets WantDestroyNextFrame ONLY: the texture may still be referenced by
+// draw commands of the frame being built, so its status is left alone; the next tick promotes it (see
+// UserTextureDestroyPolicy.h). Idempotent: a texture already queued is not queued twice.
 static void QueueTextureDestroy(ImTextureData* tex) {
     if (tex == nullptr) {
         return;
     }
-    tex->Status = ImTextureStatus_WantDestroy;
+    std::lock_guard<std::mutex> lock(g_pendingMutex);
+    if (tex->WantDestroyNextFrame) {
+        return;
+    }
     tex->WantDestroyNextFrame = true;
     PendingDestroyTextures().push_back(tex);
+}
+
+// Unregisters (while a context is current) and deletes a user texture. The backend must no longer hold
+// a GPU object for it: callers reach here only from Destroyed / never-uploaded states or after the
+// backend's own Shutdown destroyed every registered texture.
+static void ReleaseUserTexture(ImTextureData* tex) {
+    if (tex == nullptr) {
+        return;
+    }
+    if (ImGui::GetCurrentContext() != nullptr && tex->RefCount > 0) {
+        ImGui::UnregisterUserTexture(tex);
+    }
+    IM_DELETE(tex);
 }
 
 static bool CreateTextureFromRgba(const std::vector<unsigned char>& pixels, int width, int height,
@@ -243,21 +284,68 @@ InsertRgbaUnlocked(const std::string& cacheKey, const std::vector<unsigned char>
 
 namespace SmatchetImageTextureCache {
 
+bool CreateUserTexture(const std::vector<unsigned char>& pixels, int width, int height, ImTextureData*& outTexture,
+                       std::string& outError) {
+    return CreateTextureFromRgba(pixels, width, height, outTexture, outError);
+}
+
+void QueueUserTextureDestroy(ImTextureData* tex) { QueueTextureDestroy(tex); }
+
 void TickPendingDestroys() {
-    auto& pending = PendingDestroyTextures();
+    std::lock_guard<std::mutex> lock(g_pendingMutex);
+    std::vector<ImTextureData*>& pending = PendingDestroyTextures();
     if (pending.empty()) {
         return;
     }
-    for (auto it = pending.begin(); it != pending.end();) {
-        ImTextureData* tex = *it;
-        if (tex && tex->Status == ImTextureStatus_Destroyed) {
-            ImGui::UnregisterUserTexture(tex);
-            IM_DELETE(tex);
-            it = pending.erase(it);
-        } else {
-            ++it;
+    using smatchet::persistence::NextTextureDestroyStep;
+    using smatchet::persistence::TextureDestroyAction;
+    using smatchet::persistence::TextureDestroyStep;
+    // In-place compaction: survivors keep their relative order, freed textures drop out.
+    std::size_t kept = 0;
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        ImTextureData* tex = pending[i];
+        if (tex == nullptr) {
+            continue;
         }
+        const TextureDestroyStep step =
+            NextTextureDestroyStep(static_cast<int>(tex->Status), tex->TexID == ImTextureID_Invalid,
+                                   tex->BackendUserData != nullptr, tex->UnusedFrames);
+        if (step.Action == TextureDestroyAction::FreeNow) {
+            ReleaseUserTexture(tex);
+            continue;
+        }
+        tex->Status = static_cast<ImTextureStatus>(step.NewStatus);
+        tex->UnusedFrames = step.NewUnusedFrames;
+        pending[kept++] = tex;
     }
+    pending.resize(kept);
+}
+
+std::size_t PendingDestroyCount() {
+    std::lock_guard<std::mutex> lock(g_pendingMutex);
+    return PendingDestroyTextures().size();
+}
+
+void DropAllForContextTeardown() {
+    // Lock order g_mutex -> g_pendingMutex, as in eviction.
+    std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::mutex> pendingLock(g_pendingMutex);
+    // The backend's Shutdown already destroyed the GPU side of every registered user texture
+    // (RefCount == 1); only the CPU-side ImTextureData and the registration remain. Live cache entries
+    // and queued destroys are released the same way, then the bookkeeping is reset so a later context
+    // (UI-test relaunch, host re-init) starts empty instead of handing out dangling pointers.
+    for (std::unordered_map<std::string, CacheValue>::iterator it = g_map.begin(); it != g_map.end(); ++it) {
+        ReleaseUserTexture(it->second.Texture);
+        it->second.Texture = nullptr;
+    }
+    g_map.clear();
+    g_lru.clear();
+    g_totalBytes = 0;
+    std::vector<ImTextureData*>& pending = PendingDestroyTextures();
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        ReleaseUserTexture(pending[i]);
+    }
+    pending.clear();
 }
 
 bool TryGetCached(const std::string& cacheKey, SmatchetLoadedIconTexture& out) {
