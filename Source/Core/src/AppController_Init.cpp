@@ -78,7 +78,7 @@
 #include "SmatchetUI.h"
 #include "SmatchetToast.h"
 #include "SmatchetMergeWatchNotifyServer.h"
-#include "Ui/SmatchetFieldRender.h" // RunLegacyStartupSweeps calls the free fn SetCallstackFieldIdHint declared here
+#include "Ui/SmatchetFieldRender.h" // the free fn SetCallstackFieldIdHint declared here
 
 #include <ghc/filesystem.hpp>
 
@@ -270,9 +270,16 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
 
     localCacheDbPath_ = dbPath;
 
-    // DR6: publish the initial cache via atomic_store — off-thread workers snapshot with
-    // atomic_load, mirroring the ADR-0012 Backend atomic-swap discipline.
-    OpenInitialCache_(dbPath);
+    // The cache opens on a worker (LaunchStartupCacheOpen_, from InitBackends, once the resolved cache key is known).
+    // Until it is published `Cache` is null, the gate is up and the state is Opening: nothing syncs, enqueues are
+    // refused with "still opening", and every reader null-guards.
+    {
+        smatchet::persistence::LocalCacheStatus opening;
+        opening.State = smatchet::persistence::LocalCacheState::Opening;
+        opening.Path = dbPath;
+        SetLocalCacheStatus_(opening, false);
+        cacheRecreating_.store(true);
+    }
     initLeftViewHistory_();
 
     // Multi-grid Slice 1b (ADR-0018 decision 4): seed the default context's cache namespace
@@ -320,72 +327,6 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
         impl_->luaHost_->AddAutomationLogSink(std::move(s));
     }
     pendingLogSinks_.clear();
-
-    // No cache at all (even the session-only fallback failed): nothing to sweep, and every other reader null-guards.
-    const std::shared_ptr<LocalCacheManager> sweepCache = std::atomic_load(&Cache);
-    if (!sweepCache) {
-        return;
-    }
-    try {
-
-        const size_t dropped = sweepCache->RunOneTimeLegacyDropPendingAtMaxAttempts();
-
-        if (dropped > 0) {
-
-            char buf[384];
-
-            std::snprintf(buf, sizeof(buf),
-
-                          "Startup: dropped %zu legacy offline pending row(s) already at max retries "
-
-                          "(not archived). They were removed from the active queue only.",
-
-                          dropped);
-
-            offlineQueue_->legacyPendingStartupBanner_ = buf;
-        }
-
-    } catch (const std::exception& ex) {
-
-        LOG_ERROR("AppController::Initialize legacy pending cleanup failed: %s", ex.what());
-
-    } catch (...) {
-
-        LOG_ERROR("AppController::Initialize legacy pending cleanup failed: unknown exception");
-    }
-}
-
-void AppController::RunOneTimeCacheMigrations(const TrackerConfig& cfg, const std::string& resolvedCacheKey) {
-    if (!Cache) {
-        return;
-    }
-    try {
-        // Legacy rows were necessarily cached against the then-only configured backend.
-        (void)Cache->RunOneTimeTicketsV2CopyMigration(resolvedCacheKey);
-    } catch (const std::exception& ex) {
-        // Pillar 3 graceful degradation — a failed copy leaves the flag unset
-        // (transactional), so the next launch retries; the session continues with
-        // whatever v2 already holds.
-        LOG_ERROR("AppController: tickets_v2 copy migration failed: %s", ex.what());
-    }
-    // Multi-grid Slice 1c: backfill the pending-queue backend_key columns once — legacy
-    // queue rows were necessarily queued against the then-only configured backend.
-    try {
-        (void)Cache->RunOneTimePendingQueueBackendKeyStamp(resolvedCacheKey);
-    } catch (const std::exception& ex) {
-        // Same graceful-degradation contract as the copy migration above: the
-        // transactional stamp leaves the flag unset on failure, so the next launch retries.
-        LOG_ERROR("AppController: pending-queue backend_key stamp failed: %s", ex.what());
-    }
-    // #2268: move rows keyed by tracker kind ("Jira", "Plane", ...) to the site-and-account keys the
-    // cache now uses, once, after the stamps above and before the first ticket read or replay tick.
-    try {
-        (void)Cache->RunOneTimeCacheIdentityRekey(smatchet::cache_keys::LegacyCacheKeyRekeys(cfg));
-    } catch (const std::exception& ex) {
-        // Same contract: the transaction leaves the flag unset on failure, so the next launch retries.
-        // Until then the legacy rows sit under keys no context uses: hidden and held, never replayed.
-        LOG_ERROR("AppController: cache site-key re-key failed: %s", ex.what());
-    }
 }
 
 std::string AppController::InitBackends(TrackerConfig& cfgOut) {
@@ -458,12 +399,6 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     // Re-stamp the cache namespace with the RESOLVED tracker — an env fixture hook above may
     // have overridden the configured type (multi-grid Slice 1b).
     ctx.SetCacheBackendKey(smatchet::cache_keys::TrackerCacheBackendKey(cfg));
-    // One-time legacy migrations run HERE, against the authoritative resolved key (CR-948-1):
-    // this is the same key every live read/write path queries (mirrors what
-    // StartRecreateLocalCacheDatabase already does). Must stay BEFORE RunLegacyStartupSweeps (which
-    // archives pending rows — archived rows must carry stamped keys) and BEFORE the first
-    // ticket read (RefreshLocalData in InitFieldCatalog) / any replay tick.
-    RunOneTimeCacheMigrations(cfg, ctx.CacheBackendKeyCopy());
     std::atomic_store(&ctx.Backend, std::shared_ptr<ITrackerBackend>(backendFactory_->Create(activeTracker, cfg)));
     if (!ctx.Backend) {
         LOG_ERROR("AppController: tracker backend factory returned null for type '%s'.", activeTracker.c_str());
@@ -479,7 +414,16 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
 
     const std::string activeTrackerType = ctx.Backend ? ctx.Backend->Connectivity().GetTrackerType() : "Unknown";
 
-    RunLegacyStartupSweeps(activeTrackerType);
+    // The cache opens now, on a worker, against the authoritative resolved key (CR-948-1): the same key every live
+    // read/write path queries. The one-time migrations run there before the cache is published, so before the first
+    // ticket read or replay tick, and before the legacy sweeps (which archive pending rows: archived rows must carry
+    // stamped keys).
+    StartupCacheOpenRequest openRequest;
+    openRequest.TargetPath = localCacheDbPath_;
+    openRequest.FocusedCacheKey = ctx.CacheBackendKeyCopy();
+    openRequest.Rekeys = smatchet::cache_keys::LegacyCacheKeyRekeys(cfg);
+    openRequest.ActiveTrackerType = activeTrackerType;
+    LaunchStartupCacheOpen_(std::move(openRequest));
 
     // Publish the resolved config, which an env hook may have mutated, so the next phase
     // builds its field-catalog cache key from the exact TrackerConfig the backend used.
@@ -539,48 +483,6 @@ void AppController::MaybeInstallGitHubFixtureFactory(const std::string& activeTr
         std::string path_;
     };
     backendFactory_ = std::make_unique<FixtureGitHubFactory>(fixturePath);
-}
-
-void AppController::RunLegacyStartupSweeps(const std::string& activeTrackerType) {
-    // remove-global-project-key.md: one-shot legacy-project sweeps.
-    // Drain legacy global project state into per-entity carriers (offline-queue payloads,
-    // Plane view query JSON). Each sweep is guarded by its own `cache_meta` flag so it runs
-    // exactly once per database file; subsequent launches are no-ops.
-    if (offlineQueue_) {
-        try {
-            // Legacy carriers were removed from TrackerConfig. Pass empty values; the sweep's
-            // `legacy_project_swept_v1` cache_meta marker short-circuits on already-migrated installs.
-            offlineQueue_->RunLegacyProjectSweep(std::string(), std::string(), activeTrackerType);
-        } catch (const std::exception& ex) {
-            LOG_ERROR("AppController::Initialize legacy-project offline sweep failed: %s", ex.what());
-        }
-    }
-    if (focusedContext().Backend && Cache && activeTrackerType == "Plane") {
-        try {
-            static const std::string kPlaneSweepFlag = "legacy_plane_view_swept_v1";
-            if (!Cache->HasCacheMetaFlag(kPlaneSweepFlag)) {
-                // The legacy `plane_project_id` carrier was removed. Walk the views once to log
-                // any that still lack project scope, then set the marker so we never look again.
-                PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
-                const std::string backendKey = ConfigManager::NormalizeViewsBackendKey("Plane");
-                auto bucketIt = disk.Backends.find(backendKey);
-                if (bucketIt != disk.Backends.end()) {
-                    for (const ViewDefinition& view : bucketIt->second.Views) {
-                        const std::string extracted =
-                            focusedContext().Backend->Connectivity().ExtractProjectFromQuery(view.Jql);
-                        if (!extracted.empty()) {
-                            continue;
-                        }
-                        LOG_WARN("Plane view '%s' has no project scope; pick a project in the view editor",
-                                 view.Name.c_str());
-                    }
-                }
-                Cache->SetCacheMetaFlag(kPlaneSweepFlag);
-            }
-        } catch (const std::exception& ex) {
-            LOG_ERROR("AppController::Initialize legacy Plane-view sweep failed: %s", ex.what());
-        }
-    }
 }
 
 void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string& activeTrackerType) {

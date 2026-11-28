@@ -348,6 +348,20 @@ void DrawGeneralLocalDatabaseSection(IAppSync& sync, UiDrawSession& d) {
                                "session, so edits cannot be saved offline. Fix the cause and restart Smatchet.",
                                cacheStatus.LastError.c_str()));
     }
+    if (sessionOnly) {
+        // The retry runs on a worker behind the same gate as the first open, so the button is off while it runs.
+        ImGui::BeginDisabled(sync.IsLocalCacheRecreating());
+        if (ImGui::Button(SmatchetLocalization::T("prefs.local_db.retry", "Retry opening"))) {
+            const VoidResult reopened = sync.StartReopenLocalCache();
+            if (!reopened.has_value()) {
+                SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.local_cache", "Local database"),
+                                                      reopened.error(), ToastType::Warning, 6000);
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("%s", SmatchetLocalization::T("prefs.local_db.retry_tooltip",
+                                                            "Try the database file again without restarting."));
+    }
     ImGui::Spacing();
     // The recreate runs on a worker behind a gate (IAppSync::StartRecreateLocalCacheDatabase); a second one cannot
     // start while it runs, and the cue says why the button is off.

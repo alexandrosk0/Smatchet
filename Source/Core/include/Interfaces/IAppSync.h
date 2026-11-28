@@ -77,6 +77,9 @@ class IAppSync {
     virtual std::string GetResolvedLocalCacheDbPath() const = 0;
     /// The cache's state for the user: ready, or memory-only for this session after a failed open (with the reason),
     /// plus what a corrupt-file rebuild did. A copy; any thread. Non-pure: facet fakes report a default (Ready) status.
+    /// UI thread: tries the cache's database file again after a session-only start (the Preferences "Retry"); a full
+    /// sync follows on success. Non-pure: facet fakes report it unsupported.
+    virtual VoidResult StartReopenLocalCache() { return VoidResult::Err("unsupported"); }
     virtual smatchet::persistence::LocalCacheStatus GetLocalCacheStatus() const {
         smatchet::persistence::LocalCacheStatus status;
         status.State = smatchet::persistence::LocalCacheState::Ready;

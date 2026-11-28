@@ -1444,3 +1444,27 @@ TEST_CASE("with no enqueue block a create and a field edit queue as before") {
     CHECK(svc.QueueCreateOffline(MakeBasicCreateDraft("blocked"), std::string(), &err) > 0);
     CHECK(err.empty());
 }
+
+// --- The startup legacy-project sweep against an explicit cache (it runs on the open worker, before publication) -----
+
+TEST_CASE("RunLegacyProjectSweepOn recovers a queued create's project from its parent key, once") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    OfflineQueueService svc(deps);
+    IssueDraft draft = MakeBasicCreateDraft("legacy row");
+    draft.ProjectKey.clear();           // a row queued before the global project was removed
+    draft.ExistingIssueKey = "PROJ-12"; // the parent key names the project
+    const std::int64_t id = deps.CacheImpl->EnqueuePendingCreate("Jira@test#1", IssueDraftHelpers::ToJson(draft));
+    REQUIRE(id > 0);
+
+    CHECK(svc.RunLegacyProjectSweepOn(*deps.CacheImpl, "Jira")); // it changed a row
+    const std::vector<PendingCreate> after = deps.CacheImpl->LoadPendingCreates();
+    REQUIRE(after.size() == 1u);
+    IssueDraft recovered;
+    std::string err;
+    REQUIRE(IssueDraftHelpers::FromJson(after[0].Payload, recovered, err));
+    CHECK(recovered.ProjectKey == "PROJ");
+    CHECK(deps.CacheImpl->HasCacheMetaFlag("legacy_project_swept_v1"));
+
+    CHECK_FALSE(svc.RunLegacyProjectSweepOn(*deps.CacheImpl, "Jira")); // flagged: nothing to do the second time
+}

@@ -753,6 +753,10 @@ const TranslationEntry kEntries[] = {
      u8"La base de données locale est encore en cours d'ouverture : cela ne peut pas être mis en file hors ligne "
      u8"pour l'instant. Réessayez dans un instant."},
     {"toast.local_cache", "Local database", u8"Base de données locale"},
+    {"cache.opening_cue", "Opening the local database...", u8"Ouverture de la base de données locale..."},
+    {"prefs.local_db.retry", "Retry opening", u8"Réessayer l'ouverture"},
+    {"prefs.local_db.retry_tooltip", "Try the database file again without restarting.",
+     u8"Réessayer d'ouvrir le fichier de base de données sans redémarrer."},
     {"prefs.local_db.session_only",
      "The database could not be opened (%s). Smatchet is using a temporary cache for this session, so edits cannot "
      "be saved offline. Fix the cause and restart Smatchet.",

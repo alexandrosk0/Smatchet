@@ -31,7 +31,7 @@ struct CacheRecreateOutcome {
 /// no file of its own to delete, and deleting the file the open just failed on could only lose more). A refusal
 /// changes nothing.
 inline std::string CacheRecreateStartRefusal(bool dbPathEmpty, bool shuttingDown, bool alreadyRecreating,
-                                             bool cacheNotOpen = false) {
+                                             bool cacheNotOpen = false, bool cacheOpening = false) {
     if (dbPathEmpty) {
         return "Local cache database path is not set.";
     }
@@ -40,6 +40,9 @@ inline std::string CacheRecreateStartRefusal(bool dbPathEmpty, bool shuttingDown
     }
     if (alreadyRecreating) {
         return "The local cache is already being recreated.";
+    }
+    if (cacheOpening) {
+        return "The local cache is still opening. Try again in a moment.";
     }
     if (cacheNotOpen) {
         return "The local cache is not open on its database file, so it cannot be recreated. Restart Smatchet after "

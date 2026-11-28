@@ -214,9 +214,56 @@ SQLite::Database& LocalCacheManager::conn(const ConnGuard& guard) {
     return db_;
 }
 
-LocalCacheManager::LocalCacheManager(const std::string& dbPath)
+// The interruptible open's busy handler: sleeps 10 ms between lock attempts, and gives up (returns 0) once the abort
+// flag is set or the usual 5 s busy timeout has elapsed. SQLite calls it from inside the statement that is waiting.
+namespace lcm_detail {
+struct OpenBusyState {
+    const std::atomic<bool>* Abort = nullptr;
+    std::chrono::steady_clock::time_point Start = std::chrono::steady_clock::now();
+    bool AbortRequested() const { return Abort != nullptr && Abort->load(std::memory_order_acquire); }
+};
+} // namespace lcm_detail
+
+namespace {
+
+constexpr long long kOpenBusyTimeoutMs = 5000;
+
+int OpenBusyHandler(void* context, int /*attempts*/) {
+    const lcm_detail::OpenBusyState* state = static_cast<const lcm_detail::OpenBusyState*>(context);
+    const long long waitedMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - state->Start).count();
+    if (state->AbortRequested() || waitedMs >= kOpenBusyTimeoutMs) {
+        return 0;
+    }
+    sqlite3_sleep(10);
+    return 1;
+}
+
+} // namespace
+
+LocalCacheManager::LocalCacheManager(const std::string& dbPath) : LocalCacheManager(dbPath, OpenOptions()) {}
+
+LocalCacheManager::LocalCacheManager(const std::string& dbPath, const OpenOptions& options)
     : dbPath_(dbPath), db_(dbPath_, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX) {
     LOG_INFO("LocalCacheManager: opening db path=%s", dbPath_.c_str());
+    lcm_detail::OpenBusyState busyState;
+    busyState.Abort = options.Abort;
+    if (options.Abort != nullptr) {
+        openBusy_ = &busyState;
+    }
+    // Whatever way the constructor ends, the interruptible handler goes and the ordinary busy timeout returns.
+    struct RestoreBusyTimeout {
+        LocalCacheManager& Self;
+        ~RestoreBusyTimeout() {
+            Self.openBusy_ = nullptr;
+            try {
+                const ConnGuard guard(Self, "OpenRestore");
+                Self.conn(guard).setBusyTimeout(static_cast<int>(kOpenBusyTimeoutMs));
+            } catch (const std::exception& ex) {
+                LOG_WARN("LocalCacheManager: could not restore the busy timeout: %s", ex.what());
+            }
+        }
+    } restoreBusyTimeout{*this};
     {
         const ConnGuard guard(*this, "Open");
         ApplyWalPragmas(guard);
@@ -236,6 +283,9 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     // sleep (it is out of scope in the catch).
     constexpr int kMaxInitAttempts = 5;
     for (int attempt = 0;; ++attempt) {
+        if (busyState.AbortRequested()) {
+            throw std::runtime_error("LocalCacheManager: the open was aborted");
+        }
         try {
             const ConnGuard guard(*this, "InitSchema");
             InitSchema(guard);
@@ -249,6 +299,9 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
             }
             if (smatchet::ShouldRetryBusyInit(code, attempt, kMaxInitAttempts)) {
                 const int backoffMs = smatchet::BusyRetryBackoffMs(attempt);
+                if (busyState.AbortRequested()) {
+                    throw std::runtime_error("LocalCacheManager: the open was aborted");
+                }
                 LOG_WARN("LocalCacheManager: schema-init contended (%s); retry %d/%d after %d ms", ex.what(),
                          attempt + 2, kMaxInitAttempts, backoffMs);
                 std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
@@ -290,7 +343,11 @@ void LocalCacheManager::ApplyWalPragmas(const ConnGuard& guard) {
     // writer is active; synchronous=NORMAL is the recommended WAL pairing (fsync on checkpoint,
     // not every commit).
     try {
-        db.setBusyTimeout(5000);
+        db.setBusyTimeout(static_cast<int>(kOpenBusyTimeoutMs));
+        if (openBusy_ != nullptr) {
+            // Replaces the plain timeout above for the duration of the open, so an abort is seen within 10 ms.
+            sqlite3_busy_handler(db.getHandle(), &OpenBusyHandler, openBusy_);
+        }
         db.exec("PRAGMA journal_mode=WAL");
         db.exec("PRAGMA synchronous=NORMAL");
     } catch (const std::exception& ex) {

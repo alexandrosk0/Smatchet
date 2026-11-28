@@ -264,13 +264,11 @@ class AppController : public IAppThreading,
     /// No-op (leaving backendFactory_ untouched) otherwise.
     void MaybeInstallGitHubFixtureFactory(const std::string& activeTracker);
 
-    /// InitBackends helper — run the one-time legacy-project / legacy-Plane-view
-    /// sweeps for the resolved backend, each guarded by its own cache_meta marker.
-    void RunLegacyStartupSweeps(const std::string& activeTrackerType);
-    /// InitBackends helper — the one-time cache migrations (tickets_v2 copy, queue key stamp, site-key
-    /// re-key), run before the first ticket read or replay tick. Each is transactional: a failure is logged
-    /// and retried at the next start.
-    void RunOneTimeCacheMigrations(const TrackerConfig& cfg, const std::string& resolvedCacheKey);
+    /// The one-time cache migrations (tickets_v2 copy, queue key stamp, site-key re-key), run on the startup open
+    /// worker before the cache is published, so before the first ticket read or replay tick. Each is transactional: a
+    /// failure is logged and retried at the next start. Static: it touches only `cache`.
+    static void RunOneTimeCacheMigrations_(LocalCacheManager& cache, const std::string& resolvedCacheKey,
+                                           const std::vector<std::pair<std::string, std::string>>& rekeys);
 
     /// Phase 3 — resolve the Lua scripts directory, probe script files, refresh
     /// local data, and restore the field catalog from a local snapshot when present.
@@ -384,6 +382,18 @@ class AppController : public IAppThreading,
     VoidResult
     StartRecreateLocalCacheDatabase(std::function<void(const smatchet::sync::CacheRecreateOutcome&)> onDone) override;
     bool IsLocalCacheRecreating() const override { return cacheRecreating_.load(); }
+    /// True from `Initialize` (or a retry) until the cache open has finished and been published. Any thread.
+    bool IsLocalCacheOpening() const;
+    /// UI thread: waits up to `timeout` for the open to finish, running the main-thread completions meanwhile (the
+    /// one-shot CLI has no frame loop to do that). True once the cache is open (ready or session-only).
+    bool WaitForLocalCacheOpen(std::chrono::milliseconds timeout);
+    /// UI thread: tries the durable file again after a session-only start (the Preferences "Retry"). The open runs on
+    /// a worker behind the same gate as the first one; on success a full sync follows. Err when it cannot start.
+    VoidResult StartReopenLocalCache() override;
+    /// TEST SEAM (headless AppController tests): the startup open for `dbPath` and cache key `cacheKey`, as
+    /// `InitBackends` launches it, without a full `Initialize`. Raises the gate and sets the state to Opening. No
+    /// production caller.
+    void StartStartupCacheOpenForTest(const std::string& dbPath, const std::string& cacheKey);
     /// Why a durable offline enqueue is refused right now (`None` = allowed). Any thread; lock-free.
     smatchet::persistence::CacheEnqueueBlock LocalCacheEnqueueBlock() const;
     smatchet::persistence::LocalCacheStatus GetLocalCacheStatus() const override;
@@ -2186,9 +2196,41 @@ class AppController : public IAppThreading,
         static_cast<std::uint8_t>(smatchet::persistence::LocalCacheState::Ready)};
     /// Publishes `status` as the cache's status and arms the one-shot notice when `notify`.
     void SetLocalCacheStatus_(const smatchet::persistence::LocalCacheStatus& status, bool notify);
-    /// Opens the cache at `dbPath` and publishes it. A failed open degrades to a memory-only cache for the session
-    /// (state SessionOnly) instead of throwing out of Initialize; with that failing too, `Cache` stays null.
-    void OpenInitialCache_(const std::string& dbPath);
+    /// What the startup open needs, captured by value on the UI thread: the worker never reads `localCacheDbPath_`.
+    struct StartupCacheOpenRequest {
+        bool IsReopen = false;
+        std::string TargetPath;
+        std::string FocusedCacheKey;
+        std::vector<std::pair<std::string, std::string>> Rekeys;
+        std::string ActiveTrackerType;
+    };
+    /// What the open worker hands back to the UI thread.
+    struct StartupCacheOpenOutcome {
+        std::shared_ptr<LocalCacheManager> OpenedCache; ///< null when even the memory-only cache failed
+        bool Opened = false;                            ///< the durable file is open
+        bool SessionOnly = false;                       ///< the file failed and OpenedCache is memory-only
+        std::string OpenedPath;
+        std::string Error;
+        bool Aborted = false; ///< shutdown began: nothing is published
+        std::size_t LegacyDropped = 0;
+        bool QueueChangedBySweep = false;
+        /// (view name, query) of the saved Plane views the one-time sweep has to check for a project scope.
+        std::vector<std::pair<std::string, std::string>> PlaneViewsToCheck;
+    };
+    /// UI thread: raises the gate, sets the state to Opening and starts the open on `cacheRecreateWorker_`; the
+    /// completion is posted to the UI thread (FinishStartupCacheOpen_). A worker that cannot start degrades to a
+    /// memory-only cache at once.
+    void LaunchStartupCacheOpen_(StartupCacheOpenRequest request);
+    /// Worker: opens the file (interruptible), runs the one-time migrations and sweeps, falls back to a memory-only
+    /// cache when the file will not open. Never throws.
+    StartupCacheOpenOutcome OpenStartupCacheOnWorker_(const StartupCacheOpenRequest& request) noexcept;
+    /// UI thread, no SQLite: publishes the cache and the status, lifts the gate, refreshes what read the missing
+    /// cache, and (after a retry) starts the full sync.
+    void FinishStartupCacheOpen_(StartupCacheOpenOutcome outcome, bool isReopen);
+    /// UI thread: flags every pane's sync cancelled and blocked behind the cache gate; returns the worker threads
+    /// handed out to be joined OFF the UI thread, and the services in `outServices`.
+    std::shared_ptr<std::vector<std::thread>>
+    QuiescePaneSyncsForCacheGate_(std::vector<TicketSyncService*>& outServices);
 
     /// Set once in `Initialize` (which runs on the UI thread) and read by `IsOnUiThread`
     /// from any thread. `std::thread::id` is trivially copyable; atomic load via std::atomic

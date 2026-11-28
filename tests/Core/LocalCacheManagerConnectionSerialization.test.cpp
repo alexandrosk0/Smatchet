@@ -5,6 +5,7 @@
 
 #include "LocalCacheManager.h"
 
+#include "LocalCacheManagerTestAccess.h"
 #include "SqliteMemFixture.h"
 
 #include <doctest/doctest.h>
@@ -20,17 +21,6 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-
-// Friend of LocalCacheManager and its ConnGuard: the one door tests use to hold the connection.
-struct LocalCacheManagerTestAccess {
-    template <typename Fn> static void WithGuard(LocalCacheManager& mgr, Fn&& fn) {
-        const LocalCacheManager::ConnGuard guard(mgr, "TestHold");
-        fn(guard);
-    }
-    static SQLite::Database& Conn(LocalCacheManager& mgr, const LocalCacheManager::ConnGuard& guard) {
-        return mgr.conn(guard);
-    }
-};
 
 namespace {
 

@@ -189,6 +189,13 @@ class OfflineQueueService {
     void RunLegacyProjectSweep(const std::string& legacyJiraProjectKey, const std::string& legacyPlaneProjectId,
                                const std::string& trackerType);
 
+    /// The same sweep against an explicit cache, for the startup open: it runs on the open worker BEFORE the cache is
+    /// published, so it cannot reach the cache through the deps. Touches no service state and posts nothing. Returns
+    /// true when it changed a queued row (the caller then refreshes the queue snapshot once the cache is published).
+    /// `legacyProjectKey` is the fallback project for a row with no recoverable one (empty: dead-letter it).
+    bool RunLegacyProjectSweepOn(ISyncCache& cache, const std::string& trackerType,
+                                 const std::string& legacyProjectKey = std::string());
+
   private:
     // --- TickOfflineFieldEdits replay helpers ---------------------------------------------
     // TickOfflineFieldEdits dispatches a background task whose body is a thin loop over these
@@ -314,7 +321,7 @@ class OfflineQueueService {
 
     /// Sweep a single pending-create row: recover its project key (parent prefix or legacy
     /// fallback), or dead-letter it. Counts the outcome into `tally`.
-    void SweepOneLegacyPendingCreate(const PendingCreate& pc, const std::string& legacyForBackend,
+    void SweepOneLegacyPendingCreate(ISyncCache& cache, const PendingCreate& pc, const std::string& legacyForBackend,
                                      LegacyProjectSweepTally& tally);
 
     /// Reread both queues from `cache` and publish them (worker).

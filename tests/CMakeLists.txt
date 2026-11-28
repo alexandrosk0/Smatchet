@@ -213,6 +213,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/LocalCacheConcurrentSeed.test.cpp
         # One shared connection, serialized: rollback isolation, no nested BEGIN, re-entry throws.
         Core/LocalCacheManagerConnectionSerialization.test.cpp
+        # Interruptible open: OpenOptions::Abort ends a wait on a locked file promptly.
+        Core/LocalCacheManagerOpenOptions.test.cpp
         # lookup_cache (Pillar 6 offline lookups), in-memory cases — LocalCacheManager_Lookup.cpp
         # linked below.
         Core/LocalCacheManagerLookup.test.cpp
@@ -880,6 +882,8 @@ add_executable(SmatchetTests
     Core/LocalCacheConcurrentSeed.test.cpp
     # One shared connection, serialized: rollback isolation, no nested BEGIN, re-entry throws.
     Core/LocalCacheManagerConnectionSerialization.test.cpp
+    # Interruptible open: OpenOptions::Abort ends a wait on a locked file promptly.
+    Core/LocalCacheManagerOpenOptions.test.cpp
     # Multi-grid Slice 1b (ADR-0018) — tickets_v2 backend-key namespacing: one-time copy
     # migration round-trip on a pre-migration fixture DB, idempotence via cache_meta flag,
     # and two-backend disjointness on a colliding numeric id. Links the production LCM TU
@@ -2446,6 +2450,8 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
         # File-backed by design (named in .coderabbit.yaml's test rules): the cache recreate deletes and reopens
         # the database file, so this TU opens a real file inside the test env's temp directory.
         Core/AppControllerCacheRecreate.posix.test.cpp
+        # The startup cache open on a worker: Opening gate, session-only degrade, retry, abort on destruction.
+        Core/AppControllerStartupCacheOpen.posix.test.cpp
         # ~AppController joins tasks launched while shutdown begins (#2308): a stress over the real controller.
         Core/AppControllerShutdown.posix.test.cpp
     )

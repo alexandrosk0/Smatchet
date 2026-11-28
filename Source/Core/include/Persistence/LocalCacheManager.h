@@ -62,9 +62,21 @@ class LocalCacheCloseSignal {
     bool closed_ = false;
 };
 
+namespace lcm_detail {
+struct OpenBusyState; // defined in LocalCacheManager.cpp
+}
+
 class LocalCacheManager : public ISyncCache, public ILookupCache {
   public:
+    /// Options for an open that must stay interruptible (a startup open on a worker).
+    struct OpenOptions {
+        /// While the open waits for a lock another process holds, this is checked every 10 ms; once it is true the open
+        /// gives up at once (the constructor throws) instead of waiting out the busy timeout. Must outlive the call.
+        const std::atomic<bool>* Abort = nullptr;
+    };
+
     explicit LocalCacheManager(const std::string& dbPath);
+    LocalCacheManager(const std::string& dbPath, const OpenOptions& options);
 
     /// Fires when this manager is fully destroyed (connection closed), on whichever thread drops the last reference.
     std::shared_ptr<LocalCacheCloseSignal> CloseSignal() const { return closeNotifier_.Signal; }
@@ -329,6 +341,8 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     /// same location after quarantining the bad file. Declared before `db_` so it is
     /// initialised first (the `db_` member's path argument reads it).
     const std::string dbPath_;
+    /// Busy-wait state of the interruptible open (see OpenOptions); only non-null while the constructor runs.
+    lcm_detail::OpenBusyState* openBusy_ = nullptr;
     /// The one connection. Reachable only through `conn(guard)`; opened FULLMUTEX, but SQLite's own mutex only
     /// serializes single calls, so a whole operation (a transaction, a prepared statement's bind-step-reset cycle)
     /// is serialized by `connMutex_` below.
