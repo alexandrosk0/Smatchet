@@ -29,6 +29,18 @@ struct TrackerQueryAcpCallbackUserData {
     QuerySuggestBuild* suggestBuild = nullptr;
     QuerySuggestMeta* meta = nullptr;
     TrackerQuerySuggestKind kind = TrackerQuerySuggestKind::JiraJql;
+    /** Where the rows come from: `presetBuild` when set (copied as it is); else the suggest engine when
+     *  `runEngine`; else no rows. Enter / Tab / Esc and a queued replacement work in all three, and
+     *  `fields`, `users` and `suggestBuild` must be set in all three. */
+    bool runEngine = true;
+    const QuerySuggestBuild* presetBuild = nullptr;
+};
+
+/** How one host wants its suggestion list drawn. */
+struct TrackerQueryAcpPopupOptions {
+    TrackerQuerySuggestKind kind = TrackerQuerySuggestKind::JiraJql;
+    /** Off: pointing at a row only highlights it, so Enter / Tab never accept it; a click still picks. */
+    bool hoverSelects = true;
 };
 
 /** ImGui InputText callback: suggestions, arrows, Enter/Tab/Esc, caret restore. */
@@ -39,14 +51,27 @@ bool TrackerQueryAcp_QueueApplyReplacement(JqlEditorState& st, const QuerySugges
 /** Apply pending replace queued by TrackerQueryAcp_QueueApplyReplacement into st.buf. */
 void TrackerQueryAcp_FlushPendingReplace(JqlEditorState& st);
 
+/** Reset what belongs to the text in the box: the queued replacement, the selection and caret, the
+ *  rows and error of the user search, and any pending Enter. Call when the host loads another query
+ *  into `st.buf`. Names already learned stay. A running lookup is left to finish; its poll drops a
+ *  stale answer. */
+void TrackerQueryAcp_ResetForNewText(JqlEditorState& st);
+
+/** TrackerQueryAcp_ResetForNewText plus everything learned for the previous owner: resolved user
+ *  names, the account-id lookup state and the popup. Call when the editor moves to another box,
+ *  which may talk to another tracker. Neither future is destroyed or reassigned (that would block
+ *  the UI thread); a finished one is consumed by its poll and its answer dropped. */
+void TrackerQueryAcp_ResetForNewOwner(JqlEditorState& st);
+
 /**
- * Draw anchored suggestion list + footer; handles mouse hover selection.
- * mergedItems = sync + async (caller merges).
+ * Draw the anchored suggestion list + footer, handle the mouse, and record the popup's rectangle on
+ * `st`. mergedItems = sync + async (caller merges). syncBuild supplies the replace span for all merged
+ * rows (async rows share the same token range). Call after TrackerQueryAcp_TickDebouncedUserSearch,
+ * only while the list is open.
  */
-/** syncBuild supplies replace span for all merged rows (async rows share same token range). */
-void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec2& fieldRectMin,
-                               const ImVec2& fieldRectSize, const QuerySuggestBuild& syncBuild,
-                               const std::vector<QuerySuggestion>& mergedItems);
+void TrackerQueryAcp_DrawPopup(JqlEditorState& st, const ImVec2& fieldRectMin, const ImVec2& fieldRectSize,
+                               const QuerySuggestBuild& syncBuild, const std::vector<QuerySuggestion>& mergedItems,
+                               const TrackerQueryAcpPopupOptions& opts);
 
 /** Rewrite the query buffer for DISPLAY: every account id `st.buf` carries that a catalog /
  *  search-resolved user can name is replaced in place by that user's display name, so the
@@ -88,6 +113,11 @@ void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std
                                           bool trackerOffline, JqlEditorState& st);
 
 /** Debounced Jira user search on main thread; mutates st.jqlAcpAsyncUserItems / errors.
- *  userSearch is the narrow user-query facet of the app object. */
-void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDrawSession& d, JqlEditorState& st,
-                                             const QuerySuggestMeta& meta, const QuerySuggestBuild& syncBuild);
+ *  userSearch is the narrow user-query facet of the app object. `kind` is the host's suggester (only
+ *  JiraJql searches users). While `trackerOffline` no search is sent, `st.jqlAcpUserSearchPaused` is
+ *  set (the popup says the tracker is offline), and the search, a failed one included, goes out once
+ *  the tracker is back (Quality Pillar 6). Call once per frame for the box that owns `st`: it also forgets the last
+ *  frame's popup rectangle, which TrackerQueryAcp_DrawPopup records again. */
+void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, JqlEditorState& st,
+                                             const QuerySuggestMeta& meta, TrackerQuerySuggestKind kind,
+                                             bool trackerOffline);

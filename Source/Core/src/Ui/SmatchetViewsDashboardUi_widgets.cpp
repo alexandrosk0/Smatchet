@@ -354,7 +354,7 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     }
     ImGui::SetItemTooltip("Clear query");
 
-    TrackerQueryAcp_TickDebouncedUserSearch(app, d, st, jqlMeta, jqlSuggestBuild);
+    TrackerQueryAcp_TickDebouncedUserSearch(app, st, jqlMeta, jqlCb.kind, app.IsTrackerOffline());
     // Name the ids already IN the query (saved view, restored session, pasted clause) —
     // the search above only fires while typing a value token, so it never covers these.
     // Jira-only: it is the one backend with a by-accountId lookup.
@@ -375,11 +375,13 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     const bool waitingUser = !smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType) && jqlMeta.UserValueToken &&
                              jqlMeta.UserSearchPrefix.size() >= 2 && st.jqlAcpUserSearchFireAt > 0.0 &&
                              ImGui::GetTime() < st.jqlAcpUserSearchFireAt;
-    const bool jqlAcpOpen =
-        jqlInputHot && !st.jqlAcpListDismissed &&
-        (!merged.empty() || waitingUser || (!st.jqlAcpAsyncUserError.empty() && jqlMeta.UserValueToken));
+    const bool jqlAcpOpen = jqlInputHot && !st.jqlAcpListDismissed &&
+                            (!merged.empty() || waitingUser || st.jqlAcpUserSearchPaused ||
+                             (!st.jqlAcpAsyncUserError.empty() && jqlMeta.UserValueToken));
     if (jqlAcpOpen) {
-        TrackerQueryAcp_DrawPopup(d, st, jqlFieldRectMin, jqlFieldRectSize, jqlSuggestBuild, merged);
+        TrackerQueryAcpPopupOptions popupOptions;
+        popupOptions.kind = jqlCb.kind;
+        TrackerQueryAcp_DrawPopup(st, jqlFieldRectMin, jqlFieldRectSize, jqlSuggestBuild, merged, popupOptions);
     }
     TrackerQueryAcp_FlushPendingReplace(st);
 

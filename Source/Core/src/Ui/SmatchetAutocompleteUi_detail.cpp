@@ -4,6 +4,7 @@
 #include "SmatchetAutocompleteUi_detail.h"
 
 #include <algorithm>
+#include <climits>
 #include <string>
 
 namespace SmatchetAutocompleteDetail {
@@ -52,6 +53,30 @@ AcpCommitDecision ResolveAcpCommit(int n, int selected, bool enterDown, bool tab
         }
     }
     return out;
+}
+
+AcpPick ResolveAcpPick(int buildReplaceStart, int buildReplaceEnd, bool commitOnPick) {
+    AcpPick out;
+    out.replaceStart = commitOnPick ? 0 : buildReplaceStart;
+    out.replaceEnd = commitOnPick ? INT_MAX : buildReplaceEnd;
+    out.commitAfterReplace = commitOnPick;
+    return out;
+}
+
+double ResolveUserSearchFireAt(double now, bool trackerOffline) {
+    const double kDebounceSeconds = 0.22;
+    return trackerOffline ? now : now + kDebounceSeconds;
+}
+
+AcpUserSearchStep ResolveUserSearchStep(double now, double fireAt, bool superseded, bool trackerOffline,
+                                        bool inFlight) {
+    if (fireAt <= 0.0 || now < fireAt) {
+        return AcpUserSearchStep::Hold;
+    }
+    if (superseded) {
+        return AcpUserSearchStep::Drop;
+    }
+    return (trackerOffline || inFlight) ? AcpUserSearchStep::Hold : AcpUserSearchStep::Send;
 }
 
 int StripCaretAnchorSentinel(std::string& text) {

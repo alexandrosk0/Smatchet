@@ -12,6 +12,7 @@
 #include "Tracker/TrackerBackendKind.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetViewsDashboardUi_detail.h"
+#include "SmatchetLocalization.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -113,6 +114,40 @@ static void RunSuggestBuild(TrackerQuerySuggestKind kind, const char* buf, int b
     }
 }
 
+// The rows for this input event: the host's own, the engine's (plus any user-search rows), or none.
+static void FillSuggestBuild(const ImGuiInputTextCallbackData* data, const TrackerQueryAcpCallbackUserData& ud,
+                             const JqlEditorState* st) {
+    if (ud.presetBuild != nullptr) {
+        *ud.suggestBuild = *ud.presetBuild;
+        return;
+    }
+    if (!ud.runEngine) {
+        *ud.suggestBuild = QuerySuggestBuild();
+        return;
+    }
+    RunSuggestBuild(ud.kind, data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart, data->SelectionEnd,
+                    *ud.fields, *ud.users, *ud.suggestBuild, ud.meta);
+    if (st != nullptr) {
+        MergeAsyncUserSuggestionsIntoBuild(*st, *ud.suggestBuild);
+    }
+}
+
+// Queue one picked row, from a key or a click; the next CallbackAlways pass applies it.
+static void QueueRowReplacement(JqlEditorState& st, const QuerySuggestBuild& b, const QuerySuggestion& row) {
+    const SmatchetAutocompleteDetail::AcpPick pick =
+        SmatchetAutocompleteDetail::ResolveAcpPick(b.ReplaceStart, b.ReplaceEnd, row.CommitOnPick);
+    st.jqlAcpReplaceStart = pick.replaceStart;
+    st.jqlAcpReplaceEnd = pick.replaceEnd;
+    st.jqlAcpReplaceText = row.Insert;
+    st.jqlAcpReplaceCaretOffset = SmatchetAutocompleteDetail::StripCaretAnchorSentinel(st.jqlAcpReplaceText);
+    st.jqlAcpCommitAfterReplace = pick.commitAfterReplace;
+    st.jqlAcpApplyReplace = true;
+    st.jqlAcpListDismissed = false;
+    // Always re-focus: both keyboard (Enter may deactivate InputText) and mouse (popup click
+    // steals focus) need SetKeyboardFocusHere to ensure CallbackAlways fires next frame.
+    st.jqlAcpWantsJqlInputFocus = true;
+}
+
 /**
  * Apply a pending replacement INSIDE the InputText callback using ImGui's own
  * DeleteChars/InsertChars API. This is the canonical method that keeps ImGui's
@@ -147,18 +182,16 @@ bool TrackerQueryAcp_QueueApplyReplacement(JqlEditorState& st, const QuerySugges
     if (index < 0 || index >= static_cast<int>(b.Items.size())) {
         return false;
     }
-    st.jqlAcpReplaceStart = b.ReplaceStart;
-    st.jqlAcpReplaceEnd = b.ReplaceEnd;
-    st.jqlAcpReplaceText = b.Items[static_cast<size_t>(index)].Insert;
-    st.jqlAcpReplaceCaretOffset = SmatchetAutocompleteDetail::StripCaretAnchorSentinel(st.jqlAcpReplaceText);
+    const QuerySuggestion& row = b.Items[static_cast<size_t>(index)];
+    QueueRowReplacement(st, b, row);
     // A user row inserts the opaque accountId while its LABEL carries the display name —
     // the only moment both are in hand. Remember the pairing here so the readable echo can
     // name the account the instant the insert lands, with no catalog and no extra fetch.
     const std::string insertedId = jql_user_display::UnquoteValueToken(st.jqlAcpReplaceText);
-    if (jql_user_display::LooksLikeAccountId(insertedId)) {
-        std::string name = b.Items[static_cast<size_t>(index)].Label;
+    if (!row.CommitOnPick && jql_user_display::LooksLikeAccountId(insertedId)) {
+        std::string name = row.Label;
         // Async search rows label as `Name -> "id"`; keep just the name half.
-        const std::string arrow = " -> " + b.Items[static_cast<size_t>(index)].Insert;
+        const std::string arrow = " -> " + row.Insert;
         if (name.size() > arrow.size() && name.compare(name.size() - arrow.size(), arrow.size(), arrow) == 0) {
             name.erase(name.size() - arrow.size());
         }
@@ -169,26 +202,65 @@ bool TrackerQueryAcp_QueueApplyReplacement(JqlEditorState& st, const QuerySugges
             RememberResolvedUser(st, u);
         }
     }
-    st.jqlAcpApplyReplace = true;
-    st.jqlAcpListDismissed = false;
-    // Always re-focus: both keyboard (Enter may deactivate InputText) and mouse (popup click
-    // steals focus) need SetKeyboardFocusHere to ensure CallbackAlways fires next frame.
-    st.jqlAcpWantsJqlInputFocus = true;
     return true;
 }
 
 /** No-op: replacement now applied inside callback. Kept for callers that flush after the InputText call. */
 void TrackerQueryAcp_FlushPendingReplace(JqlEditorState& /*st*/) {}
 
+void TrackerQueryAcp_ResetForNewText(JqlEditorState& st) {
+    st.jqlAcpApplyReplace = false;
+    st.jqlAcpCommitAfterReplace = false;
+    st.jqlAcpReplaceStart = -1;
+    st.jqlAcpReplaceEnd = -1;
+    st.jqlAcpReplaceText.clear();
+    st.jqlAcpReplaceCaretOffset = -1;
+    st.jqlAcpListSelected = -1;
+    st.jqlAcpLastCursor = 0;
+    st.jqlAcpLastSelectionStart = 0;
+    st.jqlAcpLastSelectionEnd = 0;
+    st.jqlAcpWantsJqlInputFocus = false;
+    st.jqlAcpScrollToSelected = false;
+    st.jqlAcpCaretSnapFramesRemaining = 0;
+    st.jqlWantsApplyFromEnter = false;
+    // The user search too, or the previous query's rows and pending dispatch bleed into this one. A
+    // running future stays: with no in-flight id its answer is dropped as stale by the next poll, and
+    // destroying it here would block the UI thread.
+    st.jqlAcpAsyncUserItems.clear();
+    st.jqlAcpAsyncUserError.clear();
+    st.jqlAcpUserSearchQuery.clear();
+    st.jqlAcpUserSearchFireAt = 0.0;
+    st.jqlAcpUserSearchInFlightId = 0;
+    st.jqlAcpUserSearchPaused = false;
+}
+
+void TrackerQueryAcp_ResetForNewOwner(JqlEditorState& st) {
+    TrackerQueryAcp_ResetForNewText(st);
+    ++st.jqlAcpUserSearchRequestId;
+    st.jqlAcpListDismissed = false;
+    st.jqlAcpPopupMin = ImVec2();
+    st.jqlAcpPopupMax = ImVec2();
+    st.jqlAcpSearchResolvedUsers.clear();
+    st.jqlNameRewriteValid = false;
+    st.jqlBufSemanticRewrite = false;
+    // The in-flight latch and its future stay as they are: clearing the latch would let the next tick
+    // assign over a running future. The poll consumes the answer and drops it.
+    st.jqlIdResolveDiscard = st.jqlIdResolveInFlight;
+    st.jqlIdResolveAttempted.clear();
+    st.jqlIdResolveInFlightIds.clear();
+    st.jqlIdResolveScanSource.clear();
+    st.jqlIdResolveScanValid = false;
+    st.jqlIdResolveRetryAt = 0.0;
+    st.jqlIdResolveFailures = 0;
+}
+
 // CallbackHistory event for Up and Down arrows through the suggestion list. Rebuilds suggestions,
 // merges async user results, then resolves the new selection. Split out of the input callback.
 static void HandleAcpHistoryEvent(ImGuiInputTextCallbackData* data, TrackerQueryAcpCallbackUserData* ud,
                                   JqlEditorState* st) {
     if (ud != nullptr && ud->fields != nullptr && ud->users != nullptr && ud->suggestBuild != nullptr) {
-        RunSuggestBuild(ud->kind, data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart,
-                        data->SelectionEnd, *ud->fields, *ud->users, *ud->suggestBuild, ud->meta);
+        FillSuggestBuild(data, *ud, st);
         if (st != nullptr) {
-            MergeAsyncUserSuggestionsIntoBuild(*st, *ud->suggestBuild);
             st->jqlAcpLastCursor = data->CursorPos;
             st->jqlAcpLastSelectionStart = data->SelectionStart;
             st->jqlAcpLastSelectionEnd = data->SelectionEnd;
@@ -232,13 +304,13 @@ static void HandleAcpAlwaysEvent(ImGuiInputTextCallbackData* data, TrackerQueryA
         if (caretOffset < 0) {
             st->jqlAcpCaretSnapFramesRemaining = 3;
         }
+        if (st->jqlAcpCommitAfterReplace) {
+            st->jqlAcpCommitAfterReplace = false;
+            st->jqlWantsApplyFromEnter = true; // the host applies the buffer, as it does on Enter
+        }
     }
 
-    RunSuggestBuild(ud->kind, data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart, data->SelectionEnd,
-                    *ud->fields, *ud->users, *ud->suggestBuild, ud->meta);
-    if (st != nullptr) {
-        MergeAsyncUserSuggestionsIntoBuild(*st, *ud->suggestBuild);
-    }
+    FillSuggestBuild(data, *ud, st);
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && st != nullptr) {
         st->jqlAcpListDismissed = true;
     }
@@ -296,13 +368,14 @@ int TrackerQueryAcp_InputTextCallback(ImGuiInputTextCallbackData* data) {
     return 0;
 }
 
-void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec2& fieldRectMin,
-                               const ImVec2& fieldRectSize, const QuerySuggestBuild& syncBuild,
-                               const std::vector<QuerySuggestion>& mergedItems) {
+void TrackerQueryAcp_DrawPopup(JqlEditorState& st, const ImVec2& fieldRectMin, const ImVec2& fieldRectSize,
+                               const QuerySuggestBuild& syncBuild, const std::vector<QuerySuggestion>& mergedItems,
+                               const TrackerQueryAcpPopupOptions& opts) {
     const bool showList = !mergedItems.empty();
-    const bool waitingUser = !smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType) &&
-                             st.jqlAcpUserSearchFireAt > 0.0 && ImGui::GetTime() < st.jqlAcpUserSearchFireAt;
-    const bool showFooterOnly = !showList && (!st.jqlAcpAsyncUserError.empty() || waitingUser);
+    const bool waitingUser = opts.kind == TrackerQuerySuggestKind::JiraJql && st.jqlAcpUserSearchFireAt > 0.0 &&
+                             ImGui::GetTime() < st.jqlAcpUserSearchFireAt;
+    const bool showFooterOnly =
+        !showList && (!st.jqlAcpAsyncUserError.empty() || waitingUser || st.jqlAcpUserSearchPaused);
     if (!showList && !showFooterOnly) {
         return;
     }
@@ -325,15 +398,13 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
         const ImGuiSelectableFlags flags =
             ImGuiSelectableFlags_NoAutoClosePopups | (sel ? ImGuiSelectableFlags_Highlight : ImGuiSelectableFlags_None);
         const bool rowPress = ImGui::Selectable(mergedItems[static_cast<size_t>(i)].Label.c_str(), sel, flags);
-        const bool reclickSelected = sel && ImGui::IsItemClicked(0);
-        if (rowPress || reclickSelected) {
-            st.jqlAcpReplaceStart = syncBuild.ReplaceStart;
-            st.jqlAcpReplaceEnd = syncBuild.ReplaceEnd;
-            st.jqlAcpReplaceText = mergedItems[static_cast<size_t>(i)].Insert;
-            st.jqlAcpReplaceCaretOffset = SmatchetAutocompleteDetail::StripCaretAnchorSentinel(st.jqlAcpReplaceText);
-            st.jqlAcpApplyReplace = true;
-            st.jqlAcpListDismissed = false;
-            st.jqlAcpWantsJqlInputFocus = true;
+        // Pick on mouse-down too: the click takes the caret out of the input, so the list may be gone
+        // before the release. Where hover selects, the pointed-at row is already the selected one.
+        // Without hover selection the mouse-down is the only trigger, so one click never picks twice.
+        const bool clicked = ImGui::IsItemClicked(0);
+        const bool picked = opts.hoverSelects ? (rowPress || (sel && clicked)) : clicked;
+        if (picked) {
+            QueueRowReplacement(st, syncBuild, mergedItems[static_cast<size_t>(i)]);
         }
         if (sel) {
             ImGui::SetItemDefaultFocus();
@@ -342,7 +413,7 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
                 st.jqlAcpScrollToSelected = false;
             }
         }
-        if (mouseMoved && ImGui::IsItemHovered()) {
+        if (opts.hoverSelects && mouseMoved && ImGui::IsItemHovered()) {
             st.jqlAcpListSelected = i;
         }
     }
@@ -354,9 +425,14 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.35f, 1.0f));
         ImGui::TextWrapped("%s", st.jqlAcpAsyncUserError.c_str());
         ImGui::PopStyleColor();
+    } else if (st.jqlAcpUserSearchPaused) {
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("collab_list.offline", "The tracker is offline."));
     } else if (!showList && !waitingUser) {
         ImGui::TextDisabled("No matches");
     }
+    st.jqlAcpPopupMin = ImGui::GetWindowPos();
+    const ImVec2 popupSize = ImGui::GetWindowSize();
+    st.jqlAcpPopupMax = ImVec2(st.jqlAcpPopupMin.x + popupSize.x, st.jqlAcpPopupMin.y + popupSize.y);
     ImGui::End();
     ImGui::PopStyleVar();
 }
@@ -450,6 +526,10 @@ void ConsumeAccountIdResolve(JqlEditorState& st) {
         result.Error = ex.what();
     }
     st.jqlIdResolveInFlight = false;
+    if (st.jqlIdResolveDiscard) {
+        st.jqlIdResolveDiscard = false; // an earlier owner's lookup; see TrackerQueryAcp_ResetForNewOwner
+        return;
+    }
     if (result.Ok) {
         st.jqlIdResolveFailures = 0;
         for (const auto& u : result.Users) {
@@ -535,10 +615,13 @@ void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std
     st.jqlIdResolveInFlight = true;
 }
 
-void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDrawSession& d, JqlEditorState& st,
-                                             const QuerySuggestMeta& meta, const QuerySuggestBuild& syncBuild) {
-    (void)syncBuild;
-    if (smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType) || !meta.UserValueToken) {
+void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, JqlEditorState& st,
+                                             const QuerySuggestMeta& meta, TrackerQuerySuggestKind kind,
+                                             bool trackerOffline) {
+    st.jqlAcpPopupMin = ImVec2(); // closed until TrackerQueryAcp_DrawPopup says otherwise this frame
+    st.jqlAcpPopupMax = ImVec2();
+    st.jqlAcpUserSearchPaused = false;
+    if (kind != TrackerQuerySuggestKind::JiraJql || !meta.UserValueToken) {
         st.jqlAcpAsyncUserItems.clear();
         st.jqlAcpAsyncUserError.clear();
         st.jqlAcpUserSearchFireAt = 0.0;
@@ -555,11 +638,13 @@ void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDraw
         st.jqlAcpUserSearchInFlightId = 0;
         return;
     }
+    st.jqlAcpUserSearchPaused = trackerOffline;
     if (q != st.jqlAcpUserSearchQuery) {
         ++st.jqlAcpUserSearchRequestId;
         st.jqlAcpUserSearchQuery = q;
         st.jqlAcpUserSearchArmedId = st.jqlAcpUserSearchRequestId;
-        st.jqlAcpUserSearchFireAt = ImGui::GetTime() + 0.22;
+        st.jqlAcpUserSearchFireAt =
+            SmatchetAutocompleteDetail::ResolveUserSearchFireAt(ImGui::GetTime(), trackerOffline);
         st.jqlAcpAsyncUserItems.clear();
         st.jqlAcpAsyncUserError.clear();
         return;
@@ -581,19 +666,18 @@ void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDraw
             }
         }
     }
-    if (st.jqlAcpUserSearchFireAt <= 0.0) {
-        return;
+    if (trackerOffline && !st.jqlAcpAsyncUserError.empty()) {
+        // The search that met the outage: forget its error and re-arm it for the reconnect.
+        st.jqlAcpAsyncUserError.clear();
+        st.jqlAcpUserSearchFireAt = ImGui::GetTime();
     }
-    const double now = ImGui::GetTime();
-    if (now < st.jqlAcpUserSearchFireAt) {
-        return;
-    }
-    if (st.jqlAcpUserSearchArmedId != st.jqlAcpUserSearchRequestId) {
+    const SmatchetAutocompleteDetail::AcpUserSearchStep step = SmatchetAutocompleteDetail::ResolveUserSearchStep(
+        ImGui::GetTime(), st.jqlAcpUserSearchFireAt, st.jqlAcpUserSearchArmedId != st.jqlAcpUserSearchRequestId,
+        trackerOffline, st.jqlAcpUserSearchInFlightId != 0);
+    if (step == SmatchetAutocompleteDetail::AcpUserSearchStep::Drop) {
         st.jqlAcpUserSearchFireAt = 0.0;
-        return;
     }
-    if (st.jqlAcpUserSearchInFlightId != 0) {
-        // Already issued for this request id; let it complete (poll above next frame).
+    if (step != SmatchetAutocompleteDetail::AcpUserSearchStep::Send) {
         return;
     }
     if (st.jqlAcpUserSearchFuture.valid() &&

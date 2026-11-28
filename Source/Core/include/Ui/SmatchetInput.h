@@ -59,6 +59,10 @@ struct TextOptions {
     bool refocusAfterEnter = false;
     /// Extra ImGui flags (CharsNoBlank, ...). The field's own flags are added on top.
     ImGuiInputTextFlags flags = 0;
+    /// ImGui input-text callback and its user data, for TextBuf only (Text grows its string through a
+    /// callback of its own). Set the matching Callback* bits in `flags`.
+    ImGuiInputTextCallback callback = nullptr;
+    void* callbackUserData = nullptr;
 };
 
 /// What happened to a single-line field this frame.
