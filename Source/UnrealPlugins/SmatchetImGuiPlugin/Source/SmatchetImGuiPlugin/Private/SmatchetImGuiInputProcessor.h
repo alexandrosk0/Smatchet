@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Containers/Array.h"
+#include "Engine/EngineBaseTypes.h"
 #include "Framework/Application/IInputProcessor.h"
 #include "Input/Events.h"
 #include "InputCoreTypes.h"
